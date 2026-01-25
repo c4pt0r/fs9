@@ -1,0 +1,45 @@
+# Test: Data Processing Pipeline
+# Demonstrates CSV processing with cut, sort, and text tools
+
+# Create sample CSV data
+mkdir /data
+echo "Alice,25,NYC,95" > /data/users.csv
+echo "Bob,30,LA,85" >> /data/users.csv
+echo "Charlie,25,NYC,90" >> /data/users.csv
+echo "Diana,35,SF,88" >> /data/users.csv
+echo "Eve,30,LA,92" >> /data/users.csv
+
+echo "=== Original Data ==="
+cat /data/users.csv
+
+# Extract names column (first field)
+echo "=== Names Only ==="
+cat /data/users.csv | cut -d ',' -f 1
+
+# Extract names and scores
+echo "=== Names and Scores ==="
+cat /data/users.csv | cut -d ',' -f 1,4
+
+# Sort by name
+echo "=== Sorted by Name ==="
+cat /data/users.csv | sort
+
+# Get unique cities
+echo "=== Unique Cities ==="
+cat /data/users.csv | cut -d ',' -f 3 | sort | uniq
+
+# Count records
+echo "=== Record Count ==="
+cat /data/users.csv | wc -l
+
+# Reverse names for fun
+echo "=== Reversed Names ==="
+cat /data/users.csv | cut -d ',' -f 1 | rev
+
+# Uppercase conversion
+echo "=== Uppercase Names ==="
+cat /data/users.csv | cut -d ',' -f 1 | tr 'a-z' 'A-Z'
+
+# Cleanup
+rm /data/users.csv
+rm /data

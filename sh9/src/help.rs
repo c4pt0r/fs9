@@ -31,6 +31,15 @@ pub const COMMANDS: &[CommandHelp] = &[
         options: &[],
     },
     CommandHelp {
+        name: "chroot",
+        summary: "Change the root directory for FS9 operations",
+        usage: "chroot [PATH | --exit]",
+        options: &[
+            ("PATH", "Set new root directory"),
+            ("--exit", "Exit chroot and return to /"),
+        ],
+    },
+    CommandHelp {
         name: "cp",
         summary: "Copy files",
         usage: "cp SOURCE DEST",
@@ -57,6 +66,12 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Strip last component from filename",
         usage: "dirname PATH",
         options: &[],
+    },
+    CommandHelp {
+        name: "download",
+        summary: "Download files from FS9 to local filesystem",
+        usage: "download [-r] FS9_PATH LOCAL_PATH",
+        options: &[("-r", "Recursively download directories")],
     },
     CommandHelp {
         name: "echo",
@@ -159,6 +174,12 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "mv",
         summary: "Move or rename files",
         usage: "mv SOURCE DEST",
+        options: &[],
+    },
+    CommandHelp {
+        name: "plugins",
+        summary: "List mounted FS9 plugins",
+        usage: "plugins",
         options: &[],
     },
     CommandHelp {
@@ -298,6 +319,12 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Unset shell variables",
         usage: "unset NAME...",
         options: &[],
+    },
+    CommandHelp {
+        name: "upload",
+        summary: "Upload files from local filesystem to FS9",
+        usage: "upload [-r] LOCAL_PATH FS9_PATH",
+        options: &[("-r", "Recursively upload directories")],
     },
     CommandHelp {
         name: "wait",

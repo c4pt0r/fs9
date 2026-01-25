@@ -1,0 +1,51 @@
+# Test: Multi-Environment Configuration Manager
+# Demonstrates variables, conditionals, and environment handling
+
+echo "=== Configuration Manager ==="
+
+# Set environment
+ENV=production
+
+# Environment-specific settings
+echo "=== Environment: $ENV ==="
+
+# Create config based on environment
+mkdir /config
+
+if [ "$ENV" = "development" ]; then
+    echo "DEBUG=true" > /config/settings.env
+    echo "LOG_LEVEL=debug" >> /config/settings.env
+fi
+
+if [ "$ENV" = "production" ]; then
+    echo "DEBUG=false" > /config/settings.env
+    echo "LOG_LEVEL=info" >> /config/settings.env
+fi
+
+echo "=== Generated Config ==="
+cat /config/settings.env
+
+# Verify configuration
+echo "=== Verification ==="
+echo "Config file lines:"
+cat /config/settings.env | wc -l
+
+# Show all settings sorted
+echo "=== Sorted Settings ==="
+cat /config/settings.env | sort
+
+# Extract just values using cut
+echo "=== Config Values ==="
+cat /config/settings.env | cut -d '=' -f 2
+
+# Extract just keys using cut
+echo "=== Config Keys ==="
+cat /config/settings.env | cut -d '=' -f 1
+
+# Show config in reverse order
+echo "=== Reversed Config ==="
+cat /config/settings.env | sort -r
+
+# Cleanup
+rm /config/settings.env
+rm /config

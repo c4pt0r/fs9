@@ -1,0 +1,28 @@
+=== Source Files ===
+config.json
+data1.txt
+data2.txt
+=== Backing Up ===
+Copying data1.txt...
+Copying data2.txt...
+Copying config.json...
+=== Backup Contents ===
+config.json
+data1.txt
+data2.txt
+=== Verification ===
+data1.txt: OK
+1
+data2.txt: OK
+1
+config.json: OK
+1
+=== Content Check ===
+Source data1:
+Important data file 1
+Backup data1:
+Important data file 1
+=== Backup Manifest ===
+Source directory: /source
+Backup directory: /backup
+Files backed up: 3

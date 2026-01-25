@@ -1,0 +1,13 @@
+upload - Upload files from local filesystem to FS9
+
+Usage: upload [-r] LOCAL_PATH FS9_PATH
+
+Options:
+  -r               Recursively upload directories
+---
+download - Download files from FS9 to local filesystem
+
+Usage: download [-r] FS9_PATH LOCAL_PATH
+
+Options:
+  -r               Recursively download directories

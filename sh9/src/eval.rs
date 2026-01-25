@@ -1409,6 +1409,133 @@ impl Shell {
                 Ok(0)
             }
             
+            "upload" => {
+                let mut recursive = false;
+                let mut paths: Vec<&str> = Vec::new();
+                
+                for arg in args {
+                    match arg.as_str() {
+                        "-r" | "-R" => recursive = true,
+                        s if !s.starts_with('-') => paths.push(s),
+                        _ => {}
+                    }
+                }
+                
+                if paths.len() < 2 {
+                    ctx.write_err("upload: requires LOCAL_PATH and FS9_PATH");
+                    return Ok(1);
+                }
+                
+                let local_path = paths[0];
+                let fs9_path = self.resolve_path(paths[1]);
+                
+                if let Some(client) = &self.client {
+                    match self.upload_path(client, local_path, &fs9_path, recursive).await {
+                        Ok(count) => {
+                            ctx.stdout.writeln(&format!("Uploaded {} file(s)", count)).map_err(Sh9Error::Io)?;
+                            Ok(0)
+                        }
+                        Err(e) => {
+                            ctx.write_err(&format!("upload: {}", e));
+                            Ok(1)
+                        }
+                    }
+                } else {
+                    ctx.write_err("upload: not connected to FS9 server");
+                    Ok(1)
+                }
+            }
+            
+            "download" => {
+                let mut recursive = false;
+                let mut paths: Vec<&str> = Vec::new();
+                
+                for arg in args {
+                    match arg.as_str() {
+                        "-r" | "-R" => recursive = true,
+                        s if !s.starts_with('-') => paths.push(s),
+                        _ => {}
+                    }
+                }
+                
+                if paths.len() < 2 {
+                    ctx.write_err("download: requires FS9_PATH and LOCAL_PATH");
+                    return Ok(1);
+                }
+                
+                let fs9_path = self.resolve_path(paths[0]);
+                let local_path = paths[1];
+                
+                if let Some(client) = &self.client {
+                    match self.download_path(client, &fs9_path, local_path, recursive).await {
+                        Ok(count) => {
+                            ctx.stdout.writeln(&format!("Downloaded {} file(s)", count)).map_err(Sh9Error::Io)?;
+                            Ok(0)
+                        }
+                        Err(e) => {
+                            ctx.write_err(&format!("download: {}", e));
+                            Ok(1)
+                        }
+                    }
+                } else {
+                    ctx.write_err("download: not connected to FS9 server");
+                    Ok(1)
+                }
+            }
+            
+            "chroot" => {
+                if args.is_empty() {
+                    ctx.stdout.writeln(&format!("Current root: {}", self.get_var("FS9_CHROOT").unwrap_or("/"))).map_err(Sh9Error::Io)?;
+                } else if args.first().map(|s| s.as_str()) == Some("--exit") {
+                    self.env.remove("FS9_CHROOT");
+                    ctx.stdout.writeln("Exited chroot").map_err(Sh9Error::Io)?;
+                } else {
+                    let new_root = self.resolve_path(&args[0]);
+                    if let Some(client) = &self.client {
+                        match client.stat(&new_root).await {
+                            Ok(stat) if stat.is_dir() => {
+                                self.set_var("FS9_CHROOT", &new_root);
+                                self.cwd = "/".to_string();
+                                ctx.stdout.writeln(&format!("Changed root to {}", new_root)).map_err(Sh9Error::Io)?;
+                            }
+                            Ok(_) => {
+                                ctx.write_err(&format!("chroot: {}: Not a directory", args[0]));
+                                return Ok(1);
+                            }
+                            Err(e) => {
+                                ctx.write_err(&format!("chroot: {}: {}", args[0], e));
+                                return Ok(1);
+                            }
+                        }
+                    }
+                }
+                Ok(0)
+            }
+            
+            "plugins" => {
+                if let Some(client) = &self.client {
+                    match client.list_mounts().await {
+                        Ok(mounts) => {
+                            ctx.stdout.writeln("Mounted plugins:").map_err(Sh9Error::Io)?;
+                            for mount in mounts {
+                                ctx.stdout.writeln(&format!("  {} -> {}", 
+                                    mount.path, 
+                                    mount.provider_name
+                                )).map_err(Sh9Error::Io)?;
+                            }
+                            Ok(0)
+                        }
+                        Err(e) => {
+                            ctx.write_err(&format!("plugins: {}", e));
+                            Ok(1)
+                        }
+                    }
+                } else {
+                    ctx.write_err("plugins: not connected to FS9 server");
+                    Ok(1)
+                }
+            }
+            
             _ => {
                 if let Some(body_str) = self.get_function(name).map(|s| s.to_string()) {
                     let body: Vec<Statement> = serde_json::from_str(&body_str)
@@ -2201,6 +2328,103 @@ impl Shell {
         }
         
         Ok(current)
+    }
+    
+    fn upload_path<'a>(
+        &'a self,
+        client: &'a fs9_client::Fs9Client,
+        local_path: &'a str,
+        fs9_path: &'a str,
+        recursive: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + 'a>> {
+        Box::pin(async move {
+            use std::fs;
+            use std::path::Path;
+            
+            let local = Path::new(local_path);
+            if !local.exists() {
+                return Err(format!("'{}' does not exist", local_path));
+            }
+            
+            let mut count = 0;
+            
+            if local.is_file() {
+                let data = fs::read(local).map_err(|e| e.to_string())?;
+                client.write_file(fs9_path, &data).await.map_err(|e| e.to_string())?;
+                count = 1;
+            } else if local.is_dir() {
+                if !recursive {
+                    return Err(format!("'{}' is a directory (use -r)", local_path));
+                }
+                
+                let _ = client.mkdir(fs9_path).await;
+                
+                let entries: Vec<_> = fs::read_dir(local)
+                    .map_err(|e| e.to_string())?
+                    .filter_map(|e| e.ok())
+                    .collect();
+                
+                for entry in entries {
+                    let child_local = entry.path();
+                    let child_name = entry.file_name().to_string_lossy().to_string();
+                    let child_fs9 = format!("{}/{}", fs9_path.trim_end_matches('/'), child_name);
+                    let child_local_str = child_local.to_string_lossy().to_string();
+                    
+                    count += self.upload_path(client, &child_local_str, &child_fs9, recursive).await?;
+                }
+            }
+            
+            Ok(count)
+        })
+    }
+    
+    fn download_path<'a>(
+        &'a self,
+        client: &'a fs9_client::Fs9Client,
+        fs9_path: &'a str,
+        local_path: &'a str,
+        recursive: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<usize, String>> + Send + 'a>> {
+        Box::pin(async move {
+            use std::fs;
+            use std::path::Path;
+            
+            let stat = client.stat(fs9_path).await.map_err(|e| e.to_string())?;
+            let mut count = 0;
+            
+            if stat.is_dir() {
+                if !recursive {
+                    return Err(format!("'{}' is a directory (use -r)", fs9_path));
+                }
+                
+                let local = Path::new(local_path);
+                if !local.exists() {
+                    fs::create_dir_all(local).map_err(|e| e.to_string())?;
+                }
+                
+                let entries = client.readdir(fs9_path).await.map_err(|e| e.to_string())?;
+                for entry in entries {
+                    let child_fs9 = format!("{}/{}", fs9_path.trim_end_matches('/'), entry.name());
+                    let child_local = format!("{}/{}", local_path.trim_end_matches('/'), entry.name());
+                    
+                    count += self.download_path(client, &child_fs9, &child_local, recursive).await?;
+                }
+            } else {
+                let data = client.read_file(fs9_path).await.map_err(|e| e.to_string())?;
+                
+                let local = Path::new(local_path);
+                if let Some(parent) = local.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+                }
+                
+                fs::write(local_path, &data).map_err(|e| e.to_string())?;
+                count = 1;
+            }
+            
+            Ok(count)
+        })
     }
 }
 

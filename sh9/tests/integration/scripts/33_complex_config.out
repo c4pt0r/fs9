@@ -1,0 +1,20 @@
+=== Configuration Manager ===
+=== Environment: production ===
+=== Generated Config ===
+DEBUG=false
+LOG_LEVEL=info
+=== Verification ===
+Config file lines:
+2
+=== Sorted Settings ===
+DEBUG=false
+LOG_LEVEL=info
+=== Config Values ===
+false
+info
+=== Config Keys ===
+DEBUG
+LOG_LEVEL
+=== Reversed Config ===
+LOG_LEVEL=info
+DEBUG=false

@@ -1,0 +1,7 @@
+# Test upload and download commands
+# NOTE: These commands require local filesystem access
+# For testing, we just verify the help messages work
+
+upload --help
+echo "---"
+download --help

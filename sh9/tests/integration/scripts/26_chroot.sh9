@@ -1,0 +1,12 @@
+# Test chroot command
+mkdir /chroot_test
+mkdir /chroot_test/subdir
+touch /chroot_test/file.txt
+
+# Display current root
+chroot
+
+# Cleanup
+rm /chroot_test/file.txt
+rm /chroot_test/subdir
+rm /chroot_test

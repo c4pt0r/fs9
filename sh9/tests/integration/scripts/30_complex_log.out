@@ -1,0 +1,23 @@
+=== Original Log ===
+INFO: Server started
+ERROR: Connection failed
+INFO: Processing request
+ERROR: Database timeout
+CRITICAL: System failure
+INFO: Request completed
+=== Line Count ===
+6
+=== Errors Only ===
+ERROR: Connection failed
+ERROR: Database timeout
+=== Error Count ===
+2
+=== Critical Issues ===
+CRITICAL: System failure
+=== Unique Prefixes ===
+CRITICAL
+ERROR: C
+ERROR: D
+INFO: Pr
+INFO: Re
+INFO: Se

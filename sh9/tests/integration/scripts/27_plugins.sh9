@@ -1,0 +1,5 @@
+# Test plugins command
+# List mounted plugins/providers
+plugins
+echo "---"
+plugins list

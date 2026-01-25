@@ -1,0 +1,58 @@
+# Test: Backup with Verification
+# Demonstrates file operations, loops, and text processing
+
+# Setup source directory with files
+mkdir /source
+echo "Important data file 1" > /source/data1.txt
+echo "Important data file 2" > /source/data2.txt
+echo "Configuration settings" > /source/config.json
+
+# Create backup directory
+mkdir /backup
+
+echo "=== Source Files ==="
+ls /source
+
+# Backup each file
+echo "=== Backing Up ==="
+echo "Copying data1.txt..."
+cp /source/data1.txt /backup/data1.txt
+echo "Copying data2.txt..."
+cp /source/data2.txt /backup/data2.txt
+echo "Copying config.json..."
+cp /source/config.json /backup/config.json
+
+echo "=== Backup Contents ==="
+ls /backup
+
+# Verify by reading files
+echo "=== Verification ==="
+echo "data1.txt: OK"
+cat /backup/data1.txt | wc -l
+echo "data2.txt: OK"
+cat /backup/data2.txt | wc -l
+echo "config.json: OK"
+cat /backup/config.json | wc -l
+
+# Show file contents match
+echo "=== Content Check ==="
+echo "Source data1:"
+cat /source/data1.txt
+echo "Backup data1:"
+cat /backup/data1.txt
+
+# Generate manifest
+echo "=== Backup Manifest ==="
+echo "Source directory: /source"
+echo "Backup directory: /backup"
+echo "Files backed up: 3"
+
+# Cleanup
+rm /source/data1.txt
+rm /source/data2.txt
+rm /source/config.json
+rm /source
+rm /backup/data1.txt
+rm /backup/data2.txt
+rm /backup/config.json
+rm /backup

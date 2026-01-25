@@ -1,0 +1,42 @@
+=== Original Data ===
+Alice,25,NYC,95
+Bob,30,LA,85
+Charlie,25,NYC,90
+Diana,35,SF,88
+Eve,30,LA,92
+=== Names Only ===
+Alice
+Bob
+Charlie
+Diana
+Eve
+=== Names and Scores ===
+Alice,95
+Bob,85
+Charlie,90
+Diana,88
+Eve,92
+=== Sorted by Name ===
+Alice,25,NYC,95
+Bob,30,LA,85
+Charlie,25,NYC,90
+Diana,35,SF,88
+Eve,30,LA,92
+=== Unique Cities ===
+LA
+NYC
+SF
+=== Record Count ===
+5
+=== Reversed Names ===
+ecilA
+boB
+eilrahC
+anaiD
+evE
+=== Uppercase Names ===
+ALICE
+BOB
+CHARLIE
+DIANA
+EVE

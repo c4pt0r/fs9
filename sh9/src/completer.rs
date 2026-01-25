@@ -25,12 +25,12 @@ impl Sh9Helper {
 }
 
 const BUILTINS: &[&str] = &[
-    "alias", "basename", "break", "cat", "cd", "continue", "cp", "cut",
-    "date", "dirname", "echo", "env", "exit", "export", "false", "grep",
+    "alias", "basename", "break", "cat", "cd", "chroot", "continue", "cp", "cut",
+    "date", "dirname", "download", "echo", "env", "exit", "export", "false", "grep",
     "head", "help", "http", "jobs", "jq", "local", "ls", "mkdir", "mount",
-    "mv", "pwd", "return", "rev", "rm", "set", "sleep", "sort", "source",
+    "mv", "plugins", "pwd", "return", "rev", "rm", "set", "sleep", "sort", "source",
     "stat", "tail", "tee", "test", "touch", "tr", "tree", "true", "truncate",
-    "unalias", "uniq", "unset", "wait", "wc",
+    "unalias", "uniq", "unset", "upload", "wait", "wc",
 ];
 
 impl Completer for Sh9Helper {

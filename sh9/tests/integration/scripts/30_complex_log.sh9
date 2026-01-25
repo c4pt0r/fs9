@@ -1,0 +1,39 @@
+# Test: Log Analysis Pipeline
+# Demonstrates text processing commands working together
+
+# Create sample log data
+mkdir /logs
+echo "INFO: Server started" > /logs/app.log
+echo "ERROR: Connection failed" >> /logs/app.log
+echo "INFO: Processing request" >> /logs/app.log
+echo "ERROR: Database timeout" >> /logs/app.log
+echo "CRITICAL: System failure" >> /logs/app.log
+echo "INFO: Request completed" >> /logs/app.log
+
+# Display original log
+echo "=== Original Log ==="
+cat /logs/app.log
+
+# Count total lines
+echo "=== Line Count ==="
+cat /logs/app.log | wc -l
+
+# Filter for errors only
+echo "=== Errors Only ==="
+cat /logs/app.log | grep ERROR
+
+# Count errors
+echo "=== Error Count ==="
+cat /logs/app.log | grep ERROR | wc -l
+
+# Find critical issues
+echo "=== Critical Issues ==="
+cat /logs/app.log | grep CRITICAL
+
+# Sort unique log levels
+echo "=== Unique Prefixes ==="
+cat /logs/app.log | cut -c 1-8 | sort | uniq
+
+# Cleanup
+rm /logs/app.log
+rm /logs
