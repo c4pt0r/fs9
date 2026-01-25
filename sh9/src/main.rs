@@ -7,8 +7,7 @@
 
 use sh9::{Shell, Sh9Error};
 use std::env;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, RwLock};
 
 mod completer;
 
@@ -72,7 +71,7 @@ async fn run_repl(shell: &mut Shell) -> Result<(), Box<dyn std::error::Error>> {
         .completion_type(CompletionType::List)
         .build();
     
-    let cwd = Arc::new(Mutex::new(shell.cwd.clone()));
+    let cwd = Arc::new(RwLock::new(shell.cwd.clone()));
     let helper = Sh9Helper::new(shell.client.clone(), cwd.clone());
     
     let mut rl = Editor::with_config(config)?;
@@ -87,7 +86,7 @@ async fn run_repl(shell: &mut Shell) -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         {
-            let mut cwd_guard = cwd.lock().await;
+            let mut cwd_guard = cwd.write().unwrap();
             *cwd_guard = shell.cwd.clone();
         }
         

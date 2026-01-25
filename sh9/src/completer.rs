@@ -5,17 +5,17 @@ use rustyline::validate::Validator;
 use rustyline::{Context, Helper};
 use std::borrow::Cow;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::RwLock;
 use fs9_client::Fs9Client;
 
 pub struct Sh9Helper {
     pub client: Option<Arc<Fs9Client>>,
-    pub cwd: Arc<Mutex<String>>,
+    pub cwd: Arc<RwLock<String>>,
     pub runtime: tokio::runtime::Handle,
 }
 
 impl Sh9Helper {
-    pub fn new(client: Option<Arc<Fs9Client>>, cwd: Arc<Mutex<String>>) -> Self {
+    pub fn new(client: Option<Arc<Fs9Client>>, cwd: Arc<RwLock<String>>) -> Self {
         Self {
             client,
             cwd,
@@ -67,9 +67,7 @@ impl Completer for Sh9Helper {
         
         if word.starts_with('/') || word.starts_with('.') || word.contains('/') || !is_first_word {
             if let Some(client) = &self.client {
-                let cwd = self.runtime.block_on(async {
-                    self.cwd.lock().await.clone()
-                });
+                let cwd = self.cwd.read().unwrap().clone();
                 
                 let (dir_path, partial_name) = if let Some(last_slash) = word.rfind('/') {
                     let dir = &word[..=last_slash];
@@ -79,8 +77,14 @@ impl Completer for Sh9Helper {
                     (cwd.clone(), word)
                 };
                 
-                let path_completions = self.runtime.block_on(async {
-                    complete_path(client, &dir_path, partial_name).await
+                let client = client.clone();
+                let dir_path_owned = dir_path.clone();
+                let partial_owned = partial_name.to_string();
+                
+                let path_completions = tokio::task::block_in_place(|| {
+                    self.runtime.block_on(async {
+                        complete_path(&client, &dir_path_owned, &partial_owned).await
+                    })
                 });
                 
                 for name in path_completions {
