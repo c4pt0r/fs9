@@ -1,0 +1,6 @@
+# Test help command
+help ls
+echo "---"
+ls --help
+echo "---"
+cat -h

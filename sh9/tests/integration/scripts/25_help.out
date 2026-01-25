@@ -1,0 +1,20 @@
+ls - List directory contents
+
+Usage: ls [-l] [PATH]
+
+Options:
+  -l               Use long listing format
+---
+ls - List directory contents
+
+Usage: ls [-l] [PATH]
+
+Options:
+  -l               Use long listing format
+---
+cat - Concatenate and print files
+
+Usage: cat [FILE]...
+
+Options:
+  -                Read from stdin

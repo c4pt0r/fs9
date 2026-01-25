@@ -2,6 +2,7 @@
 
 use crate::ast::*;
 use crate::error::{Sh9Error, Sh9Result};
+use crate::help::{self, wants_help, get_help, format_help};
 use crate::shell::Shell;
 use std::collections::HashMap;
 use std::io::Write;
@@ -356,7 +357,21 @@ impl Shell {
         result
     }
     
+    fn show_help_if_requested(name: &str, args: &[String], ctx: &mut ExecContext) -> Option<Sh9Result<i32>> {
+        if wants_help(args) {
+            if let Some(cmd_help) = get_help(name) {
+                let _ = ctx.stdout.write(format_help(cmd_help).as_bytes());
+                return Some(Ok(0));
+            }
+        }
+        None
+    }
+    
     async fn execute_builtin(&mut self, name: &str, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+        if let Some(result) = Self::show_help_if_requested(name, args, ctx) {
+            return result;
+        }
+        
         match name {
             "echo" => {
                 let mut interpret_escapes = false;
@@ -1161,6 +1176,20 @@ impl Shell {
             
             "true" => Ok(0),
             "false" => Ok(1),
+            
+            "help" => {
+                if let Some(cmd_name) = args.first() {
+                    if let Some(cmd_help) = get_help(cmd_name) {
+                        ctx.stdout.write(format_help(cmd_help).as_bytes()).map_err(Sh9Error::Io)?;
+                    } else {
+                        ctx.write_err(&format!("help: no help for '{}'", cmd_name));
+                        return Ok(1);
+                    }
+                } else {
+                    ctx.stdout.write(help::format_help_list().as_bytes()).map_err(Sh9Error::Io)?;
+                }
+                Ok(0)
+            }
             
             "http" => {
                 self.execute_http(args, ctx).await
