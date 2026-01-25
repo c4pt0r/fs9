@@ -4,10 +4,41 @@ use crate::ast::*;
 use crate::error::{Sh9Error, Sh9Result};
 use crate::help::{self, wants_help, get_help, format_help};
 use crate::shell::Shell;
+use fs9_client::OpenFlags;
 use std::collections::HashMap;
 use std::io::Write;
 use std::pin::Pin;
 use std::future::Future;
+
+const STREAM_CHUNK_SIZE: usize = 64 * 1024;
+
+fn format_mtime(mtime: u64) -> String {
+    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let days_since_epoch = mtime / 86400;
+    let time_of_day = mtime % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    
+    let mut y = 1970i64;
+    let mut remaining_days = days_since_epoch as i64;
+    loop {
+        let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
+        if remaining_days < days_in_year { break; }
+        remaining_days -= days_in_year;
+        y += 1;
+    }
+    
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    while m < 12 && remaining_days >= month_days[m] as i64 {
+        remaining_days -= month_days[m] as i64;
+        m += 1;
+    }
+    let d = remaining_days + 1;
+    
+    format!("{} {:>2} {:02}:{:02}", months[m], d, hours, minutes)
+}
 
 pub enum Output {
     Stdout,
@@ -469,13 +500,15 @@ impl Shell {
                                         if mode & 0o002 != 0 { 'w' } else { '-' },
                                         if mode & 0o001 != 0 { 'x' } else { '-' },
                                     );
+                                    let mtime_str = format_mtime(entry.mtime);
                                     let line = format!(
-                                        "{}{} {:>5} {:>5} {:>10} {}",
+                                        "{}{} {} {} {:>6} {} {}",
                                         type_char,
                                         mode_str,
                                         entry.uid,
                                         entry.gid,
                                         entry.size,
+                                        mtime_str,
                                         entry.name()
                                     );
                                     ctx.stdout.writeln(&line).map_err(Sh9Error::Io)?;
@@ -538,32 +571,74 @@ impl Shell {
             }
             
             "cat" => {
-                if args.is_empty() {
+                let stream_mode = args.iter().any(|a| a == "--stream" || a == "-s");
+                let paths: Vec<&str> = args.iter()
+                    .filter(|a| *a != "--stream" && *a != "-s" && *a != "-")
+                    .map(|s| s.as_str())
+                    .collect();
+                let has_stdin = args.iter().any(|a| a == "-");
+                
+                if paths.is_empty() && !has_stdin {
                     if let Some(input) = ctx.stdin.take() {
                         ctx.stdout.write(&input).map_err(Sh9Error::Io)?;
                     }
                 } else {
-                    for path in args {
-                        if path == "-" {
-                            if let Some(input) = ctx.stdin.take() {
-                                ctx.stdout.write(&input).map_err(Sh9Error::Io)?;
-                            }
-                        } else {
-                            let full_path = self.resolve_path(path);
-                            if let Some(client) = &self.client {
-                                match client.read_file(&full_path).await {
-                                    Ok(data) => {
-                                        ctx.stdout.write(&data).map_err(Sh9Error::Io)?;
-                                    }
-                                    Err(e) => {
-                                        ctx.write_err(&format!("cat: {}: {}", path, e));
-                                        return Ok(1);
+                    if has_stdin {
+                        if let Some(input) = ctx.stdin.take() {
+                            ctx.stdout.write(&input).map_err(Sh9Error::Io)?;
+                        }
+                    }
+                    
+                    for path in paths {
+                        let full_path = self.resolve_path(path);
+                        if let Some(client) = &self.client {
+                            match client.open(&full_path, OpenFlags::read()).await {
+                                Ok(handle) => {
+                                    let mut offset = 0u64;
+                                    if stream_mode {
+                                        loop {
+                                            match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
+                                                Ok(data) if data.is_empty() => {
+                                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                                    continue;
+                                                }
+                                                Ok(data) => {
+                                                    ctx.stdout.write(&data).map_err(Sh9Error::Io)?;
+                                                    offset += data.len() as u64;
+                                                }
+                                                Err(e) => {
+                                                    let _ = client.close(handle).await;
+                                                    ctx.write_err(&format!("cat: {}: {}", path, e));
+                                                    return Ok(1);
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        loop {
+                                            match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
+                                                Ok(data) if data.is_empty() => break,
+                                                Ok(data) => {
+                                                    ctx.stdout.write(&data).map_err(Sh9Error::Io)?;
+                                                    offset += data.len() as u64;
+                                                }
+                                                Err(e) => {
+                                                    let _ = client.close(handle).await;
+                                                    ctx.write_err(&format!("cat: {}: {}", path, e));
+                                                    return Ok(1);
+                                                }
+                                            }
+                                        }
+                                        let _ = client.close(handle).await;
                                     }
                                 }
-                            } else {
-                                ctx.write_err("cat: not connected to FS9 server");
-                                return Ok(1);
+                                Err(e) => {
+                                    ctx.write_err(&format!("cat: {}: {}", path, e));
+                                    return Ok(1);
+                                }
                             }
+                        } else {
+                            ctx.write_err("cat: not connected to FS9 server");
+                            return Ok(1);
                         }
                     }
                 }
@@ -689,19 +764,47 @@ impl Shell {
                 let dst = self.resolve_path(&args[1]);
                 
                 if let Some(client) = &self.client {
-                    match client.read_file(&src).await {
-                        Ok(data) => {
-                            if let Err(e) = client.write_file(&dst, &data).await {
-                                eprintln!("cp: {}", e);
-                                return Ok(1);
-                            }
-                            Ok(0)
-                        }
+                    let src_handle = match client.open(&src, OpenFlags::read()).await {
+                        Ok(h) => h,
                         Err(e) => {
                             eprintln!("cp: {}: {}", args[0], e);
-                            Ok(1)
+                            return Ok(1);
+                        }
+                    };
+                    let dst_handle = match client.open(&dst, OpenFlags::create_truncate()).await {
+                        Ok(h) => h,
+                        Err(e) => {
+                            let _ = client.close(src_handle).await;
+                            eprintln!("cp: {}: {}", args[1], e);
+                            return Ok(1);
+                        }
+                    };
+                    
+                    let mut offset = 0u64;
+                    loop {
+                        match client.read(&src_handle, offset, STREAM_CHUNK_SIZE).await {
+                            Ok(data) if data.is_empty() => break,
+                            Ok(data) => {
+                                let len = data.len();
+                                if let Err(e) = client.write(&dst_handle, offset, &data).await {
+                                    let _ = client.close(src_handle).await;
+                                    let _ = client.close(dst_handle).await;
+                                    eprintln!("cp: write error: {}", e);
+                                    return Ok(1);
+                                }
+                                offset += len as u64;
+                            }
+                            Err(e) => {
+                                let _ = client.close(src_handle).await;
+                                let _ = client.close(dst_handle).await;
+                                eprintln!("cp: read error: {}", e);
+                                return Ok(1);
+                            }
                         }
                     }
+                    let _ = client.close(src_handle).await;
+                    let _ = client.close(dst_handle).await;
+                    Ok(0)
                 } else {
                     eprintln!("cp: not connected to FS9 server");
                     Ok(1)
@@ -1083,13 +1186,11 @@ impl Shell {
                 if let Some(client) = &self.client {
                     for file in files {
                         let full_path = self.resolve_path(file);
-                        if append {
-                            let existing = client.read_file(&full_path).await.unwrap_or_default();
-                            let mut combined = existing.to_vec();
-                            combined.extend_from_slice(&input);
-                            let _ = client.write_file(&full_path, &combined).await;
-                        } else {
-                            let _ = client.write_file(&full_path, &input).await;
+                        let flags = if append { OpenFlags::append() } else { OpenFlags::create_truncate() };
+                        if let Ok(handle) = client.open(&full_path, flags).await {
+                            let offset = if append { handle.size() } else { 0 };
+                            let _ = client.write(&handle, offset, &input).await;
+                            let _ = client.close(handle).await;
                         }
                     }
                 }
@@ -1307,33 +1408,124 @@ impl Shell {
             "[" | "test" => self.execute_test(args, ctx),
             
             "grep" => {
+                let mut ignore_case = false;
+                let mut invert_match = false;
+                let mut show_line_numbers = false;
+                let mut count_only = false;
+                let mut only_matching = false;
+                let mut word_match = false;
+                let mut quiet_mode = false;
                 let mut use_regex = false;
                 let mut pattern = "";
                 
                 for arg in args {
-                    if arg == "-E" || arg == "-e" {
-                        use_regex = true;
-                    } else if !arg.starts_with('-') {
-                        pattern = arg;
-                        break;
+                    match arg.as_str() {
+                        "-i" => ignore_case = true,
+                        "-v" => invert_match = true,
+                        "-n" => show_line_numbers = true,
+                        "-c" => count_only = true,
+                        "-o" => only_matching = true,
+                        "-w" => word_match = true,
+                        "-q" => quiet_mode = true,
+                        "-E" | "-e" => use_regex = true,
+                        s if s.starts_with('-') && s.len() > 1 => {
+                            // Handle combined flags like -in, -iv, -nv
+                            for c in s[1..].chars() {
+                                match c {
+                                    'i' => ignore_case = true,
+                                    'v' => invert_match = true,
+                                    'n' => show_line_numbers = true,
+                                    'c' => count_only = true,
+                                    'o' => only_matching = true,
+                                    'w' => word_match = true,
+                                    'q' => quiet_mode = true,
+                                    'E' | 'e' => use_regex = true,
+                                    _ => {}
+                                }
+                            }
+                        }
+                        s if !s.starts_with('-') => {
+                            pattern = s;
+                            break;
+                        }
+                        _ => {}
                     }
                 }
                 
                 let input = ctx.stdin.take().unwrap_or_default();
                 let input_str = String::from_utf8_lossy(&input);
+                let mut match_count = 0;
+                let mut found_any = false;
                 
-                for line in input_str.lines() {
-                    let matches = if use_regex && pattern.contains('|') {
-                        pattern.split('|').any(|p| line.contains(p))
+                for (line_num, line) in input_str.lines().enumerate() {
+                    let line_to_check = if ignore_case {
+                        line.to_lowercase()
                     } else {
-                        line.contains(pattern)
+                        line.to_string()
+                    };
+                    let pattern_to_check = if ignore_case {
+                        pattern.to_lowercase()
+                    } else {
+                        pattern.to_string()
                     };
                     
-                    if matches {
-                        ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
+                    let matches = if use_regex && pattern_to_check.contains('|') {
+                        pattern_to_check.split('|').any(|p| {
+                            if word_match {
+                                line_to_check.split(|c: char| !c.is_alphanumeric() && c != '_')
+                                    .any(|word| word == p)
+                            } else {
+                                line_to_check.contains(p)
+                            }
+                        })
+                    } else if word_match {
+                        line_to_check.split(|c: char| !c.is_alphanumeric() && c != '_')
+                            .any(|word| word == pattern_to_check)
+                    } else {
+                        line_to_check.contains(&pattern_to_check)
+                    };
+                    
+                    let final_match = if invert_match { !matches } else { matches };
+                    
+                    if final_match {
+                        found_any = true;
+                        match_count += 1;
+                        
+                        if quiet_mode {
+                            // In quiet mode, just return success on first match
+                            return Ok(0);
+                        }
+                        
+                        if !count_only {
+                            let output = if only_matching && !invert_match {
+                                if use_regex && pattern.contains('|') {
+                                    let pat = if ignore_case { pattern.to_lowercase() } else { pattern.to_string() };
+                                    pat.split('|')
+                                        .find(|p| line_to_check.contains(*p))
+                                        .unwrap_or("")
+                                        .to_string()
+                                } else {
+                                    pattern.to_string()
+                                }
+                            } else {
+                                line.to_string()
+                            };
+                            
+                            if show_line_numbers {
+                                ctx.stdout.writeln(&format!("{}:{}", line_num + 1, output)).map_err(Sh9Error::Io)?;
+                            } else {
+                                ctx.stdout.writeln(&output).map_err(Sh9Error::Io)?;
+                            }
+                        }
                     }
                 }
-                Ok(0)
+                
+                if count_only && !quiet_mode {
+                    ctx.stdout.writeln(&match_count.to_string()).map_err(Sh9Error::Io)?;
+                }
+                
+                // Return 0 if matches found, 1 if not
+                Ok(if found_any { 0 } else { 1 })
             }
             
             "wc" => {
@@ -1363,12 +1555,19 @@ impl Shell {
             }
             
             "head" => {
-                let mut n = 10;
+                let mut n: usize = 10;
                 let mut i = 0;
                 while i < args.len() {
-                    if args[i] == "-n" && i + 1 < args.len() {
+                    let arg = &args[i];
+                    if arg == "-n" && i + 1 < args.len() {
                         n = args[i + 1].parse().unwrap_or(10);
                         i += 2;
+                    } else if arg.starts_with("-n") && arg.len() > 2 {
+                        n = arg[2..].parse().unwrap_or(10);
+                        i += 1;
+                    } else if arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+                        n = arg[1..].parse().unwrap_or(10);
+                        i += 1;
                     } else {
                         i += 1;
                     }
@@ -1387,12 +1586,19 @@ impl Shell {
             }
             
             "tail" => {
-                let mut n = 10;
+                let mut n: usize = 10;
                 let mut i = 0;
                 while i < args.len() {
-                    if args[i] == "-n" && i + 1 < args.len() {
+                    let arg = &args[i];
+                    if arg == "-n" && i + 1 < args.len() {
                         n = args[i + 1].parse().unwrap_or(10);
                         i += 2;
+                    } else if arg.starts_with("-n") && arg.len() > 2 {
+                        n = arg[2..].parse().unwrap_or(10);
+                        i += 1;
+                    } else if arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+                        n = arg[1..].parse().unwrap_or(10);
+                        i += 1;
                     } else {
                         i += 1;
                     }
@@ -2349,8 +2555,18 @@ impl Shell {
             let mut count = 0;
             
             if local.is_file() {
-                let data = fs::read(local).map_err(|e| e.to_string())?;
-                client.write_file(fs9_path, &data).await.map_err(|e| e.to_string())?;
+                let handle = client.open(fs9_path, OpenFlags::create_truncate()).await.map_err(|e| e.to_string())?;
+                let mut file = fs::File::open(local).map_err(|e| e.to_string())?;
+                let mut offset = 0u64;
+                let mut buf = vec![0u8; STREAM_CHUNK_SIZE];
+                loop {
+                    use std::io::Read;
+                    let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+                    if n == 0 { break; }
+                    client.write(&handle, offset, &buf[..n]).await.map_err(|e| e.to_string())?;
+                    offset += n as u64;
+                }
+                let _ = client.close(handle).await;
                 count = 1;
             } else if local.is_dir() {
                 if !recursive {
@@ -2410,8 +2626,6 @@ impl Shell {
                     count += self.download_path(client, &child_fs9, &child_local, recursive).await?;
                 }
             } else {
-                let data = client.read_file(fs9_path).await.map_err(|e| e.to_string())?;
-                
                 let local = Path::new(local_path);
                 if let Some(parent) = local.parent() {
                     if !parent.exists() {
@@ -2419,7 +2633,17 @@ impl Shell {
                     }
                 }
                 
-                fs::write(local_path, &data).map_err(|e| e.to_string())?;
+                let handle = client.open(fs9_path, OpenFlags::read()).await.map_err(|e| e.to_string())?;
+                let mut file = fs::File::create(local_path).map_err(|e| e.to_string())?;
+                let mut offset = 0u64;
+                loop {
+                    let data = client.read(&handle, offset, STREAM_CHUNK_SIZE).await.map_err(|e| e.to_string())?;
+                    if data.is_empty() { break; }
+                    use std::io::Write;
+                    file.write_all(&data).map_err(|e| e.to_string())?;
+                    offset += data.len() as u64;
+                }
+                let _ = client.close(handle).await;
                 count = 1;
             }
             

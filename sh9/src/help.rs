@@ -21,8 +21,14 @@ pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
         name: "cat",
         summary: "Concatenate and print files",
-        usage: "cat [FILE]...",
-        options: &[("-", "Read from stdin")],
+        usage: "cat [OPTIONS] [FILE]...",
+        options: &[
+            ("-", "Read from stdin"),
+            (
+                "--stream, -s",
+                "Stream mode: keep reading indefinitely (for StreamFS)",
+            ),
+        ],
     },
     CommandHelp {
         name: "cd",
@@ -108,9 +114,18 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "grep",
-        summary: "Search for patterns in files",
-        usage: "grep [-E] PATTERN [FILE]",
-        options: &[("-E", "Use extended regular expressions")],
+        summary: "Search for patterns in text",
+        usage: "grep [OPTIONS] PATTERN",
+        options: &[
+            ("-i", "Ignore case distinctions"),
+            ("-v", "Invert match (select non-matching lines)"),
+            ("-n", "Print line numbers"),
+            ("-c", "Print count of matching lines only"),
+            ("-o", "Print only the matched part"),
+            ("-w", "Match whole words only"),
+            ("-q", "Quiet mode (exit 0 if match found)"),
+            ("-E", "Extended regex (use | for OR)"),
+        ],
     },
     CommandHelp {
         name: "head",

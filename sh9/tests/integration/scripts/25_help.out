@@ -14,7 +14,8 @@ Options:
 ---
 cat - Concatenate and print files
 
-Usage: cat [FILE]...
+Usage: cat [OPTIONS] [FILE]...
 
 Options:
   -                Read from stdin
+  --stream, -s     Stream mode: keep reading indefinitely (for StreamFS)

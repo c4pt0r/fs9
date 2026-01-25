@@ -5,7 +5,7 @@ mod auth;
 mod state;
 
 use axum::middleware;
-use fs9_core::MemoryFs;
+use fs9_core::{MemoryFs, StreamFS};
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -28,6 +28,14 @@ async fn main() {
         .expect("Failed to mount root filesystem");
 
     tracing::info!("Mounted MemoryFs at /");
+
+    state
+        .mount_table
+        .mount("/streamfs", "streamfs", Arc::new(StreamFS::default()))
+        .await
+        .expect("Failed to mount streamfs");
+
+    tracing::info!("Mounted StreamFS at /streamfs");
 
     let jwt_secret = std::env::var("FS9_JWT_SECRET").unwrap_or_else(|_| {
         tracing::warn!("FS9_JWT_SECRET not set, authentication disabled");

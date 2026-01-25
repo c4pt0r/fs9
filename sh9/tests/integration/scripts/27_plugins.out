@@ -1,5 +1,7 @@
 Mounted plugins:
   / -> memfs
+  /streamfs -> streamfs
 ---
 Mounted plugins:
   / -> memfs
+  /streamfs -> streamfs
