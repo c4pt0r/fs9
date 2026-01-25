@@ -1,0 +1,9 @@
+=== basename ===
+file.txt
+file
+dir
+file.txt
+=== dirname ===
+/path/to
+/path
+.

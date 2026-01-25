@@ -1,0 +1,7 @@
+=== HTTP GET ===
+  "url": "https://httpbin.org/get"
+=== HTTP GET with custom header ===
+    "X-Custom": "test123"
+=== HTTP POST ===
+    "key": "value"
+=== http tests complete ===

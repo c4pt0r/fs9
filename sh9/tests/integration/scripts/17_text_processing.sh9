@@ -1,0 +1,32 @@
+# Test text processing commands
+
+echo "=== sort ==="
+echo "cherry
+apple
+banana" | sort
+
+echo "=== sort -r ==="
+echo "a
+b
+c" | sort -r
+
+echo "=== uniq ==="
+echo "a
+a
+b
+b
+b
+c" | uniq
+
+echo "=== tr ==="
+echo "hello" | tr h H
+echo "HELLO" | tr A-Z a-z
+
+echo "=== rev ==="
+echo "hello" | rev
+echo "world" | rev
+
+echo "=== cut ==="
+echo "a,b,c" | cut -f 1 -d ,
+echo "a,b,c" | cut -f 1,3 -d ,
+echo "hello" | cut -c 1-3

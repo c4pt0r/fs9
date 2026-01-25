@@ -1,0 +1,24 @@
+num: 1
+num: 2
+num: 3
+fruit: apple
+fruit: banana
+fruit: cherry
+letter: a
+letter: b
+letter: c
+sum: 15
+before break: 1
+before break: 2
+after break
+with continue: 1
+with continue: 2
+with continue: 4
+with continue: 5
+1a
+1b
+2a
+2b
+while: 1
+while: 2
+while: 3

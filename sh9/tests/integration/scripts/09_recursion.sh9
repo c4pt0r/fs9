@@ -1,0 +1,57 @@
+# Test 09: Recursive Functions
+# Tests: Factorial, Fibonacci, depth handling
+
+# Factorial function
+factorial() {
+    if [ $1 -le 1 ]; then
+        echo 1
+    else
+        local prev=$(factorial $(($1 - 1)))
+        echo $(($1 * prev))
+    fi
+}
+
+echo "factorial(1) = $(factorial 1)"
+echo "factorial(3) = $(factorial 3)"
+echo "factorial(5) = $(factorial 5)"
+echo "factorial(7) = $(factorial 7)"
+
+# Fibonacci function
+fib() {
+    if [ $1 -le 1 ]; then
+        echo $1
+    else
+        local a=$(fib $(($1 - 1)))
+        local b=$(fib $(($1 - 2)))
+        echo $((a + b))
+    fi
+}
+
+echo "fib(0) = $(fib 0)"
+echo "fib(1) = $(fib 1)"
+echo "fib(5) = $(fib 5)"
+echo "fib(7) = $(fib 7)"
+
+# Sum from 1 to n (recursive)
+sum_to_n() {
+    if [ $1 -le 0 ]; then
+        echo 0
+    else
+        local rest=$(sum_to_n $(($1 - 1)))
+        echo $(($1 + rest))
+    fi
+}
+
+echo "sum(1..5) = $(sum_to_n 5)"
+echo "sum(1..10) = $(sum_to_n 10)"
+
+# Countdown
+countdown() {
+    if [ $1 -gt 0 ]; then
+        echo $1
+        countdown $(($1 - 1))
+    else
+        echo "Blast off!"
+    fi
+}
+countdown 3

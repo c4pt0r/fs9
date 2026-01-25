@@ -1,0 +1,15 @@
+=== star wildcard ===
+file1.txt
+file2.txt
+=== question wildcard ===
+file1.txt
+file2.txt
+=== char class ===
+data_a.json
+data_b.json
+=== range ===
+data_a.json
+data_b.json
+data_c.json
+=== no match ===
+/glob_test/*.xyz

@@ -1,0 +1,31 @@
+[package]
+name = "fs9-core"
+description = "FS9 Core - VFS router, mount table, and handle registry"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fs9-sdk = { path = "../sdk" }
+fs9-sdk-ffi = { path = "../sdk-ffi" }
+tokio.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+libloading.workspace = true
+thiserror.workspace = true
+filetime = "0.2"
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tempfile = "3"
+
+[lints]
+workspace = true

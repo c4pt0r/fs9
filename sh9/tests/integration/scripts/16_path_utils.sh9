@@ -1,0 +1,11 @@
+# Test basename and dirname
+echo "=== basename ==="
+basename /path/to/file.txt
+basename /path/to/file.txt .txt
+basename /path/to/dir/
+basename file.txt
+
+echo "=== dirname ==="
+dirname /path/to/file.txt
+dirname /path/file.txt
+dirname file.txt

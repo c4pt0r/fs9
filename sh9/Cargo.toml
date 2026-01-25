@@ -1,0 +1,50 @@
+[package]
+name = "sh9"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "sh9 - Interactive shell for the FS9 distributed filesystem"
+
+[[bin]]
+name = "sh9"
+path = "src/main.rs"
+
+[lib]
+name = "sh9"
+path = "src/lib.rs"
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+
+# FS9 client
+fs9-client = { path = "../clients/rust" }
+
+# Parser
+chumsky = "0.9"
+
+# REPL
+rustyline = "14"
+
+# HTTP client for http builtin
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Utilities
+bytes = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = "3"
+reqwest = { version = "0.12", features = ["blocking"] }
+
+[[test]]
+name = "integration_tests"
+path = "tests/integration_tests.rs"

@@ -1,0 +1,22 @@
+=== sort ===
+apple
+banana
+cherry
+=== sort -r ===
+c
+b
+a
+=== uniq ===
+a
+b
+c
+=== tr ===
+Hello
+hello
+=== rev ===
+olleh
+dlrow
+=== cut ===
+a
+a,c
+hel

@@ -1,0 +1,10 @@
+starting background jobs
+job 1 started
+job 2 started
+=== jobs ===
+[1] Running sleep 1
+[2] Running sleep 1
+waiting for jobs...
+=== all jobs complete ===
+background output test
+=== jobs test complete ===

@@ -1,0 +1,2 @@
+exit code: 1
+cat: /nonexistent_file_xyz: not found: not found: /nonexistent_file_xyz

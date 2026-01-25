@@ -1,0 +1,55 @@
+# Test 10: FS9 File Operations
+# Tests: ls, mkdir, touch, rm, cat, mv, cp, stat, truncate
+
+# Create test directory
+mkdir /test_fs_ops
+
+# Create files
+touch /test_fs_ops/file1.txt
+touch /test_fs_ops/file2.txt
+echo "content A" > /test_fs_ops/file1.txt
+echo "content B" > /test_fs_ops/file2.txt
+
+# List directory
+echo "=== ls ==="
+ls /test_fs_ops
+
+# Cat file
+echo "=== cat ==="
+cat /test_fs_ops/file1.txt
+
+# Copy file
+cp /test_fs_ops/file1.txt /test_fs_ops/file1_copy.txt
+echo "=== after cp ==="
+ls /test_fs_ops
+
+# Move/rename file
+mv /test_fs_ops/file2.txt /test_fs_ops/renamed.txt
+echo "=== after mv ==="
+ls /test_fs_ops
+
+# Truncate
+truncate -s 5 /test_fs_ops/file1.txt
+echo "=== after truncate ==="
+cat /test_fs_ops/file1.txt
+echo ""
+
+# Stat
+echo "=== stat ==="
+stat /test_fs_ops/file1.txt | grep -E "size|type"
+
+# Nested directories
+mkdir /test_fs_ops/subdir
+touch /test_fs_ops/subdir/nested.txt
+echo "nested content" > /test_fs_ops/subdir/nested.txt
+cat /test_fs_ops/subdir/nested.txt
+
+# Cleanup
+rm /test_fs_ops/file1.txt
+rm /test_fs_ops/file1_copy.txt
+rm /test_fs_ops/renamed.txt
+rm /test_fs_ops/subdir/nested.txt
+rm /test_fs_ops/subdir
+rm /test_fs_ops
+
+echo "=== fs ops complete ==="

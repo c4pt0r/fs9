@@ -1,0 +1,26 @@
+# Test 05: Redirection
+# Tests: stdout, append, stdin, stderr
+
+# Note: These tests use /tmp paths that work with FS9
+
+# Write to file
+echo "first line" > /test_redir_out.txt
+cat /test_redir_out.txt
+
+# Append to file
+echo "second line" >> /test_redir_out.txt
+cat /test_redir_out.txt
+
+# Overwrite
+echo "replaced" > /test_redir_out.txt
+cat /test_redir_out.txt
+
+# Read from file (stdin redirection)
+echo "input data" > /test_redir_in.txt
+cat < /test_redir_in.txt
+
+# Cleanup
+rm /test_redir_out.txt
+rm /test_redir_in.txt
+
+echo "redirection tests complete"

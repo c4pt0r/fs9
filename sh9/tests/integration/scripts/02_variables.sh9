@@ -1,0 +1,35 @@
+# Test 02: Variables
+# Tests: Assignment, expansion, special variables
+
+# Basic assignment and expansion
+x=hello
+echo $x
+
+# Assignment with spaces (quoted)
+y="hello world"
+echo $y
+
+# Braced expansion
+echo ${x}
+
+# Concatenation
+echo "${x}_suffix"
+
+# Multiple variables
+a=1
+b=2
+echo $a $b
+
+# Overwrite variable
+x=goodbye
+echo $x
+
+# Undefined variable (empty)
+echo "[$undefined_var]"
+
+# Special variable: exit code
+true
+echo $?
+
+false
+echo $?

@@ -1,0 +1,59 @@
+# Test 06: If/Else Control Flow
+# Tests: if-then, if-else, if-elif-else, nested if
+
+# Simple if
+x=1
+if [ $x -eq 1 ]; then
+    echo "x is one"
+fi
+
+# If-else
+y=5
+if [ $y -gt 10 ]; then
+    echo "y is big"
+else
+    echo "y is small"
+fi
+
+# If-elif-else
+grade=85
+if [ $grade -ge 90 ]; then
+    echo "A"
+elif [ $grade -ge 80 ]; then
+    echo "B"
+elif [ $grade -ge 70 ]; then
+    echo "C"
+else
+    echo "F"
+fi
+
+# String comparison
+name="alice"
+if [ "$name" = "alice" ]; then
+    echo "Hello Alice"
+fi
+
+# Not equal
+if [ "$name" != "bob" ]; then
+    echo "Not Bob"
+fi
+
+# Nested if
+a=5
+b=10
+if [ $a -lt 10 ]; then
+    if [ $b -gt 5 ]; then
+        echo "both conditions met"
+    fi
+fi
+
+# Test with file existence (using true/false)
+if true; then
+    echo "true is true"
+fi
+
+if false; then
+    echo "should not print"
+else
+    echo "false is false"
+fi

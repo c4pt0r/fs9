@@ -1,0 +1,36 @@
+# Test 03: Arithmetic Expansion
+# Tests: Basic math, variables in math, nested expressions
+
+# Basic operations
+echo $((1 + 2))
+echo $((10 - 3))
+echo $((4 * 5))
+echo $((20 / 4))
+echo $((17 % 5))
+
+# Negative numbers
+echo $((-5 + 10))
+
+# With variables
+x=10
+y=3
+echo $((x + y))
+echo $((x * y))
+echo $((x / y))
+
+# Nested parentheses
+echo $(( (1 + 2) * 3 ))
+echo $(( (10 - 2) / (1 + 1) ))
+
+# Complex expression
+a=5
+b=3
+c=2
+echo $(( (a + b) * c - 1 ))
+
+# Increment pattern
+count=0
+count=$((count + 1))
+echo $count
+count=$((count + 1))
+echo $count

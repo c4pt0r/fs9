@@ -1,0 +1,8 @@
+# Test stderr redirection
+# Test 2> (stderr write)
+cat /nonexistent_file_xyz 2> /stderr_test.txt
+echo "exit code: $?"
+cat /stderr_test.txt
+
+# Cleanup
+rm /stderr_test.txt

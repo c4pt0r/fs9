@@ -1,0 +1,38 @@
+# Test glob pattern expansion
+# Setup: create test files
+mkdir /glob_test
+touch /glob_test/file1.txt
+touch /glob_test/file2.txt
+touch /glob_test/file3.log
+touch /glob_test/data_a.json
+touch /glob_test/data_b.json
+touch /glob_test/data_c.json
+
+# Test * wildcard
+echo "=== star wildcard ==="
+for f in /glob_test/*.txt; do basename $f; done
+
+# Test ? single char
+echo "=== question wildcard ==="
+for f in /glob_test/file?.txt; do basename $f; done
+
+# Test [abc] character class
+echo "=== char class ==="
+for f in /glob_test/data_[ab].json; do basename $f; done
+
+# Test [a-z] range
+echo "=== range ==="
+for f in /glob_test/data_[a-c].json; do basename $f; done
+
+# Test no match returns literal
+echo "=== no match ==="
+echo /glob_test/*.xyz
+
+# Cleanup
+rm /glob_test/file1.txt
+rm /glob_test/file2.txt
+rm /glob_test/file3.log
+rm /glob_test/data_a.json
+rm /glob_test/data_b.json
+rm /glob_test/data_c.json
+rm /glob_test

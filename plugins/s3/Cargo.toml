@@ -1,0 +1,29 @@
+[package]
+name = "fs9-plugin-s3"
+description = "FS9 Plugin - S3-backed filesystem"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fs9-sdk = { path = "../../sdk" }
+fs9-sdk-ffi = { path = "../../sdk-ffi" }
+tokio.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

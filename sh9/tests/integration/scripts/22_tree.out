@@ -1,0 +1,5 @@
+/tree_test
+├── dir1
+│   └── nested.txt
+├── dir2
+└── file1.txt

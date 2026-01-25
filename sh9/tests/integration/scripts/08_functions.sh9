@@ -1,0 +1,72 @@
+# Test 08: Functions
+# Tests: Definition, parameters, return values, local variables
+
+# Simple function
+greet() {
+    echo "Hello!"
+}
+greet
+
+# Function with parameters
+say_hello() {
+    echo "Hello, $1!"
+}
+say_hello "World"
+say_hello "Alice"
+
+# Function with multiple parameters
+add_numbers() {
+    echo $(($1 + $2))
+}
+add_numbers 5 3
+add_numbers 10 20
+
+# Function with local variable
+counter() {
+    local count=0
+    count=$((count + 1))
+    echo "count: $count"
+}
+counter
+counter
+
+# Verify local doesn't leak
+outer_var=100
+test_local() {
+    local outer_var=50
+    echo "inside: $outer_var"
+}
+test_local
+echo "outside: $outer_var"
+
+# Function with return value (via exit code)
+is_even() {
+    if [ $(($1 % 2)) -eq 0 ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+is_even 4
+if [ $? -eq 0 ]; then
+    echo "4 is even"
+fi
+
+is_even 5
+if [ $? -eq 0 ]; then
+    echo "5 is even"
+else
+    echo "5 is odd"
+fi
+
+# Function calling another function
+double() {
+    echo $(($1 * 2))
+}
+
+quadruple() {
+    local doubled=$(double $1)
+    echo $(($doubled * 2))
+}
+quadruple 5

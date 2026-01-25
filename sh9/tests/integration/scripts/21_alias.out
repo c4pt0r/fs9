@@ -1,0 +1,4 @@
+alias greet='echo hello'
+alias ll='ls -l'
+hello
+alias ll='ls -l'

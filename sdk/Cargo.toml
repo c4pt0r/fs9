@@ -1,0 +1,26 @@
+[package]
+name = "fs9-sdk"
+description = "FS9 SDK - Core types and FsProvider trait for building FS9 storage backends"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+bitflags.workspace = true
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[lints]
+workspace = true

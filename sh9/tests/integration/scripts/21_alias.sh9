@@ -1,0 +1,13 @@
+# Test alias/unalias commands
+alias ll='ls -l'
+alias greet='echo hello'
+
+# List all aliases
+alias
+
+# Use aliases
+greet
+
+# Unalias
+unalias greet
+alias

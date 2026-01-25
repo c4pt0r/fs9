@@ -1,0 +1,19 @@
+[package]
+name = "fs9-sdk-ffi"
+description = "FS9 SDK FFI - C-compatible ABI for plugin development"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fs9-sdk = { path = "../sdk" }
+libc = "0.2"
+
+[lints]
+workspace = true

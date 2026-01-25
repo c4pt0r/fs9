@@ -1,0 +1,56 @@
+# Test 07: Loops
+# Tests: for loops, while loops, break, continue
+
+# Basic for loop
+for i in 1 2 3; do
+    echo "num: $i"
+done
+
+# For loop with variable expansion
+items="apple banana cherry"
+for item in $items; do
+    echo "fruit: $item"
+done
+
+# For loop with command substitution (simulated)
+for x in a b c; do
+    echo "letter: $x"
+done
+
+# Loop with arithmetic
+sum=0
+for n in 1 2 3 4 5; do
+    sum=$((sum + n))
+done
+echo "sum: $sum"
+
+# Break statement
+for i in 1 2 3 4 5; do
+    if [ $i -eq 3 ]; then
+        break
+    fi
+    echo "before break: $i"
+done
+echo "after break"
+
+# Continue statement
+for i in 1 2 3 4 5; do
+    if [ $i -eq 3 ]; then
+        continue
+    fi
+    echo "with continue: $i"
+done
+
+# Nested loops
+for i in 1 2; do
+    for j in a b; do
+        echo "$i$j"
+    done
+done
+
+# While loop
+count=1
+while [ $count -le 3 ]; do
+    echo "while: $count"
+    count=$((count + 1))
+done

@@ -1,0 +1,7 @@
+# Test environment commands
+FOO=bar
+echo $FOO
+BAZ=qux
+echo $BAZ
+unset FOO
+echo "after unset: [$FOO]"

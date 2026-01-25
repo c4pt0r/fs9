@@ -1,0 +1,19 @@
+[package]
+name = "fs9-fuse"
+description = "FS9 FUSE - FUSE filesystem adapter"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fs9-sdk = { path = "../sdk" }
+tokio.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

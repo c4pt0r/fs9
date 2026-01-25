@@ -1,0 +1,15 @@
+# Test tree command
+mkdir /tree_test
+mkdir /tree_test/dir1
+mkdir /tree_test/dir2
+touch /tree_test/file1.txt
+touch /tree_test/dir1/nested.txt
+
+tree /tree_test
+
+# Cleanup
+rm /tree_test/dir1/nested.txt
+rm /tree_test/file1.txt
+rm /tree_test/dir1
+rm /tree_test/dir2
+rm /tree_test

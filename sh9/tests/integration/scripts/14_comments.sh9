@@ -1,0 +1,10 @@
+# Test comments support
+# This is a hash comment
+echo "hello"
+// This is a slash comment
+echo "world"
+echo "inline" # inline hash comment
+echo "test" // inline slash comment
+# Multiple comments
+// Back to back
+echo "done"

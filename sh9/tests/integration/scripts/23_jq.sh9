@@ -1,0 +1,5 @@
+# Test jq JSON processing
+echo '{"name":"Alice","age":30}' | jq .
+echo '{"name":"Bob"}' | jq .name
+echo '[{"id":1},{"id":2},{"id":3}]' | jq '.[].id'
+echo '{"users":[{"name":"X"},{"name":"Y"}]}' | jq '.users[].name'

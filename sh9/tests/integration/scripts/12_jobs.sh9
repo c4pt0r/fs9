@@ -1,0 +1,27 @@
+# Test 12: Background Jobs
+# Tests: &, jobs, wait
+
+# Start background job
+echo "starting background jobs"
+
+sleep 1 &
+echo "job 1 started"
+
+sleep 1 &
+echo "job 2 started"
+
+# List jobs
+echo "=== jobs ==="
+jobs
+
+# Wait for all jobs
+echo "waiting for jobs..."
+wait
+
+echo "=== all jobs complete ==="
+
+# Background job with output
+echo "background output test" &
+wait
+
+echo "=== jobs test complete ==="

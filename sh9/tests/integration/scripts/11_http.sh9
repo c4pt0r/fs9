@@ -1,0 +1,16 @@
+# Test 11: HTTP Built-in
+# Tests: GET, POST requests
+
+# Simple GET request (to a test endpoint)
+echo "=== HTTP GET ==="
+http get https://httpbin.org/get | grep -E '"url"'
+
+# GET with headers
+echo "=== HTTP GET with custom header ==="
+http get https://httpbin.org/headers -H "X-Custom: test123" | grep -E '"X-Custom"'
+
+# POST request
+echo "=== HTTP POST ==="
+http post https://httpbin.org/post -d '{"key": "value"}' -H "Content-Type: application/json" | grep -E '"key"'
+
+echo "=== http tests complete ==="

@@ -1,0 +1,30 @@
+# Test 01: Lexical Parsing & Quoting
+# Tests: Simple commands, quotes, escaping, filenames with spaces
+
+# Simple command
+echo hello
+
+# Double quotes preserve spaces
+echo "hello world"
+
+# Single quotes are literal
+echo 'hello $world'
+
+# Nested quotes
+echo "He said 'hello'"
+echo 'She said "hi"'
+
+# Backslash escaping
+echo "line1\nline2"
+
+# Empty string
+echo ""
+
+# Multiple arguments
+echo one two three
+
+# Arguments with special characters
+echo "price: $100"
+
+# Unicode support
+echo "Hello 世界"

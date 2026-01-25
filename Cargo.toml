@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "sdk",
+    "sdk-ffi",
+    "core",
+    "server",
+    "fuse",
+    "plugins/s3",
+    "plugins/kv",
+    "clients/rust",
+    "tests",
+    "sh9",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["FS9 Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/example/fs9"
+rust-version = "1.75"
+
+[workspace.dependencies]
+tokio = { version = "1.43", features = ["full"] }
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bytes = "1.9"
+thiserror = "2.0"
+bitflags = "2.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio-test = "0.4"
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+jsonwebtoken = "9"
+uuid = { version = "1.16", features = ["v4", "serde"] }
+reqwest = { version = "0.12", features = ["json"] }
+libloading = "0.8"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"

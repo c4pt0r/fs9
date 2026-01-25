@@ -1,0 +1,6 @@
+line1
+line2
+tab	here
+no newline: done
+backslash: \\
+no escape without -e: \n still literal

@@ -1,0 +1,20 @@
+=== ls ===
+file1.txt
+file2.txt
+=== cat ===
+content A
+=== after cp ===
+file1.txt
+file1_copy.txt
+file2.txt
+=== after mv ===
+file1.txt
+file1_copy.txt
+renamed.txt
+=== after truncate ===
+conte
+=== stat ===
+size: 5
+type: file
+nested content
+=== fs ops complete ===

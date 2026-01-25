@@ -1,0 +1,6 @@
+# Test backtick command substitution
+x=`echo hello`
+echo $x
+y=`echo world`
+echo $y
+echo `echo inline`

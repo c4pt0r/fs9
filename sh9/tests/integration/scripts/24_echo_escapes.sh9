@@ -1,0 +1,7 @@
+# Test echo escape sequences
+echo -e "line1\nline2"
+echo -e "tab\there"
+echo -n "no newline: "
+echo "done"
+echo -e "backslash: \\\\"
+echo "no escape without -e: \n still literal"
