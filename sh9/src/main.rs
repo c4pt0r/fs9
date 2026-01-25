@@ -7,6 +7,10 @@
 
 use sh9::{Shell, Sh9Error};
 use std::env;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+mod completer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -61,11 +65,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_repl(shell: &mut Shell) -> Result<(), Box<dyn std::error::Error>> {
     use rustyline::error::ReadlineError;
-    use rustyline::DefaultEditor;
+    use rustyline::{Config, Editor, CompletionType};
+    use completer::Sh9Helper;
 
-    let mut rl = DefaultEditor::new()?;
+    let config = Config::builder()
+        .completion_type(CompletionType::List)
+        .build();
     
-    // Load history
+    let cwd = Arc::new(Mutex::new(shell.cwd.clone()));
+    let helper = Sh9Helper::new(shell.client.clone(), cwd.clone());
+    
+    let mut rl = Editor::with_config(config)?;
+    rl.set_helper(Some(helper));
+    
     let history_path = dirs_home().join(".sh9_history");
     let _ = rl.load_history(&history_path);
 
@@ -74,6 +86,11 @@ async fn run_repl(shell: &mut Shell) -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     loop {
+        {
+            let mut cwd_guard = cwd.lock().await;
+            *cwd_guard = shell.cwd.clone();
+        }
+        
         let prompt = format!("sh9:{}> ", shell.cwd);
         match rl.readline(&prompt) {
             Ok(line) => {
@@ -113,7 +130,6 @@ async fn run_repl(shell: &mut Shell) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Save history
     let _ = rl.save_history(&history_path);
     
     Ok(())
