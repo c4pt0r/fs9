@@ -5,7 +5,7 @@ mod auth;
 mod state;
 
 use axum::middleware;
-use fs9_core::{MemoryFs, StreamFS};
+use fs9_core::{default_registry, ProviderConfig};
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -20,22 +20,27 @@ async fn main() {
         .init();
 
     let state = Arc::new(state::AppState::new());
+    let registry = default_registry();
 
+    let memfs = registry
+        .create("memfs", ProviderConfig::new())
+        .expect("Failed to create memfs");
     state
         .mount_table
-        .mount("/", "memfs", Arc::new(MemoryFs::new()))
+        .mount("/", "memfs", memfs)
         .await
         .expect("Failed to mount root filesystem");
+    tracing::info!("Mounted memfs at /");
 
-    tracing::info!("Mounted MemoryFs at /");
-
+    let streamfs = registry
+        .create("streamfs", ProviderConfig::new())
+        .expect("Failed to create streamfs");
     state
         .mount_table
-        .mount("/streamfs", "streamfs", Arc::new(StreamFS::default()))
+        .mount("/streamfs", "streamfs", streamfs)
         .await
         .expect("Failed to mount streamfs");
-
-    tracing::info!("Mounted StreamFS at /streamfs");
+    tracing::info!("Mounted streamfs at /streamfs");
 
     let jwt_secret = std::env::var("FS9_JWT_SECRET").unwrap_or_else(|_| {
         tracing::warn!("FS9_JWT_SECRET not set, authentication disabled");

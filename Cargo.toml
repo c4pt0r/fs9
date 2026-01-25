@@ -8,6 +8,7 @@ members = [
     "fuse",
     "plugins/s3",
     "plugins/kv",
+    "plugins/hellofs",
     "clients/rust",
     "tests",
     "sh9",

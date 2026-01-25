@@ -1,4 +1,4 @@
-use fs9_core::{HandleRegistry, MountTable, VfsRouter};
+use fs9_core::{HandleRegistry, MountTable, PluginManager, VfsRouter};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,6 +9,7 @@ pub struct AppState {
     pub mount_table: Arc<MountTable>,
     pub handle_registry: Arc<HandleRegistry>,
     pub handle_map: Arc<RwLock<HandleMap>>,
+    pub plugin_manager: Arc<PluginManager>,
 }
 
 pub struct HandleMap {
@@ -66,12 +67,14 @@ impl AppState {
         let mount_table = Arc::new(MountTable::new());
         let handle_registry = Arc::new(HandleRegistry::new(ttl));
         let vfs = Arc::new(VfsRouter::new(mount_table.clone(), handle_registry.clone()));
+        let plugin_manager = Arc::new(PluginManager::new());
 
         Self {
             vfs,
             mount_table,
             handle_registry,
             handle_map: Arc::new(RwLock::new(HandleMap::new())),
+            plugin_manager,
         }
     }
 }

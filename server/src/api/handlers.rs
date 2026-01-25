@@ -192,3 +192,61 @@ pub async fn list_mounts(
 pub async fn health() -> &'static str {
     "OK"
 }
+
+pub async fn load_plugin(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LoadPluginRequest>,
+) -> AppResult<Json<LoadPluginResponse>> {
+    use std::path::Path;
+    
+    state
+        .plugin_manager
+        .load(&req.name, Path::new(&req.path))
+        .map_err(|e| FsError::internal(e.to_string()))?;
+
+    Ok(Json(LoadPluginResponse {
+        name: req.name,
+        status: "loaded".to_string(),
+    }))
+}
+
+pub async fn unload_plugin(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UnloadPluginRequest>,
+) -> AppResult<StatusCode> {
+    state
+        .plugin_manager
+        .unload(&req.name)
+        .map_err(|e| FsError::internal(e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_plugins(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<String>> {
+    Json(state.plugin_manager.loaded_plugins())
+}
+
+pub async fn mount_plugin(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MountPluginRequest>,
+) -> AppResult<Json<MountResponse>> {
+    let config = serde_json::to_string(&req.config).unwrap_or_default();
+    
+    let provider = state
+        .plugin_manager
+        .create_provider(&req.provider, &config)
+        .map_err(|e| FsError::internal(e.to_string()))?;
+
+    state
+        .mount_table
+        .mount(&req.path, &req.provider, std::sync::Arc::new(provider))
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?;
+
+    Ok(Json(MountResponse {
+        path: req.path,
+        provider_name: req.provider,
+    }))
+}

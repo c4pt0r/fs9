@@ -23,5 +23,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/v1/remove", delete(handlers::remove))
         .route("/api/v1/capabilities", get(handlers::capabilities))
         .route("/api/v1/mounts", get(handlers::list_mounts))
+        .route("/api/v1/plugin/load", post(handlers::load_plugin))
+        .route("/api/v1/plugin/unload", post(handlers::unload_plugin))
+        .route("/api/v1/plugin/list", get(handlers::list_plugins))
+        .route("/api/v1/mount", post(handlers::mount_plugin))
         .with_state(state)
 }

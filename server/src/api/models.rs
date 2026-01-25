@@ -236,3 +236,28 @@ pub struct ErrorResponse {
     pub error: String,
     pub code: u16,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoadPluginRequest {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoadPluginResponse {
+    pub name: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UnloadPluginRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MountPluginRequest {
+    pub path: String,
+    pub provider: String,
+    #[serde(default)]
+    pub config: serde_json::Value,
+}

@@ -360,6 +360,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs9-plugin-hellofs"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "fs9-sdk",
+ "fs9-sdk-ffi",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "fs9-plugin-kv"
 version = "0.1.0"
 dependencies = [
