@@ -1,0 +1,54 @@
+# PubSubFS Integration Test (V2 API)
+
+# Test with plugin (sorted)
+plugin list | sort
+
+# Mount pubsubfs at /ps (shorter path)
+mount pubsubfs /ps
+
+# List initial state
+echo "=== Initial state ==="
+ls /ps
+
+# Create a topic by writing to it
+echo "=== Create topic via write ==="
+echo "hello world" > /ps/chat
+ls /ps
+
+# Publish more messages
+echo "=== Publish messages ==="
+echo "alice: hi!" > /ps/chat
+echo "bob: hello!" > /ps/chat
+
+# View topic info
+echo "=== Topic info ==="
+cat /ps/chat.info
+
+# Subscribe and read messages
+echo "=== Subscribe (read historical) ==="
+cat /ps/chat
+
+# Create another topic
+echo "=== Create logs topic ==="
+echo "log1" > /ps/logs
+echo "log2" > /ps/logs
+
+# List all topics (sorted)
+echo "=== List all topics ==="
+ls /ps | sort
+
+# Read logs
+echo "=== Read logs ==="
+cat /ps/logs
+
+# Delete a topic
+echo "=== Delete chat topic ==="
+rm /ps/chat
+ls /ps
+
+# Clean up
+echo "=== Clean up ==="
+rm /ps/logs
+ls /ps
+
+echo "=== Test complete ==="

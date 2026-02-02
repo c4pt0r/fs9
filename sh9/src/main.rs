@@ -1,10 +1,4 @@
-//! sh9 - Interactive shell for FS9
-//!
-//! Usage:
-//!   sh9                     # Start interactive REPL
-//!   sh9 -c "command"        # Execute a command
-//!   sh9 script.sh9          # Execute a script file
-
+use fs9_config::Fs9Config;
 use sh9::{Shell, Sh9Error};
 use std::env;
 use std::sync::{Arc, RwLock};
@@ -14,11 +8,14 @@ mod completer;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    
-    // Get server URL from environment or default
-    let server_url = env::var("FS9_SERVER_URL")
-        .unwrap_or_else(|_| "http://localhost:9999".to_string());
-    
+
+    let config = fs9_config::load().unwrap_or_else(|_| Fs9Config::default());
+    let server_url = if config.shell.server.is_empty() {
+        "http://localhost:9999".to_string()
+    } else {
+        config.shell.server.clone()
+    };
+
     let mut shell = Shell::new(&server_url);
     
     // Connect to FS9 server
@@ -27,8 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     if args.len() == 1 {
-        // Interactive mode
-        run_repl(&mut shell).await?;
+        run_repl(&mut shell, &config.shell.prompt).await?;
     } else if args.len() >= 3 && args[1] == "-c" {
         // Execute command from argument
         let command = args[2..].join(" ");
@@ -62,21 +58,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_repl(shell: &mut Shell) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_repl(shell: &mut Shell, prompt_template: &str) -> Result<(), Box<dyn std::error::Error>> {
     use rustyline::error::ReadlineError;
     use rustyline::{Config, Editor, CompletionType};
     use completer::Sh9Helper;
 
-    let config = Config::builder()
+    let rl_config = Config::builder()
         .completion_type(CompletionType::List)
         .build();
-    
+
     let cwd = Arc::new(RwLock::new(shell.cwd.clone()));
     let helper = Sh9Helper::new(shell.client.clone(), cwd.clone());
-    
-    let mut rl = Editor::with_config(config)?;
+
+    let mut rl = Editor::with_config(rl_config)?;
     rl.set_helper(Some(helper));
-    
+
     let history_path = dirs_home().join(".sh9_history");
     let _ = rl.load_history(&history_path);
 
@@ -89,8 +85,8 @@ async fn run_repl(shell: &mut Shell) -> Result<(), Box<dyn std::error::Error>> {
             let mut cwd_guard = cwd.write().unwrap();
             *cwd_guard = shell.cwd.clone();
         }
-        
-        let prompt = format!("sh9:{}> ", shell.cwd);
+
+        let prompt = prompt_template.replace("{cwd}", &shell.cwd);
         match rl.readline(&prompt) {
             Ok(line) => {
                 let line = line.trim();

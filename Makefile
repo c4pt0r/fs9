@@ -4,20 +4,40 @@
 .PHONY: all build test clean fmt lint check doc server install help
 .PHONY: test-rust test-python test-e2e test-unit
 .PHONY: dev setup-python clean-all
+.PHONY: plugins release-all
 
-# Default target
-all: build
+# Default target - build everything
+all: build plugins
 
 # =============================================================================
 # Build
 # =============================================================================
 
-## Build all Rust crates
+## Build all Rust crates (debug)
 build:
 	cargo build --workspace
 
-## Build in release mode
-release:
+## Build plugins and copy to ./plugins directory for auto-loading
+plugins:
+	cargo build --release -p fs9-plugin-pagefs -p fs9-plugin-streamfs -p fs9-plugin-kv -p fs9-plugin-hellofs -p fs9-plugin-pubsubfs
+	@mkdir -p plugins
+	@cp -f target/release/libfs9_plugin_pagefs.so plugins/ 2>/dev/null || \
+	 cp -f target/release/libfs9_plugin_pagefs.dylib plugins/ 2>/dev/null || true
+	@cp -f target/release/libfs9_plugin_streamfs.so plugins/ 2>/dev/null || \
+	 cp -f target/release/libfs9_plugin_streamfs.dylib plugins/ 2>/dev/null || true
+	@cp -f target/release/libfs9_plugin_kv.so plugins/ 2>/dev/null || \
+	 cp -f target/release/libfs9_plugin_kv.dylib plugins/ 2>/dev/null || true
+	@cp -f target/release/libfs9_plugin_hellofs.so plugins/ 2>/dev/null || \
+	 cp -f target/release/libfs9_plugin_hellofs.dylib plugins/ 2>/dev/null || true
+	@cp -f target/release/libfs9_plugin_pubsubfs.so plugins/ 2>/dev/null || \
+	 cp -f target/release/libfs9_plugin_pubsubfs.dylib plugins/ 2>/dev/null || true
+	@echo "Plugins installed to ./plugins/"
+	@ls -la plugins/*.so plugins/*.dylib 2>/dev/null || true
+
+## Build everything in release mode
+release: release-all
+
+release-all:
 	cargo build --workspace --release
 
 ## Build only the server
@@ -157,8 +177,10 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Build:"
-	@echo "  build          Build all Rust crates"
-	@echo "  release        Build in release mode"
+	@echo "  all            Build everything (debug + plugins copied to ./plugins)"
+	@echo "  build          Build all Rust crates (debug)"
+	@echo "  plugins        Build plugins (release) and copy to ./plugins"
+	@echo "  release        Build everything in release mode"
 	@echo "  server-build   Build only the server"
 	@echo ""
 	@echo "Test:"

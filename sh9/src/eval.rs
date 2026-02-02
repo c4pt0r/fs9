@@ -4,11 +4,12 @@ use crate::ast::*;
 use crate::error::{Sh9Error, Sh9Result};
 use crate::help::{self, wants_help, get_help, format_help};
 use crate::shell::Shell;
-use fs9_client::OpenFlags;
+use fs9_client::{Fs9Client, OpenFlags};
 use std::collections::HashMap;
 use std::io::Write;
 use std::pin::Pin;
 use std::future::Future;
+use std::sync::Arc;
 
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
@@ -43,6 +44,18 @@ fn format_mtime(mtime: u64) -> String {
 pub enum Output {
     Stdout,
     Buffer(Vec<u8>),
+    File {
+        client: Arc<Fs9Client>,
+        path: String,
+        buffer: Vec<u8>,
+        mode: FileWriteMode,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub enum FileWriteMode {
+    Write,   // Overwrite
+    Append,  // Append
 }
 
 impl Output {
@@ -56,12 +69,46 @@ impl Output {
                 buf.extend_from_slice(data);
                 Ok(())
             }
+            Output::File { buffer, .. } => {
+                // Just buffer the data, flush will write it
+                buffer.extend_from_slice(data);
+                Ok(())
+            }
         }
     }
 
     pub fn writeln(&mut self, s: &str) -> std::io::Result<()> {
         self.write(s.as_bytes())?;
         self.write(b"\n")
+    }
+
+    pub async fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Output::Stdout => std::io::stdout().flush(),
+            Output::Buffer(_) => Ok(()),
+            Output::File { client, path, buffer, mode } => {
+                if !buffer.is_empty() {
+                    let to_write = std::mem::take(buffer);
+                    if let Err(e) = match mode {
+                        FileWriteMode::Write => {
+                            let result = client.write_file(&path, &to_write).await;
+                            // After first write, switch to append mode
+                            *mode = FileWriteMode::Append;
+                            result
+                        }
+                        FileWriteMode::Append => {
+                            let existing: bytes::Bytes = client.read_file(&path).await.unwrap_or_default();
+                            let mut combined = existing.to_vec();
+                            combined.extend_from_slice(&to_write);
+                            client.write_file(&path, &combined).await
+                        }
+                    } {
+                        eprintln!("Error flushing to {}: {}", path, e);
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -100,6 +147,10 @@ impl ExecContext {
             Output::Buffer(buf) => {
                 buf.extend_from_slice(msg.as_bytes());
                 buf.push(b'\n');
+            }
+            Output::File { buffer, .. } => {
+                buffer.extend_from_slice(msg.as_bytes());
+                buffer.push(b'\n');
             }
         }
     }
@@ -146,25 +197,47 @@ impl Shell {
             
             Statement::Pipeline(pipeline) => {
                 if pipeline.background {
+                    // Format command string with redirections
                     let cmd_str = pipeline.commands.iter()
                         .map(|c| {
                             let name = format!("{}", c.name);
                             let args = c.args.iter().map(|a| format!("{}", a)).collect::<Vec<_>>().join(" ");
-                            if args.is_empty() { name } else { format!("{} {}", name, args) }
+                            let mut cmd = if args.is_empty() { name } else { format!("{} {}", name, args) };
+
+                            // Add redirections
+                            for redir in &c.redirections {
+                                let target = format!("{}", redir.target);
+                                let redir_str = match redir.kind {
+                                    RedirectKind::StdoutWrite => format!(" > {}", target),
+                                    RedirectKind::StdoutAppend => format!(" >> {}", target),
+                                    RedirectKind::StdinRead => format!(" < {}", target),
+                                    RedirectKind::StderrWrite => format!(" 2> {}", target),
+                                    RedirectKind::StderrAppend => format!(" 2>> {}", target),
+                                    RedirectKind::BothWrite => format!(" &> {}", target),
+                                };
+                                cmd.push_str(&redir_str);
+                            }
+                            cmd
                         })
                         .collect::<Vec<_>>()
                         .join(" | ");
-                    
+
                     let commands = pipeline.commands.clone();
                     let shell_copy = self.clone_for_subshell();
-                    
+
                     let handle = tokio::spawn(async move {
                         let mut shell = shell_copy;
                         let mut ctx = ExecContext::default();
                         let pipeline = Pipeline { commands, background: false };
-                        shell.execute_pipeline(&pipeline, &mut ctx).await.unwrap_or(1)
+                        match shell.execute_pipeline(&pipeline, &mut ctx).await {
+                            Ok(code) => code,
+                            Err(e) => {
+                                eprintln!("Background job error: {}", e);
+                                1
+                            }
+                        }
                     });
-                    
+
                     self.add_job(cmd_str, handle);
                     Ok(0)
                 } else {
@@ -288,97 +361,77 @@ impl Shell {
             }
         }
         
-        let has_stdout_redir = cmd.redirections.iter().any(|r| {
-            matches!(r.kind, RedirectKind::StdoutWrite | RedirectKind::StdoutAppend | RedirectKind::BothWrite)
-        });
-        
-        let has_stderr_redir = cmd.redirections.iter().any(|r| {
-            matches!(r.kind, RedirectKind::StderrWrite | RedirectKind::StderrAppend | RedirectKind::BothWrite)
-        });
-        
-        let saved_stdout = if has_stdout_redir {
-            Some(std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new())))
+        // Set up output redirections
+        let mut stdout_redir_path: Option<(String, FileWriteMode)> = None;
+        let mut stderr_redir_path: Option<(String, FileWriteMode)> = None;
+
+        for redir in &cmd.redirections {
+            let target = self.expand_word(&redir.target, ctx).await?;
+            let path = self.resolve_path(&target);
+
+            match &redir.kind {
+                RedirectKind::StdoutWrite => {
+                    stdout_redir_path = Some((path, FileWriteMode::Write));
+                }
+                RedirectKind::StdoutAppend => {
+                    stdout_redir_path = Some((path, FileWriteMode::Append));
+                }
+                RedirectKind::BothWrite => {
+                    stdout_redir_path = Some((path.clone(), FileWriteMode::Write));
+                    stderr_redir_path = Some((path, FileWriteMode::Write));
+                }
+                RedirectKind::StderrWrite => {
+                    stderr_redir_path = Some((path, FileWriteMode::Write));
+                }
+                RedirectKind::StderrAppend => {
+                    stderr_redir_path = Some((path, FileWriteMode::Append));
+                }
+                _ => {}
+            }
+        }
+
+        let saved_stdout = if let Some((path, mode)) = stdout_redir_path {
+            if let Some(client) = &self.client {
+                Some(std::mem::replace(&mut ctx.stdout, Output::File {
+                    client: client.clone(),
+                    path,
+                    buffer: Vec::new(),
+                    mode,
+                }))
+            } else {
+                None
+            }
         } else {
             None
         };
-        
-        let saved_stderr = if has_stderr_redir {
-            Some(std::mem::replace(&mut ctx.stderr, Output::Buffer(Vec::new())))
+
+        let saved_stderr = if let Some((path, mode)) = stderr_redir_path {
+            if let Some(client) = &self.client {
+                Some(std::mem::replace(&mut ctx.stderr, Output::File {
+                    client: client.clone(),
+                    path,
+                    buffer: Vec::new(),
+                    mode,
+                }))
+            } else {
+                None
+            }
         } else {
             None
         };
         
         let result = self.execute_builtin(&name, &args, ctx).await;
-        
-        if has_stderr_redir {
-            if let Output::Buffer(err_data) = std::mem::replace(&mut ctx.stderr, saved_stderr.unwrap()) {
-                for redir in &cmd.redirections {
-                    let target = self.expand_word(&redir.target, ctx).await?;
-                    let path = self.resolve_path(&target);
-                    
-                    match &redir.kind {
-                        RedirectKind::StderrWrite => {
-                            if let Some(client) = &self.client {
-                                client.write_file(&path, &err_data).await
-                                    .map_err(|e| Sh9Error::Runtime(format!("redirect: {}", e)))?;
-                            }
-                        }
-                        RedirectKind::StderrAppend => {
-                            if let Some(client) = &self.client {
-                                let existing = client.read_file(&path).await.unwrap_or_default();
-                                let mut combined = existing.to_vec();
-                                combined.extend_from_slice(&err_data);
-                                client.write_file(&path, &combined).await
-                                    .map_err(|e| Sh9Error::Runtime(format!("redirect: {}", e)))?;
-                            }
-                        }
-                        RedirectKind::BothWrite => {
-                            if let Some(client) = &self.client {
-                                client.write_file(&path, &err_data).await
-                                    .map_err(|e| Sh9Error::Runtime(format!("redirect: {}", e)))?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+
+        // Flush and restore stderr
+        if saved_stderr.is_some() {
+            ctx.stderr.flush().await.map_err(Sh9Error::Io)?;
+            ctx.stderr = saved_stderr.unwrap();
         }
-        
-        if has_stdout_redir {
-            if let Output::Buffer(data) = std::mem::replace(&mut ctx.stdout, saved_stdout.unwrap()) {
-                for redir in &cmd.redirections {
-                    let target = self.expand_word(&redir.target, ctx).await?;
-                    let path = self.resolve_path(&target);
-                    
-                    match &redir.kind {
-                        RedirectKind::StdoutWrite => {
-                            if let Some(client) = &self.client {
-                                client.write_file(&path, &data).await
-                                    .map_err(|e| Sh9Error::Runtime(format!("redirect: {}", e)))?;
-                            }
-                        }
-                        RedirectKind::StdoutAppend => {
-                            if let Some(client) = &self.client {
-                                let existing = client.read_file(&path).await.unwrap_or_default();
-                                let mut combined = existing.to_vec();
-                                combined.extend_from_slice(&data);
-                                client.write_file(&path, &combined).await
-                                    .map_err(|e| Sh9Error::Runtime(format!("redirect: {}", e)))?;
-                            }
-                        }
-                        RedirectKind::BothWrite => {
-                            if let Some(client) = &self.client {
-                                let existing = client.read_file(&path).await.unwrap_or_default();
-                                let mut combined = existing.to_vec();
-                                combined.extend_from_slice(&data);
-                                client.write_file(&path, &combined).await
-                                    .map_err(|e| Sh9Error::Runtime(format!("redirect: {}", e)))?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+
+        // Flush and restore stdout
+        if saved_stdout.is_some() {
+            ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
+            ctx.stdout = saved_stdout.unwrap();
         }
         
         if let Ok(code) = &result {
@@ -644,7 +697,7 @@ impl Shell {
                 }
                 Ok(0)
             }
-            
+
             "mkdir" => {
                 for path in args {
                     if path.starts_with('-') {
@@ -836,20 +889,98 @@ impl Shell {
             
             "mount" => {
                 if let Some(client) = &self.client {
-                    match client.list_mounts().await {
-                        Ok(mounts) => {
-                            for m in mounts {
-                                ctx.stdout.writeln(&format!("{} on {} type {}", m.provider_name, m.path, m.provider_name)).map_err(Sh9Error::Io)?;
+                    if args.is_empty() {
+                        match client.list_mounts().await {
+                            Ok(mounts) => {
+                                for m in mounts {
+                                    ctx.stdout.writeln(&format!("{:<20} {}", m.path, m.provider_name)).map_err(Sh9Error::Io)?;
+                                }
+                                Ok(0)
                             }
-                            Ok(0)
+                            Err(e) => {
+                                ctx.write_err(&format!("mount: {}", e));
+                                Ok(1)
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("mount: {}", e);
-                            Ok(1)
+                    } else if args.len() >= 2 {
+                        let provider = &args[0];
+                        let mount_path = &args[1];
+                        let config: Option<serde_json::Value> = if args.len() > 2 {
+                            match serde_json::from_str(&args[2]) {
+                                Ok(v) => Some(v),
+                                Err(e) => {
+                                    ctx.write_err(&format!("mount: invalid config JSON: {}", e));
+                                    return Ok(1);
+                                }
+                            }
+                        } else {
+                            None
+                        };
+
+                        match client.mount_plugin(mount_path, provider, config).await {
+                            Ok(info) => {
+                                ctx.stdout.writeln(&format!("mounted {} at {}", info.provider_name, info.path)).map_err(Sh9Error::Io)?;
+                                Ok(0)
+                            }
+                            Err(e) => {
+                                ctx.write_err(&format!("mount: {}", e));
+                                Ok(1)
+                            }
                         }
+                    } else {
+                        ctx.write_err("mount: usage: mount [<fstype> <mount_point> [config_json]]");
+                        Ok(1)
                     }
                 } else {
-                    eprintln!("mount: not connected to FS9 server");
+                    ctx.write_err("mount: not connected to FS9 server");
+                    Ok(1)
+                }
+            }
+
+            "lsfs" => {
+                if let Some(client) = &self.client {
+                    // Get available filesystems
+                    let plugins = match client.list_plugins().await {
+                        Ok(p) => p,
+                        Err(e) => {
+                            ctx.write_err(&format!("lsfs: {}", e));
+                            return Ok(1);
+                        }
+                    };
+
+                    // Get current mounts
+                    let mounts = match client.list_mounts().await {
+                        Ok(m) => m,
+                        Err(e) => {
+                            ctx.write_err(&format!("lsfs: {}", e));
+                            return Ok(1);
+                        }
+                    };
+
+                    // Display available filesystems
+                    ctx.stdout.writeln("Available filesystems:").map_err(Sh9Error::Io)?;
+                    if plugins.is_empty() {
+                        ctx.stdout.writeln("  (none)").map_err(Sh9Error::Io)?;
+                    } else {
+                        for plugin in &plugins {
+                            ctx.stdout.writeln(&format!("  {}", plugin)).map_err(Sh9Error::Io)?;
+                        }
+                    }
+
+                    // Display current mounts
+                    ctx.stdout.writeln("").map_err(Sh9Error::Io)?;
+                    ctx.stdout.writeln("Current mounts:").map_err(Sh9Error::Io)?;
+                    if mounts.is_empty() {
+                        ctx.stdout.writeln("  (none)").map_err(Sh9Error::Io)?;
+                    } else {
+                        for m in &mounts {
+                            ctx.stdout.writeln(&format!("  {:<20} {}", m.path, m.provider_name)).map_err(Sh9Error::Io)?;
+                        }
+                    }
+
+                    Ok(0)
+                } else {
+                    ctx.write_err("lsfs: not connected to FS9 server");
                     Ok(1)
                 }
             }
@@ -1305,9 +1436,93 @@ impl Shell {
             }
             
             "jobs" => {
+                // Update statuses first
+                self.update_job_statuses();
+
+                // List all jobs
                 for job in &self.jobs {
-                    if !job.handle.is_finished() {
-                        ctx.stdout.writeln(&format!("[{}] Running {}", job.id, job.command)).map_err(Sh9Error::Io)?;
+                    let status_str = match job.status {
+                        crate::shell::JobStatus::Running => "Running",
+                        crate::shell::JobStatus::Done(code) => {
+                            if code == 0 {
+                                "Done"
+                            } else {
+                                "Exit"
+                            }
+                        }
+                    };
+                    ctx.stdout.writeln(&format!("[{}] {} {}", job.id, status_str, job.command)).map_err(Sh9Error::Io)?;
+                }
+                Ok(0)
+            }
+
+            "fg" => {
+                let job_id = if args.is_empty() {
+                    // Get current job (most recent)
+                    self.get_current_job().map(|j| j.id)
+                } else {
+                    args[0].parse::<usize>().ok()
+                };
+
+                if let Some(id) = job_id {
+                    // Find and remove the job
+                    let job_index = self.jobs.iter().position(|j| j.id == id);
+                    if let Some(idx) = job_index {
+                        let job = self.jobs.remove(idx);
+                        ctx.stdout.writeln(&format!("{}", job.command)).map_err(Sh9Error::Io)?;
+
+                        // Wait for it to complete
+                        match job.handle.await {
+                            Ok(code) => {
+                                self.last_exit_code = code;
+                                Ok(code)
+                            }
+                            Err(_) => {
+                                ctx.write_err("fg: job terminated abnormally");
+                                Ok(1)
+                            }
+                        }
+                    } else {
+                        ctx.write_err(&format!("fg: job [{}] not found", id));
+                        Ok(1)
+                    }
+                } else {
+                    ctx.write_err("fg: no current job");
+                    Ok(1)
+                }
+            }
+
+            "bg" => {
+                // In sh9, bg is less useful since we don't have job control (Ctrl+Z)
+                // But we can implement it for completeness
+                ctx.write_err("bg: not implemented (sh9 doesn't support job control)");
+                Ok(1)
+            }
+
+            "kill" => {
+                if args.is_empty() {
+                    ctx.write_err("kill: usage: kill <job_id>");
+                    return Ok(1);
+                }
+
+                for arg in args {
+                    let job_id = if let Some(id_str) = arg.strip_prefix('%') {
+                        id_str.parse::<usize>().ok()
+                    } else {
+                        arg.parse::<usize>().ok()
+                    };
+
+                    if let Some(id) = job_id {
+                        let job_index = self.jobs.iter().position(|j| j.id == id);
+                        if let Some(idx) = job_index {
+                            let job = self.jobs.remove(idx);
+                            job.handle.abort();
+                            ctx.stdout.writeln(&format!("[{}] Terminated {}", id, job.command)).map_err(Sh9Error::Io)?;
+                        } else {
+                            ctx.write_err(&format!("kill: job [{}] not found", id));
+                        }
+                    } else {
+                        ctx.write_err(&format!("kill: invalid job id: {}", arg));
                     }
                 }
                 Ok(0)
@@ -1587,7 +1802,11 @@ impl Shell {
             
             "tail" => {
                 let mut n: usize = 10;
+                let mut follow = false;
+                let mut paths: Vec<String> = Vec::new();
                 let mut i = 0;
+
+                // Parse arguments
                 while i < args.len() {
                     let arg = &args[i];
                     if arg == "-n" && i + 1 < args.len() {
@@ -1596,21 +1815,103 @@ impl Shell {
                     } else if arg.starts_with("-n") && arg.len() > 2 {
                         n = arg[2..].parse().unwrap_or(10);
                         i += 1;
-                    } else if arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+                    } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
                         n = arg[1..].parse().unwrap_or(10);
+                        i += 1;
+                    } else if arg == "-f" || arg == "--follow" {
+                        follow = true;
+                        i += 1;
+                    } else if !arg.starts_with('-') {
+                        paths.push(arg.clone());
                         i += 1;
                     } else {
                         i += 1;
                     }
                 }
-                
-                let input = ctx.stdin.take().unwrap_or_default();
-                let input_str = String::from_utf8_lossy(&input);
-                let lines: Vec<&str> = input_str.lines().collect();
-                let start = lines.len().saturating_sub(n);
-                
-                for line in &lines[start..] {
-                    ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
+
+                // If no paths, read from stdin
+                if paths.is_empty() {
+                    let input = ctx.stdin.take().unwrap_or_default();
+                    let input_str = String::from_utf8_lossy(&input);
+                    let lines: Vec<&str> = input_str.lines().collect();
+                    let start = lines.len().saturating_sub(n);
+
+                    for line in &lines[start..] {
+                        ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
+                    }
+                    return Ok(0);
+                }
+
+                // Read from files
+                for path in &paths {
+                    let full_path = self.resolve_path(path);
+                    if let Some(client) = &self.client {
+                        match client.open(&full_path, OpenFlags::read()).await {
+                            Ok(handle) => {
+                                // Read entire file content
+                                let mut content = Vec::new();
+                                let mut offset = 0u64;
+
+                                loop {
+                                    match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
+                                        Ok(data) if data.is_empty() => break,
+                                        Ok(data) => {
+                                            content.extend_from_slice(&data);
+                                            offset += data.len() as u64;
+                                        }
+                                        Err(e) => {
+                                            let _ = client.close(handle).await;
+                                            ctx.write_err(&format!("tail: {}: {}", path, e));
+                                            return Ok(1);
+                                        }
+                                    }
+                                }
+
+                                // Display last N lines
+                                let content_str = String::from_utf8_lossy(&content);
+                                let all_lines: Vec<&str> = content_str.lines().collect();
+                                let start = all_lines.len().saturating_sub(n);
+
+                                for line in &all_lines[start..] {
+                                    ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
+                                }
+
+                                // Follow mode: continuously read new content
+                                if follow {
+                                    loop {
+                                        match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
+                                            Ok(data) if data.is_empty() => {
+                                                // No new data, flush output and sleep
+                                                ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
+                                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                                continue;
+                                            }
+                                            Ok(data) => {
+                                                // New data arrived, display it
+                                                ctx.stdout.write(&data).map_err(Sh9Error::Io)?;
+                                                offset += data.len() as u64;
+                                            }
+                                            Err(_) => {
+                                                // Error or EOF, flush and exit follow mode
+                                                ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
+                                                let _ = client.close(handle).await;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let _ = client.close(handle).await;
+                                }
+                            }
+                            Err(e) => {
+                                ctx.write_err(&format!("tail: {}: {}", path, e));
+                                return Ok(1);
+                            }
+                        }
+                    } else {
+                        ctx.write_err("tail: not connected to FS9 server");
+                        return Ok(1);
+                    }
                 }
                 Ok(0)
             }
@@ -1718,26 +2019,74 @@ impl Shell {
                 Ok(0)
             }
             
-            "plugins" => {
+            "plugin" => {
                 if let Some(client) = &self.client {
-                    match client.list_mounts().await {
-                        Ok(mounts) => {
-                            ctx.stdout.writeln("Mounted plugins:").map_err(Sh9Error::Io)?;
-                            for mount in mounts {
-                                ctx.stdout.writeln(&format!("  {} -> {}", 
-                                    mount.path, 
-                                    mount.provider_name
-                                )).map_err(Sh9Error::Io)?;
+                    if args.is_empty() {
+                        ctx.write_err("plugin: usage: plugin <load|unload|list> [args...]");
+                        return Ok(1);
+                    }
+
+                    match args[0].as_str() {
+                        "list" => {
+                            match client.list_plugins().await {
+                                Ok(plugins) => {
+                                    if plugins.is_empty() {
+                                        ctx.stdout.writeln("no plugins loaded").map_err(Sh9Error::Io)?;
+                                    } else {
+                                        for p in plugins {
+                                            ctx.stdout.writeln(&p).map_err(Sh9Error::Io)?;
+                                        }
+                                    }
+                                    Ok(0)
+                                }
+                                Err(e) => {
+                                    ctx.write_err(&format!("plugin list: {}", e));
+                                    Ok(1)
+                                }
                             }
-                            Ok(0)
                         }
-                        Err(e) => {
-                            ctx.write_err(&format!("plugins: {}", e));
+                        "load" => {
+                            if args.len() < 3 {
+                                ctx.write_err("plugin load: usage: plugin load <name> <path>");
+                                return Ok(1);
+                            }
+                            let name = &args[1];
+                            let path = &args[2];
+                            match client.load_plugin(name, path).await {
+                                Ok(info) => {
+                                    ctx.stdout.writeln(&format!("loaded plugin '{}': {}", info.name, info.status)).map_err(Sh9Error::Io)?;
+                                    Ok(0)
+                                }
+                                Err(e) => {
+                                    ctx.write_err(&format!("plugin load: {}", e));
+                                    Ok(1)
+                                }
+                            }
+                        }
+                        "unload" => {
+                            if args.len() < 2 {
+                                ctx.write_err("plugin unload: usage: plugin unload <name>");
+                                return Ok(1);
+                            }
+                            let name = &args[1];
+                            match client.unload_plugin(name).await {
+                                Ok(()) => {
+                                    ctx.stdout.writeln(&format!("unloaded plugin '{}'", name)).map_err(Sh9Error::Io)?;
+                                    Ok(0)
+                                }
+                                Err(e) => {
+                                    ctx.write_err(&format!("plugin unload: {}", e));
+                                    Ok(1)
+                                }
+                            }
+                        }
+                        _ => {
+                            ctx.write_err(&format!("plugin: unknown subcommand '{}'. Use: load, unload, list", args[0]));
                             Ok(1)
                         }
                     }
                 } else {
-                    ctx.write_err("plugins: not connected to FS9 server");
+                    ctx.write_err("plugin: not connected to FS9 server");
                     Ok(1)
                 }
             }

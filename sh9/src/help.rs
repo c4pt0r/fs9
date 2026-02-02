@@ -152,6 +152,30 @@ pub const COMMANDS: &[CommandHelp] = &[
         options: &[],
     },
     CommandHelp {
+        name: "fg",
+        summary: "Bring a background job to foreground",
+        usage: "fg [JOB_ID]",
+        options: &[
+            ("(no args)", "Resume most recent job"),
+            ("JOB_ID", "Resume job with specified ID"),
+        ],
+    },
+    CommandHelp {
+        name: "bg",
+        summary: "Resume a stopped job in background",
+        usage: "bg [JOB_ID]",
+        options: &[("(not implemented)", "sh9 doesn't support job control (Ctrl+Z)")],
+    },
+    CommandHelp {
+        name: "kill",
+        summary: "Terminate a background job",
+        usage: "kill <JOB_ID>",
+        options: &[
+            ("JOB_ID", "Job ID to terminate"),
+            ("%JOB_ID", "Job ID with % prefix (bash style)"),
+        ],
+    },
+    CommandHelp {
         name: "jq",
         summary: "Process JSON data",
         usage: "jq [FILTER]",
@@ -180,10 +204,20 @@ pub const COMMANDS: &[CommandHelp] = &[
         options: &[],
     },
     CommandHelp {
-        name: "mount",
-        summary: "List mounted filesystems",
-        usage: "mount",
+        name: "lsfs",
+        summary: "List available filesystems and current mounts",
+        usage: "lsfs",
         options: &[],
+    },
+    CommandHelp {
+        name: "mount",
+        summary: "List or create filesystem mounts",
+        usage: "mount [FSTYPE MOUNT_POINT [CONFIG_JSON]]",
+        options: &[
+            ("(no args)", "List all mounts"),
+            ("FSTYPE MOUNT_POINT", "Mount FSTYPE at MOUNT_POINT"),
+            ("FSTYPE MOUNT_POINT CONFIG", "Mount with JSON config"),
+        ],
     },
     CommandHelp {
         name: "mv",
@@ -192,10 +226,14 @@ pub const COMMANDS: &[CommandHelp] = &[
         options: &[],
     },
     CommandHelp {
-        name: "plugins",
-        summary: "List mounted FS9 plugins",
-        usage: "plugins",
-        options: &[],
+        name: "plugin",
+        summary: "Manage FS9 plugins",
+        usage: "plugin <load|unload|list> [args...]",
+        options: &[
+            ("list", "List loaded plugins"),
+            ("load NAME PATH", "Load plugin from .so file"),
+            ("unload NAME", "Unload a plugin"),
+        ],
     },
     CommandHelp {
         name: "pwd",
@@ -253,9 +291,13 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "tail",
-        summary: "Output the last part of files",
-        usage: "tail [-n NUM] [FILE]",
-        options: &[("-n NUM", "Print last NUM lines (default 10)")],
+        summary: "Output the last part of files and optionally follow for new data",
+        usage: "tail [-n NUM] [-f] [FILE]...",
+        options: &[
+            ("-n NUM", "Print last NUM lines (default 10)"),
+            ("-NUM", "Same as -n NUM (e.g., -20)"),
+            ("-f, --follow", "Keep reading file for new data (useful for PubSubFS)"),
+        ],
     },
     CommandHelp {
         name: "tee",

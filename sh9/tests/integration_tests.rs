@@ -25,9 +25,15 @@ impl TestServer {
         let port = find_free_port()?;
         let url = format!("http://127.0.0.1:{}", port);
 
+        // Find plugins directory
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.parent().ok_or("Cannot find workspace root")?;
+        let plugins_dir = workspace_root.join("plugins");
+
         let process = Command::new(&server_bin)
             .env("FS9_PORT", port.to_string())
             .env("FS9_HOST", "127.0.0.1")
+            .env("FS9_PLUGIN_DIR", plugins_dir)
             .env("RUST_LOG", "warn")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -153,8 +159,8 @@ fn run_test_script(
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-    // Compare output
-    if stdout == expected {
+    // Compare output with pattern matching support
+    if matches_pattern(&expected, &stdout) {
         Ok(TestResult::Passed)
     } else {
         Ok(TestResult::Failed {
@@ -267,3 +273,60 @@ fn indent(s: &str, prefix: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+/// Check if actual output matches expected pattern.
+/// Supports wildcards: ____-__-__ __:__:__ matches any timestamp
+fn matches_pattern(expected: &str, actual: &str) -> bool {
+    let expected_lines: Vec<&str> = expected.lines().collect();
+    let actual_lines: Vec<&str> = actual.lines().collect();
+
+    if expected_lines.len() != actual_lines.len() {
+        return false;
+    }
+
+    for (exp, act) in expected_lines.iter().zip(actual_lines.iter()) {
+        if !line_matches(exp, act) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Check if a single line matches the pattern
+fn line_matches(pattern: &str, actual: &str) -> bool {
+    // Simple wildcard matching for timestamps
+    let parts: Vec<&str> = pattern.split("____-__-__ __:__:__").collect();
+    
+    if parts.len() == 1 {
+        // No wildcards, exact match
+        return pattern == actual;
+    }
+    
+    // Check prefix and suffix match
+    let mut pos = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if i == 0 {
+            // Check prefix
+            if !actual.starts_with(part) {
+                return false;
+            }
+            pos = part.len();
+        } else if i == parts.len() - 1 {
+            // Check suffix
+            if !actual.ends_with(part) {
+                return false;
+            }
+        } else {
+            // Check middle part
+            if let Some(idx) = actual[pos..].find(part) {
+                pos += idx + part.len();
+            } else {
+                return false;
+            }
+        }
+    }
+    
+    true
+}
+

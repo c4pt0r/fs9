@@ -85,15 +85,16 @@ impl PluginManager {
     /// - Version check fails
     /// - A plugin with the same name is already loaded
     pub fn load(&self, name: &str, library_path: &Path) -> Result<(), PluginError> {
-        let mut plugins = self.plugins.lock().unwrap();
+        self.load_internal(Some(name), library_path).map(|_| ())
+    }
 
-        if plugins.contains_key(name) {
-            return Err(PluginError::AlreadyLoaded(name.to_string()));
-        }
+    pub fn load_from_path(&self, library_path: &Path) -> Result<String, PluginError> {
+        self.load_internal(None, library_path)
+    }
 
-        debug!(name = %name, path = ?library_path, "Loading plugin");
+    fn load_internal(&self, name_override: Option<&str>, library_path: &Path) -> Result<String, PluginError> {
+        debug!(path = ?library_path, "Loading plugin");
 
-        // Safety: We're loading a dynamic library. The caller must ensure it's valid.
         let library = unsafe { Library::new(library_path) }
             .map_err(|e| PluginError::LoadError(e.to_string()))?;
 
@@ -120,26 +121,65 @@ impl PluginManager {
             ));
         }
 
-        // Safety: vtable_ptr is valid and we're reading it once during load
         let vtable = unsafe { ptr::read(vtable_ptr) };
 
-        if vtable.version != FS9_SDK_VERSION {
+        if vtable.sdk_version != FS9_SDK_VERSION {
             return Err(PluginError::VersionMismatch {
-                plugin: vtable.version,
+                plugin: vtable.sdk_version,
                 sdk: FS9_SDK_VERSION,
             });
+        }
+
+        let name = if let Some(n) = name_override {
+            n.to_string()
+        } else {
+            let name_ptr = vtable.name;
+            let name_len = vtable.name_len;
+            if name_ptr.is_null() || name_len == 0 {
+                return Err(PluginError::CreationFailed("plugin name is null".to_string()));
+            }
+            unsafe {
+                let bytes = slice::from_raw_parts(name_ptr as *const u8, name_len);
+                std::str::from_utf8(bytes)
+                    .map_err(|_| PluginError::CreationFailed("invalid plugin name".to_string()))?
+                    .to_string()
+            }
+        };
+
+        let version_str = {
+            let ver_ptr = vtable.version;
+            let ver_len = vtable.version_len;
+            if !ver_ptr.is_null() && ver_len > 0 {
+                unsafe {
+                    let bytes = slice::from_raw_parts(ver_ptr as *const u8, ver_len);
+                    std::str::from_utf8(bytes).ok().map(|s| s.to_string())
+                }
+            } else {
+                None
+            }
+        };
+
+        let mut plugins = self.plugins.lock().unwrap();
+
+        if plugins.contains_key(&name) {
+            return Err(PluginError::AlreadyLoaded(name));
         }
 
         let loaded = Arc::new(LoadedPlugin {
             library,
             vtable,
-            name: name.to_string(),
+            name: name.clone(),
         });
 
-        plugins.insert(name.to_string(), loaded);
-        debug!(name = %name, "Plugin loaded successfully");
+        plugins.insert(name.clone(), loaded);
+        
+        if let Some(ver) = version_str {
+            debug!(name = %name, version = %ver, "Plugin loaded successfully");
+        } else {
+            debug!(name = %name, "Plugin loaded successfully");
+        }
 
-        Ok(())
+        Ok(name)
     }
 
     pub fn unload(&self, name: &str) -> Result<(), PluginError> {
@@ -195,6 +235,52 @@ impl PluginManager {
     #[must_use]
     pub fn loaded_plugins(&self) -> Vec<String> {
         self.plugins.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// Load all plugins from a directory.
+    ///
+    /// Scans the directory for `.so` (Linux), `.dylib` (macOS), or `.dll` (Windows) files
+    /// and attempts to load each one. The plugin name is read from the plugin's vtable.
+    ///
+    /// Returns the number of plugins successfully loaded.
+    pub fn load_from_directory(&self, dir: &Path) -> usize {
+        let mut loaded = 0;
+
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                debug!(path = ?dir, error = %e, "Failed to read plugin directory");
+                return 0;
+            }
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let extension = path.extension().and_then(|e| e.to_str());
+            let is_plugin = matches!(extension, Some("so") | Some("dylib") | Some("dll"));
+            if !is_plugin {
+                continue;
+            }
+
+            match self.load_from_path(&path) {
+                Ok(name) => {
+                    debug!(name = %name, path = ?path, "Auto-loaded plugin");
+                    loaded += 1;
+                }
+                Err(PluginError::AlreadyLoaded(_)) => {
+                    // Skip already loaded plugins
+                }
+                Err(e) => {
+                    debug!(path = ?path, error = %e, "Failed to load plugin");
+                }
+            }
+        }
+
+        loaded
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "fs9-fuse"
-description = "FS9 FUSE - FUSE filesystem adapter"
+description = "FS9 FUSE - Mount FS9 as a local filesystem"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,12 +8,20 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "fs9-fuse"
+path = "src/main.rs"
+
 [dependencies]
-fs9-sdk = { path = "../sdk" }
-tokio.workspace = true
-async-trait.workspace = true
-bytes.workspace = true
+fs9-client = { path = "../clients/rust" }
+fs9-config = { path = "../config" }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
+fuser = "0.15"
+clap = { version = "4", features = ["derive"] }
 tracing.workspace = true
+tracing-subscriber.workspace = true
+libc = "0.2"
+ctrlc = "3.4"
 
 [lints]
 workspace = true

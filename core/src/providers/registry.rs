@@ -95,15 +95,6 @@ pub fn default_registry() -> ProviderRegistry {
         Ok(Arc::new(fs))
     });
 
-    registry.register("streamfs", |config| {
-        let ring_size = config.get_usize("ring_size").unwrap_or(100);
-        let channel_size = config.get_usize("channel_size").unwrap_or(100);
-        Ok(Arc::new(super::streamfs::StreamFS::new(
-            ring_size,
-            channel_size,
-        )))
-    });
-
     registry.register("proxyfs", |config| {
         let upstream = config
             .get_str("upstream")
@@ -142,7 +133,6 @@ mod tests {
         let providers = registry.list();
         assert!(providers.contains(&"memfs"));
         assert!(providers.contains(&"localfs"));
-        assert!(providers.contains(&"streamfs"));
         assert!(providers.contains(&"proxyfs"));
     }
 
@@ -158,16 +148,6 @@ mod tests {
         let registry = default_registry();
         let config = ProviderConfig::new().with("root", "/tmp");
         let provider = registry.create("localfs", config);
-        assert!(provider.is_ok());
-    }
-
-    #[test]
-    fn test_create_streamfs() {
-        let registry = default_registry();
-        let config = ProviderConfig::new()
-            .with("ring_size", 50usize)
-            .with("channel_size", 50usize);
-        let provider = registry.create("streamfs", config);
         assert!(provider.is_ok());
     }
 

@@ -1,0 +1,6 @@
+mounted pubsubfs at /bgjobs
+=== Test 1: Quick background job ===
+=== Test 2: Jobs command ===
+=== Test 3: Pipeline ===
+hello world
+=== Test complete ===

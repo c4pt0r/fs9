@@ -1,5 +1,6 @@
-# Test plugins command
-# List mounted plugins/providers
-plugins
+# Test plugin and mount commands
+# List mounts
+mount
 echo "---"
-plugins list
+# List loaded plugins (sorted)
+plugin list | sort

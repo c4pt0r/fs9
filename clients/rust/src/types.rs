@@ -206,9 +206,9 @@ impl StatChanges {
 
 #[derive(Debug, Clone)]
 pub struct FileHandle {
-    pub(crate) id: String,
-    pub(crate) path: String,
-    pub(crate) metadata: FileInfo,
+    pub id: String,
+    pub path: String,
+    pub metadata: FileInfo,
 }
 
 impl FileHandle {
@@ -366,4 +366,25 @@ pub(crate) struct ErrorResponse {
     pub error: String,
     #[allow(dead_code)]
     pub code: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct PluginInfo {
+    pub name: String,
+    pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LoadPluginResponse {
+    pub name: String,
+    pub status: String,
+}
+
+impl From<LoadPluginResponse> for PluginInfo {
+    fn from(resp: LoadPluginResponse) -> Self {
+        Self {
+            name: resp.name,
+            status: resp.status,
+        }
+    }
 }

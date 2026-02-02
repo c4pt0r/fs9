@@ -12,6 +12,6 @@ pub use mount::{MountEntry, MountPoint, MountTable};
 pub use plugin::{PluginError, PluginManager, PluginProvider};
 pub use providers::{
     default_registry, LocalFs, MemoryFs, ProxyFs, ProviderConfig, ProviderFactory,
-    ProviderRegistry, StreamFS,
+    ProviderRegistry,
 };
 pub use vfs::VfsRouter;

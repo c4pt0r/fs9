@@ -32,10 +32,12 @@ fs9/
 ├── sdk-ffi/          # C-compatible ABI for plugins
 ├── core/             # VFS router, mount table, handle registry
 ├── server/           # HTTP REST API server (Axum)
-├── fuse/             # FUSE adapter (stub)
+├── fuse/             # FUSE adapter for mounting FS9 as local filesystem
 ├── sh9/              # Interactive shell for FS9
 ├── plugins/
-│   ├── s3/           # S3-backed filesystem
+│   ├── pagefs/       # KV-backed filesystem (16KB pages, Git compatible)
+│   ├── pubsubfs/     # Pub/Sub filesystem (topic-based messaging)
+│   ├── streamfs/     # Streaming filesystem (real-time data fanout)
 │   └── kv/           # Key-value store filesystem
 ├── clients/
 │   ├── rust/         # Rust client SDK
@@ -89,7 +91,26 @@ RUST_LOG=info cargo run -p fs9-server
 | `FS9_HOST` | `0.0.0.0` | Host address to bind |
 | `FS9_PORT` | `9999` | Port to listen on |
 | `FS9_JWT_SECRET` | *(empty)* | JWT secret for authentication. If not set, auth is disabled |
+| `FS9_PLUGIN_DIR` | *(none)* | Additional directory to load plugins from |
 | `RUST_LOG` | *(none)* | Logging level: `error`, `warn`, `info`, `debug`, `trace` |
+
+### Auto-Loading Plugins
+
+The server automatically loads plugins from:
+1. `FS9_PLUGIN_DIR` environment variable (if set)
+2. `./plugins` directory (if exists)
+
+Plugin files must be named `libfs9_plugin_<name>.so` (Linux) or `.dylib` (macOS).
+
+```bash
+# Copy plugin to ./plugins
+cp target/debug/libfs9_plugin_pagefs.so ./plugins/
+
+# Start server - plugins are auto-loaded
+RUST_LOG=info ./target/release/fs9-server
+# Output: Loaded plugins from ./plugins count=1
+# Output: Available plugins plugins=["pagefs"]
+```
 
 ### Examples
 
@@ -212,20 +233,281 @@ sh9:/> exit
 | Arithmetic | `$((expr))` | `echo $((2 + 3))` |
 | Pipelines | `cmd1 \| cmd2` | `ls \| grep txt` |
 | Redirection | `>`, `>>`, `<` | `echo hi > file` |
+| Background Jobs | `cmd &` | `tail -f /logs > /output &` |
+| Job Control | `jobs`, `fg`, `bg`, `kill %N` | `jobs; kill %1` |
 | If/Else | `if [...]; then ... fi` | `if [ $x -eq 1 ]; then echo yes; fi` |
 | For Loop | `for ... in ...; do ... done` | `for i in 1 2 3; do echo $i; done` |
 | While Loop | `while ...; do ... done` | `while [ $x -lt 5 ]; do x=$((x+1)); done` |
 | Functions | `name() { ... }` | `greet() { echo "Hi $1"; }; greet World` |
-| Background | `cmd &` | `sleep 10 &; jobs` |
 | HTTP | `http get/post URL` | `http get http://api.example.com` |
+
+### Background Jobs & Output Redirection
+
+sh9 supports background jobs with full output redirection, perfect for real-time data streaming:
+
+```bash
+# Start a background subscriber
+sh9:/> tail -f /pub/logs > /pub/logs_backup &
+[1] Started
+
+# Publish messages
+sh9:/> echo "log 1" > /pub/logs
+sh9:/> echo "log 2" > /pub/logs
+
+# Check job status
+sh9:/> jobs
+[1] Running tail -f /pub/logs > /pub/logs_backup
+
+# View captured output
+sh9:/> cat /pub/logs_backup
+log 1
+log 2
+
+# Terminate background job
+sh9:/> kill %1
+[1] Terminated tail -f /pub/logs > /pub/logs_backup
+```
 
 ### Built-in Commands
 
-**File Operations:** `ls` (`-l`), `cat`, `mkdir`, `rm`, `mv`, `cp`, `stat`, `touch`, `truncate`, `pwd`, `cd`  
-**Text Processing:** `echo`, `grep` (with `-E`), `wc` (`-l`/`-w`/`-c`), `head` (`-n`), `tail` (`-n`)  
-**Control:** `true`, `false`, `exit`, `return`, `break`, `continue`, `local`, `export`, `test`/`[`  
-**System:** `mount` (list mounts)  
-**Advanced:** `http` (GET/POST), `sleep`, `jobs`, `wait`
+**File Operations:** `ls` (`-l`), `cat`, `mkdir`, `rm`, `mv`, `cp`, `stat`, `touch`, `truncate`, `pwd`, `cd`
+**Text Processing:** `echo`, `grep` (with `-E`), `wc` (`-l`/`-w`/`-c`), `head` (`-n`), `tail` (`-n`, `-f`)
+**Control:** `true`, `false`, `exit`, `return`, `break`, `continue`, `local`, `export`, `test`/`[`
+**Filesystem:** `mount` (list/create mounts), `lsfs` (list available filesystems), `plugin` (load/unload/list plugins)
+**Job Control:** `jobs` (list jobs), `fg` (foreground), `bg` (background), `kill` (terminate jobs), `wait` (wait for completion)
+**Advanced:** `http` (GET/POST), `sleep`
+
+### Filesystem Management
+
+```bash
+# List available filesystems and current mounts
+sh9:/> lsfs
+Available filesystems:
+  kv
+  pagefs
+  pubsubfs
+  streamfs
+  hellofs
+
+Current mounts:
+  /                    memfs
+
+# List loaded plugins
+sh9:/> plugin list
+pagefs
+pubsubfs
+
+# Mount a filesystem
+sh9:/> mount pagefs /page
+mounted pagefs at /page
+
+# Use it
+sh9:/> echo "hello" > /page/test.txt
+sh9:/> cat /page/test.txt
+hello
+
+# List all mounts
+sh9:/> mount
+/                    memfs
+/page                pagefs
+
+# Load a plugin manually (if not auto-loaded)
+sh9:/> plugin load myplugin /path/to/libfs9_plugin_myplugin.so
+loaded plugin 'myplugin': loaded
+
+# Unload a plugin
+sh9:/> plugin unload myplugin
+unloaded plugin 'myplugin'
+```
+
+---
+
+## PubSubFS Plugin
+
+PubSubFS is a topic-based publish-subscribe filesystem. Everything is a file:
+
+- **Write = Publish**: Writing to a topic file publishes a message
+- **Read = Subscribe**: Reading from a topic file subscribes to messages
+- **Auto-create**: Topics are automatically created on first write
+- **Real-time**: Use `tail -f` for continuous message streaming
+
+### Quick Example
+
+```bash
+# Mount PubSubFS
+sh9:/> mount pubsubfs /pub
+
+# Publish messages
+sh9:/> echo "Hello World" > /pub/chat
+sh9:/> echo "Second message" > /pub/chat
+
+# Subscribe (read historical messages)
+sh9:/> cat /pub/chat
+Hello World
+Second message
+
+# Real-time subscription (background)
+sh9:/> tail -f /pub/logs > /pub/logs_backup &
+sh9:/> echo "log entry 1" > /pub/logs
+sh9:/> echo "log entry 2" > /pub/logs
+sh9:/> cat /pub/logs_backup
+log entry 1
+log entry 2
+sh9:/> kill %1
+
+# View topic info
+sh9:/> cat /pub/chat.info
+name: chat
+subscribers: 0
+messages: 2
+ring_size: 100
+created: 2026-01-29 10:30:00
+modified: 2026-01-29 10:30:15
+
+# Delete topic
+sh9:/> rm /pub/chat
+```
+
+### Features
+
+- **Multiple subscribers**: Broadcast messages to all active subscribers
+- **Message history**: Ring buffer stores recent messages (configurable, default 100)
+- **Pure text output**: Messages are output exactly as written (no added timestamps)
+- **Background subscriptions**: Use `tail -f` with `&` for async processing
+
+### Use Cases
+
+- Log aggregation from multiple services
+- Event notification system
+- Inter-process communication
+- Real-time data streaming
+- Simple message queues
+
+For detailed usage, see `plugins/pubsubfs/USAGE.md`.
+
+---
+
+## PageFS Plugin
+
+PageFS is a KV-backed filesystem plugin optimized for Git operations. It provides:
+
+- **16KB page-based storage** - Efficient for both small and large files
+- **POSIX-compatible rename** - Atomic rename with proper conflict handling (required for Git lockfiles)
+- **Configurable uid/gid** - Prevents Git safe.directory warnings
+- **Correct timestamps** - Handles pre-1970 dates correctly
+
+### Configuration
+
+PageFS can be configured via JSON when mounted:
+
+```json
+{
+  "uid": 1000,
+  "gid": 1000
+}
+```
+
+### Capabilities
+
+| Capability | Supported |
+|------------|-----------|
+| Basic R/W | Yes |
+| Truncate | Yes |
+| Rename | Yes |
+| Directories | Yes |
+| Permissions | Yes |
+| Timestamps | Yes |
+
+---
+
+## FUSE Mount
+
+Mount FS9 as a local filesystem using FUSE. This enables using standard tools like `git`, `vim`, `grep`, etc. on FS9.
+
+### Prerequisites
+
+```bash
+# Ubuntu/Debian
+sudo apt install fuse3 libfuse3-dev
+
+# macOS
+brew install macfuse
+```
+
+### Building
+
+```bash
+cargo build -p fs9-fuse --release
+```
+
+### Usage
+
+```bash
+# Terminal 1: Start the server
+RUST_LOG=info cargo run -p fs9-server
+
+# Terminal 2: Mount FS9
+mkdir -p /tmp/fs9-mount
+./target/release/fs9-fuse /tmp/fs9-mount --server http://localhost:9999 --foreground
+
+# Terminal 3: Use the filesystem
+cd /tmp/fs9-mount
+echo "Hello FUSE" > hello.txt
+cat hello.txt
+git init && git add . && git commit -m "init"
+```
+
+### Command Line Options
+
+```
+fs9-fuse <MOUNTPOINT> [OPTIONS]
+
+Arguments:
+  <MOUNTPOINT>  Directory to mount the filesystem
+
+Options:
+  -s, --server <URL>   FS9 server URL [default: http://localhost:9999]
+  -f, --foreground     Run in foreground (don't daemonize)
+  -o, --options <OPT>  FUSE mount options
+  -h, --help           Print help
+```
+
+### Unmounting
+
+```bash
+# Linux
+fusermount -u /tmp/fs9-mount
+
+# macOS
+umount /tmp/fs9-mount
+```
+
+### Git Workflow Example
+
+```bash
+# Mount FS9
+mkdir -p /tmp/fs9-git
+./target/release/fs9-fuse /tmp/fs9-git --server http://localhost:9999 -f &
+
+# Create a git repository
+cd /tmp/fs9-git
+mkdir myproject && cd myproject
+git init
+echo "# My Project" > README.md
+git add README.md
+git commit -m "Initial commit"
+
+# All git operations work
+git branch feature
+git checkout feature
+echo "new feature" >> README.md
+git add . && git commit -m "Add feature"
+git checkout main
+git merge feature
+
+# Unmount when done
+fusermount -u /tmp/fs9-git
+```
 
 ---
 
@@ -329,7 +611,64 @@ make test-python
 
 # Run sh9 tests
 cargo test -p sh9
+
+# Run PageFS unit tests
+cargo test -p fs9-plugin-pagefs
 ```
+
+### FUSE Integration Tests
+
+FUSE integration tests require a running FS9 server. They test real filesystem operations including Git workflows and bash pipes.
+
+```bash
+# Terminal 1: Start the server
+RUST_LOG=info cargo run -p fs9-server
+
+# Terminal 2: Run FUSE integration tests
+cargo test -p fs9-fuse --test integration -- --ignored
+```
+
+#### Available Test Suites
+
+| Test Suite | Command | Description |
+|------------|---------|-------------|
+| All FUSE tests | `cargo test -p fs9-fuse --test integration -- --ignored` | Run all 32 integration tests |
+| Git tests | `cargo test -p fs9-fuse --test integration test_fuse_git -- --ignored` | Git init, commit, branch, stash, clone |
+| Bash pipe tests | `cargo test -p fs9-fuse --test integration test_fuse_bash -- --ignored` | Pipes, redirects, grep, sed, awk, tee |
+| Basic file tests | `cargo test -p fs9-fuse --test integration test_fuse_write -- --ignored` | Read, write, truncate, append |
+
+#### Git E2E Tests
+
+```bash
+# Run with verbose output
+cargo test -p fs9-fuse --test integration test_fuse_git -- --ignored --nocapture
+```
+
+Tests:
+- `test_fuse_git_init_add_commit` - Basic git workflow
+- `test_fuse_git_executable_preserved` - File permissions (755)
+- `test_fuse_git_branch_and_checkout` - Branch operations
+- `test_fuse_git_stash` - Stash and pop
+- `test_fuse_git_clone_local` - Local clone
+
+#### Bash Pipe E2E Tests
+
+```bash
+# Run with verbose output
+cargo test -p fs9-fuse --test integration test_fuse_bash -- --ignored --nocapture
+```
+
+Tests:
+- `test_fuse_bash_pipe_redirect` - `echo > file`, `echo >> file`
+- `test_fuse_bash_pipe_grep` - `cat | grep`, `grep -c`
+- `test_fuse_bash_pipe_sort_uniq` - `sort | uniq`
+- `test_fuse_bash_pipe_wc` - `wc -l`, `wc -w`
+- `test_fuse_bash_pipe_head_tail` - `head`, `tail`, `head | tail`
+- `test_fuse_bash_pipe_sed_awk` - `sed`, `awk`
+- `test_fuse_bash_pipe_tee` - `tee` to multiple files
+- `test_fuse_bash_pipe_xargs` - `ls | xargs cat`
+- `test_fuse_bash_subshell_and_redirect` - `(cmd; cmd) > file`
+- `test_fuse_bash_here_document` - `cat << EOF`
 
 ## License
 

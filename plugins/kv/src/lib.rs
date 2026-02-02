@@ -695,8 +695,15 @@ unsafe extern "C" fn remove_fn(
     }
 }
 
+static PLUGIN_NAME: &[u8] = b"kv";
+static PLUGIN_VERSION: &[u8] = b"0.1.0";
+
 static VTABLE: PluginVTable = PluginVTable {
-    version: FS9_SDK_VERSION,
+    sdk_version: FS9_SDK_VERSION,
+    name: PLUGIN_NAME.as_ptr() as *const libc::c_char,
+    name_len: PLUGIN_NAME.len(),
+    version: PLUGIN_VERSION.as_ptr() as *const libc::c_char,
+    version_len: PLUGIN_VERSION.len(),
     create: create_provider,
     destroy: destroy_provider,
     get_capabilities: get_capabilities,
@@ -735,7 +742,7 @@ mod tests {
         let vtable = fs9_plugin_vtable();
         assert!(!vtable.is_null());
         unsafe {
-            assert_eq!((*vtable).version, FS9_SDK_VERSION);
+            assert_eq!((*vtable).sdk_version, FS9_SDK_VERSION);
         }
     }
 

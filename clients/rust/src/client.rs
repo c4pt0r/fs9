@@ -266,6 +266,81 @@ impl Fs9Client {
         self.wstat(path, StatChanges::new().rename(new_name)).await
     }
 
+    pub async fn load_plugin(&self, name: &str, path: &str) -> Result<PluginInfo> {
+        #[derive(Serialize)]
+        struct LoadPluginRequest<'a> {
+            name: &'a str,
+            path: &'a str,
+        }
+
+        let resp = self
+            .client
+            .post(format!("{}/api/v1/plugin/load", self.base_url))
+            .json(&LoadPluginRequest { name, path })
+            .send()
+            .await?;
+
+        self.handle_response::<LoadPluginResponse>(resp)
+            .await
+            .map(Into::into)
+    }
+
+    pub async fn unload_plugin(&self, name: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct UnloadPluginRequest<'a> {
+            name: &'a str,
+        }
+
+        let resp = self
+            .client
+            .post(format!("{}/api/v1/plugin/unload", self.base_url))
+            .json(&UnloadPluginRequest { name })
+            .send()
+            .await?;
+
+        self.handle_empty_response(resp).await
+    }
+
+    pub async fn list_plugins(&self) -> Result<Vec<String>> {
+        let resp = self
+            .client
+            .get(format!("{}/api/v1/plugin/list", self.base_url))
+            .send()
+            .await?;
+
+        self.handle_response(resp).await
+    }
+
+    pub async fn mount_plugin(
+        &self,
+        mount_path: &str,
+        provider: &str,
+        config: Option<serde_json::Value>,
+    ) -> Result<MountInfo> {
+        #[derive(Serialize)]
+        struct MountPluginRequest<'a> {
+            path: &'a str,
+            provider: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            config: Option<serde_json::Value>,
+        }
+
+        let resp = self
+            .client
+            .post(format!("{}/api/v1/mount", self.base_url))
+            .json(&MountPluginRequest {
+                path: mount_path,
+                provider,
+                config,
+            })
+            .send()
+            .await?;
+
+        self.handle_response::<MountResponse>(resp)
+            .await
+            .map(Into::into)
+    }
+
     async fn handle_response<T: serde::de::DeserializeOwned>(
         &self,
         resp: reqwest::Response,

@@ -6,10 +6,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum JobStatus {
+    Running,
+    Done(i32),  // exit code
+}
+
 pub struct BackgroundJob {
     pub id: usize,
     pub command: String,
     pub handle: JoinHandle<i32>,
+    pub status: JobStatus,
 }
 
 pub struct Shell {
@@ -106,8 +113,39 @@ impl Shell {
     pub fn add_job(&mut self, command: String, handle: JoinHandle<i32>) -> usize {
         let id = self.next_job_id;
         self.next_job_id += 1;
-        self.jobs.push(BackgroundJob { id, command, handle });
+        self.jobs.push(BackgroundJob {
+            id,
+            command,
+            handle,
+            status: JobStatus::Running,
+        });
+        eprintln!("[{}] Started", id);
         id
+    }
+
+    /// Update job statuses (check which jobs are done)
+    pub fn update_job_statuses(&mut self) {
+        for job in &mut self.jobs {
+            if job.status == JobStatus::Running && job.handle.is_finished() {
+                // Note: We can't get the exit code without consuming the handle
+                job.status = JobStatus::Done(0);
+            }
+        }
+    }
+
+    /// Remove completed jobs
+    pub fn cleanup_jobs(&mut self) {
+        self.jobs.retain(|job| job.status == JobStatus::Running);
+    }
+
+    /// Get a job by ID
+    pub fn get_job(&self, id: usize) -> Option<&BackgroundJob> {
+        self.jobs.iter().find(|j| j.id == id)
+    }
+
+    /// Get the most recent job
+    pub fn get_current_job(&self) -> Option<&BackgroundJob> {
+        self.jobs.last()
     }
 }
 

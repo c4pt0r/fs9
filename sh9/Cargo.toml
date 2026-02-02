@@ -20,6 +20,7 @@ tokio = { workspace = true }
 
 # FS9 client
 fs9-client = { path = "../clients/rust" }
+fs9-config = { path = "../config" }
 
 # Parser
 chumsky = "0.9"

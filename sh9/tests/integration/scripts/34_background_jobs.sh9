@@ -1,0 +1,24 @@
+# Test background jobs and job control
+
+# Mount pubsubfs at a unique path
+mount pubsubfs /bgjobs
+
+# Test 1: Background job completes quickly
+echo "=== Test 1: Quick background job ==="
+echo "test message" > /bgjobs/topic1 &
+wait
+jobs
+
+# Test 2: List jobs
+echo "=== Test 2: Jobs command ==="
+echo "msg1" > /bgjobs/t1 &
+echo "msg2" > /bgjobs/t2 &
+wait
+jobs
+
+# Test 3: Background with pipe
+echo "=== Test 3: Pipeline ==="
+echo "hello world" | cat &
+wait
+
+echo "=== Test complete ==="

@@ -216,7 +216,11 @@ pub type RemoveFn =
 
 #[repr(C)]
 pub struct PluginVTable {
-    pub version: u32,
+    pub sdk_version: u32,
+    pub name: *const c_char,
+    pub name_len: size_t,
+    pub version: *const c_char,
+    pub version_len: size_t,
     pub create: CreateProviderFn,
     pub destroy: DestroyProviderFn,
     pub get_capabilities: GetCapabilitiesFn,
@@ -230,6 +234,9 @@ pub struct PluginVTable {
     pub readdir: ReaddirFn,
     pub remove: RemoveFn,
 }
+
+unsafe impl Sync for PluginVTable {}
+unsafe impl Send for PluginVTable {}
 
 pub unsafe fn str_from_c(ptr: *const c_char, len: size_t) -> Option<&'static str> {
     if ptr.is_null() {

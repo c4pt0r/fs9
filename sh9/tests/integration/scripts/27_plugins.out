@@ -1,7 +1,7 @@
-Mounted plugins:
-  / -> memfs
-  /streamfs -> streamfs
+/                    memfs
 ---
-Mounted plugins:
-  / -> memfs
-  /streamfs -> streamfs
+hellofs
+kv
+pagefs
+pubsubfs
+streamfs

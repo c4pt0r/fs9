@@ -1,6 +1,6 @@
 [package]
-name = "fs9-plugin-s3"
-description = "FS9 Plugin - S3-backed filesystem"
+name = "fs9-plugin-streamfs"
+description = "FS9 Plugin - Streaming filesystem with real-time data fanout"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -14,12 +14,10 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 fs9-sdk = { path = "../../sdk" }
 fs9-sdk-ffi = { path = "../../sdk-ffi" }
-tokio.workspace = true
-async-trait.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
 bytes.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tracing.workspace = true
 libc = "0.2"
 
 [dev-dependencies]

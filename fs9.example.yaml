@@ -1,0 +1,75 @@
+# FS9 Configuration Example
+# Copy to ~/.config/fs9/fs9.yaml or ./fs9.yaml
+
+server:
+  host: "0.0.0.0"
+  port: 9999
+
+  auth:
+    enabled: false
+    jwt_secret: "${FS9_JWT_SECRET}"
+    issuer: "fs9"
+    audience: "fs9-clients"
+
+  plugins:
+    directories:
+      - "./plugins"
+      - "/usr/lib/fs9/plugins"
+    preload: []
+
+mounts:
+  - path: "/"
+    provider: memfs
+
+  # Uncomment to add S3-backed storage:
+  # - path: "/data"
+  #   provider: pagefs
+  #   config:
+  #     backend:
+  #       type: s3
+  #       bucket: "my-fs9-bucket"
+  #       prefix: "data"
+  #     uid: 1000
+  #     gid: 1000
+
+  # Uncomment for local filesystem passthrough:
+  # - path: "/local"
+  #   provider: localfs
+  #   config:
+  #     root: "/srv/fs9-data"
+
+  # Uncomment for remote FS9 proxy:
+  # - path: "/remote"
+  #   provider: proxyfs
+  #   config:
+  #     upstream: "https://other-fs9.example.com:9999"
+  #     token: "${FS9_REMOTE_TOKEN}"
+
+fuse:
+  server: "http://localhost:9999"
+  token: "${FS9_TOKEN}"
+
+  options:
+    allow_other: false
+    allow_root: false
+    auto_unmount: true
+    read_only: false
+
+  cache:
+    attr_ttl: "1s"
+    entry_ttl: "1s"
+
+shell:
+  server: "http://localhost:9999"
+  token: "${FS9_TOKEN}"
+  prompt: "sh9:{cwd}> "
+
+  history:
+    enabled: true
+    file: "~/.fs9_history"
+    max_entries: 10000
+
+logging:
+  level: info
+  format: pretty
+  filter: ""

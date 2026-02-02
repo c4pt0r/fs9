@@ -1,0 +1,28 @@
+[package]
+name = "fs9-plugin-pubsubfs"
+description = "FS9 Plugin - Pub/Sub filesystem with topic-based messaging"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fs9-sdk = { path = "../../sdk" }
+fs9-sdk-ffi = { path = "../../sdk-ffi" }
+tokio = { workspace = true, features = ["sync", "time"] }
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc = "0.2"
+chrono = "0.4"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,41 @@
+hellofs
+kv
+pagefs
+pubsubfs
+streamfs
+mounted pubsubfs at /ps
+=== Initial state ===
+README
+=== Create topic via write ===
+README
+chat
+chat.info
+=== Publish messages ===
+=== Topic info ===
+name: chat
+subscribers: 0
+messages: 3
+ring_size: 100
+created: ____-__-__ __:__:__
+modified: ____-__-__ __:__:__
+=== Subscribe (read historical) ===
+hello world
+alice: hi!
+bob: hello!
+=== Create logs topic ===
+=== List all topics ===
+README
+chat
+chat.info
+logs
+logs.info
+=== Read logs ===
+log1
+log2
+=== Delete chat topic ===
+README
+logs
+logs.info
+=== Clean up ===
+README
+=== Test complete ===

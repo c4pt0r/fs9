@@ -285,9 +285,29 @@ impl FsProvider for MemoryFs {
                     Self::normalize_path(&format!("{parent}/{new_name}"))
                 }
             };
-            if entries.contains_key(&new_path) {
-                entries.insert(path, entry);
-                return Err(FsError::already_exists(&new_path));
+            if let Some(existing) = entries.get(&new_path) {
+                match existing {
+                    MemEntry::Dir(_) => {
+                        let has_children = entries.keys().any(|k| {
+                            k != &new_path && k.starts_with(&new_path) && k[new_path.len()..].starts_with('/')
+                        });
+                        if has_children {
+                            entries.insert(path, entry);
+                            return Err(FsError::directory_not_empty(&new_path));
+                        }
+                        if matches!(entry, MemEntry::File(_)) {
+                            entries.insert(path, entry);
+                            return Err(FsError::is_directory(&new_path));
+                        }
+                    }
+                    MemEntry::File(_) | MemEntry::Symlink(_) => {
+                        if matches!(entry, MemEntry::Dir(_)) {
+                            entries.insert(path, entry);
+                            return Err(FsError::not_directory(&new_path));
+                        }
+                    }
+                }
+                entries.remove(&new_path);
             }
             entries.insert(new_path, entry);
             return Ok(());

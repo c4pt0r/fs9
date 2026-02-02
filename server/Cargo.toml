@@ -11,6 +11,7 @@ rust-version.workspace = true
 [dependencies]
 fs9-sdk = { path = "../sdk", features = ["serde"] }
 fs9-core = { path = "../core" }
+fs9-config = { path = "../config" }
 tokio.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
