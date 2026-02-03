@@ -469,3 +469,160 @@ async fn contract_statfs() {
     assert!(stats.total_bytes > 0, "should have total bytes");
     assert!(stats.block_size > 0, "should have block size");
 }
+
+// ============================================================================
+// PageFS Plugin Tests
+// Run the same contract suite with PageFS backend
+// ============================================================================
+
+/// PageFS Contract #1: write/close/stat/read
+#[tokio::test]
+async fn pagefs_write_close_stat_read() {
+    let server = TestServer::start_with_pagefs().await;
+    let client = Client::new();
+    let path = test_path("pfs_write");
+
+    // Open with create
+    let resp = client
+        .post(format!("{}/api/v1/open", server.url))
+        .json(&json!({ "path": path, "flags": 0x242 }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "open failed: {:?}", resp.text().await);
+    let open_resp: OpenResponse = resp.json().await.unwrap();
+
+    // Write
+    let content = b"PageFS test content!";
+    let resp = client
+        .post(format!(
+            "{}/api/v1/write?handle_id={}&offset=0",
+            server.url, open_resp.handle_id
+        ))
+        .body(content.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "write failed");
+    let write_resp: WriteResponse = resp.json().await.unwrap();
+    assert_eq!(write_resp.bytes_written, content.len());
+
+    // Close
+    client
+        .post(format!("{}/api/v1/close", server.url))
+        .json(&json!({ "handle_id": open_resp.handle_id }))
+        .send()
+        .await
+        .unwrap();
+
+    // Stat
+    let resp = client
+        .get(format!("{}/api/v1/stat?path={}", server.url, path))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let info: FileInfo = resp.json().await.unwrap();
+    assert_eq!(info.size, content.len() as u64);
+
+    // Read back
+    let resp = client
+        .post(format!("{}/api/v1/open", server.url))
+        .json(&json!({ "path": path, "flags": 0x00 }))
+        .send()
+        .await
+        .unwrap();
+    let open_resp: OpenResponse = resp.json().await.unwrap();
+
+    let resp = client
+        .post(format!("{}/api/v1/read", server.url))
+        .json(&json!({
+            "handle_id": open_resp.handle_id,
+            "offset": 0,
+            "size": 100
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let data = resp.bytes().await.unwrap();
+    assert_eq!(&data[..], content);
+
+    // Cleanup
+    client
+        .post(format!("{}/api/v1/close", server.url))
+        .json(&json!({ "handle_id": open_resp.handle_id }))
+        .send()
+        .await
+        .unwrap();
+    client
+        .delete(format!("{}/api/v1/remove?path={}", server.url, path))
+        .send()
+        .await
+        .unwrap();
+}
+
+/// PageFS Contract #2: readdir sees files
+#[tokio::test]
+async fn pagefs_readdir() {
+    let server = TestServer::start_with_pagefs().await;
+    let client = Client::new();
+    let path = test_path("pfs_readdir");
+
+    // Create file
+    let resp = client
+        .post(format!("{}/api/v1/open", server.url))
+        .json(&json!({ "path": path, "flags": 0x242 }))
+        .send()
+        .await
+        .unwrap();
+    let open_resp: OpenResponse = resp.json().await.unwrap();
+    
+    client
+        .post(format!("{}/api/v1/close", server.url))
+        .json(&json!({ "handle_id": open_resp.handle_id }))
+        .send()
+        .await
+        .unwrap();
+
+    // Readdir
+    let resp = client
+        .get(format!("{}/api/v1/readdir?path=/", server.url))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let entries: Vec<FileInfo> = resp.json().await.unwrap();
+    
+    let found = entries.iter().any(|e| e.path == path || e.path.ends_with(&path[1..]));
+    assert!(found, "File should be visible. Entries: {:?}", entries);
+
+    // Cleanup
+    client
+        .delete(format!("{}/api/v1/remove?path={}", server.url, path))
+        .send()
+        .await
+        .unwrap();
+}
+
+/// PageFS Contract #3: capabilities
+#[tokio::test]
+async fn pagefs_capabilities() {
+    let server = TestServer::start_with_pagefs().await;
+    let client = Client::new();
+
+    #[derive(Debug, Deserialize)]
+    struct Caps {
+        flags: u64,
+    }
+
+    let resp = client
+        .get(format!("{}/api/v1/capabilities?path=/", server.url))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    let caps: Caps = resp.json().await.unwrap();
+    assert!(caps.flags > 0, "PageFS should have capabilities");
+}

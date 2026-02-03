@@ -3,9 +3,10 @@
 //! Starts the FS9 server in the same process with a random port,
 //! allowing fast, reliable integration tests without external processes.
 
-use fs9_core::{HandleRegistry, MemoryFs, MountTable, VfsRouter};
+use fs9_core::{HandleRegistry, MemoryFs, MountTable, PluginManager, VfsRouter};
 use fs9_sdk::FsProvider;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -24,8 +25,46 @@ impl TestServer {
         Self::start_with_provider(Arc::new(MemoryFs::new())).await
     }
 
+    /// Start a test server with PageFS plugin (in-memory KV backend).
+    pub async fn start_with_pagefs() -> Self {
+        // Find the plugin library
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.parent().unwrap();
+        
+        let plugin_path = workspace_root.join("target/debug/libfs9_plugin_pagefs.so");
+        if !plugin_path.exists() {
+            panic!(
+                "PageFS plugin not found at {:?}. Run `cargo build -p fs9-plugin-pagefs` first.",
+                plugin_path
+            );
+        }
+
+        // Create plugin manager and load plugin
+        let plugin_manager = Arc::new(PluginManager::new());
+        plugin_manager
+            .load("pagefs", &plugin_path)
+            .expect("Failed to load PageFS plugin");
+
+        // Create provider with in-memory backend config
+        let provider = Arc::new(
+            plugin_manager
+                .create_provider("pagefs", r#"{"uid": 1000, "gid": 1000}"#)
+                .expect("Failed to create PageFS provider"),
+        );
+
+        Self::start_with_provider_and_plugin_manager(provider, Some(plugin_manager)).await
+    }
+
     /// Start a test server with a custom provider mounted at root.
     pub async fn start_with_provider(provider: Arc<dyn FsProvider>) -> Self {
+        Self::start_with_provider_and_plugin_manager(provider, None).await
+    }
+
+    /// Start a test server with a custom provider and optional plugin manager.
+    async fn start_with_provider_and_plugin_manager(
+        provider: Arc<dyn FsProvider>,
+        plugin_manager: Option<Arc<PluginManager>>,
+    ) -> Self {
         // Bind to random port
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -45,6 +84,7 @@ impl TestServer {
             mount_table,
             handle_registry,
             handle_map: Arc::new(tokio::sync::RwLock::new(HandleMap::new())),
+            plugin_manager,
         });
 
         // Create shutdown channel
@@ -99,6 +139,8 @@ pub struct TestAppState {
     pub mount_table: Arc<MountTable>,
     pub handle_registry: Arc<HandleRegistry>,
     pub handle_map: Arc<tokio::sync::RwLock<HandleMap>>,
+    #[allow(dead_code)]
+    pub plugin_manager: Option<Arc<PluginManager>>,  // Keep plugins alive
 }
 
 pub struct HandleMap {
