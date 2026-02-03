@@ -25,5 +25,15 @@ tower-http.workspace = true
 jsonwebtoken.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+reqwest = { workspace = true, features = ["json"] }
+once_cell = "1.19"
+base64 = "0.22"
+
+[[test]]
+name = "contract"
+path = "tests/contract.rs"
+
 [lints]
 workspace = true
