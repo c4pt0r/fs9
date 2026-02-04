@@ -1,8 +1,10 @@
 #![allow(missing_docs)]
 
 mod api;
-mod auth;
-mod state;
+
+use fs9_server::auth;
+use fs9_server::namespace;
+use fs9_server::state;
 
 use axum::middleware;
 use fs9_config::Fs9Config;
@@ -13,6 +15,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use auth::{AuthState, JwtConfig};
+use namespace::DEFAULT_NAMESPACE;
 
 #[tokio::main]
 async fn main() {
@@ -29,7 +32,14 @@ async fn main() {
     load_plugins(&state, &config);
     setup_mounts(&state, &registry, &config).await;
 
-    let auth_state = if config.server.auth.enabled && !config.server.auth.jwt_secret.is_empty() {
+    let danger_skip = std::env::var("FS9_DANGER_SKIP_AUTH")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    let auth_state = if danger_skip {
+        tracing::warn!("⚠️  FS9_DANGER_SKIP_AUTH is set — all auth checks BYPASSED. Do NOT use in production!");
+        AuthState::danger_skip()
+    } else if config.server.auth.enabled && !config.server.auth.jwt_secret.is_empty() {
         AuthState::new(JwtConfig::new(config.server.auth.jwt_secret.clone()))
     } else {
         if config.server.auth.enabled {
@@ -102,6 +112,9 @@ async fn setup_mounts(
     registry: &fs9_core::ProviderRegistry,
     config: &Fs9Config,
 ) {
+    // All config-defined mounts go into the default namespace.
+    let default_ns = state.namespace_manager.get_or_create(DEFAULT_NAMESPACE).await;
+
     for mount in &config.mounts {
         let config_json = mount
             .config
@@ -136,10 +149,10 @@ async fn setup_mounts(
 
         match provider {
             Ok(p) => {
-                if let Err(e) = state.mount_table.mount(&mount.path, &mount.provider, p).await {
+                if let Err(e) = default_ns.mount_table.mount(&mount.path, &mount.provider, p).await {
                     tracing::error!(path = %mount.path, error = %e, "Failed to mount");
                 } else {
-                    tracing::info!(path = %mount.path, provider = %mount.provider, "Mounted");
+                    tracing::info!(path = %mount.path, provider = %mount.provider, ns = DEFAULT_NAMESPACE, "Mounted");
                 }
             }
             Err(e) => {

@@ -1,6 +1,6 @@
 use axum::{
     body::Bytes,
-    extract::{Query, State},
+    extract::{Extension, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -9,6 +9,8 @@ use fs9_sdk::{FsError, FsProvider, Handle};
 use std::sync::Arc;
 
 use crate::api::models::*;
+use crate::auth::RequestContext;
+use crate::namespace::Namespace;
 use crate::state::AppState;
 
 pub type AppResult<T> = Result<T, AppError>;
@@ -32,6 +34,11 @@ impl IntoResponse for AppError {
     }
 }
 
+/// Resolve the namespace for this request from the RequestContext.
+async fn resolve_ns(state: &AppState, ctx: &RequestContext) -> Arc<Namespace> {
+    state.namespace_manager.get_or_create(&ctx.ns).await
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct PathQuery {
     pub path: String,
@@ -39,37 +46,45 @@ pub struct PathQuery {
 
 pub async fn stat(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<Json<FileInfoResponse>> {
-    let info = state.vfs.stat(&query.path).await?;
+    let ns = resolve_ns(&state, &ctx).await;
+    let info = ns.vfs.stat(&query.path).await?;
     Ok(Json(info.into()))
 }
 
 pub async fn wstat(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<WstatRequest>,
 ) -> AppResult<StatusCode> {
-    state.vfs.wstat(&req.path, req.changes.into()).await?;
+    let ns = resolve_ns(&state, &ctx).await;
+    ns.vfs.wstat(&req.path, req.changes.into()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn statfs(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<Json<FsStatsResponse>> {
-    let stats = state.vfs.statfs(&query.path).await?;
+    let ns = resolve_ns(&state, &ctx).await;
+    let stats = ns.vfs.statfs(&query.path).await?;
     Ok(Json(stats.into()))
 }
 
 pub async fn open(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<OpenRequest>,
 ) -> AppResult<Json<OpenResponse>> {
-    let handle = state.vfs.open(&req.path, req.flags.into()).await?;
-    let metadata = state.vfs.stat(&req.path).await?;
+    let ns = resolve_ns(&state, &ctx).await;
+    let handle = ns.vfs.open(&req.path, req.flags.into()).await?;
+    let metadata = ns.vfs.stat(&req.path).await?;
 
     let uuid = uuid::Uuid::new_v4().to_string();
-    state.handle_map.write().await.insert(uuid.clone(), handle.id());
+    ns.handle_map.write().await.insert(uuid.clone(), handle.id());
 
     Ok(Json(OpenResponse {
         handle_id: uuid,
@@ -79,32 +94,36 @@ pub async fn open(
 
 pub async fn read(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<ReadRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let handle_id = state
+    let ns = resolve_ns(&state, &ctx).await;
+    let handle_id = ns
         .handle_map
         .read()
         .await
         .get_id(&req.handle_id)
         .ok_or_else(|| FsError::invalid_argument("invalid handle_id"))?;
 
-    let data = state.vfs.read(&Handle::new(handle_id), req.offset, req.size).await?;
+    let data = ns.vfs.read(&Handle::new(handle_id), req.offset, req.size).await?;
     Ok((StatusCode::OK, data))
 }
 
 pub async fn write(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Query(query): Query<WriteQuery>,
     body: Bytes,
 ) -> AppResult<Json<WriteResponse>> {
-    let handle_id = state
+    let ns = resolve_ns(&state, &ctx).await;
+    let handle_id = ns
         .handle_map
         .read()
         .await
         .get_id(&query.handle_id)
         .ok_or_else(|| FsError::invalid_argument("invalid handle_id"))?;
 
-    let bytes_written = state.vfs.write(&Handle::new(handle_id), query.offset, body).await?;
+    let bytes_written = ns.vfs.write(&Handle::new(handle_id), query.offset, body).await?;
     Ok(Json(WriteResponse { bytes_written }))
 }
 
@@ -116,40 +135,48 @@ pub struct WriteQuery {
 
 pub async fn close(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<CloseRequest>,
 ) -> AppResult<StatusCode> {
-    let handle_id = state
+    let ns = resolve_ns(&state, &ctx).await;
+    let handle_id = ns
         .handle_map
         .write()
         .await
         .remove_by_uuid(&req.handle_id)
         .ok_or_else(|| FsError::invalid_argument("invalid handle_id"))?;
 
-    state.vfs.close(Handle::new(handle_id), req.sync).await?;
+    ns.vfs.close(Handle::new(handle_id), req.sync).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn readdir(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<Json<Vec<FileInfoResponse>>> {
-    let entries = state.vfs.readdir(&query.path).await?;
+    let ns = resolve_ns(&state, &ctx).await;
+    let entries = ns.vfs.readdir(&query.path).await?;
     Ok(Json(entries.into_iter().map(Into::into).collect()))
 }
 
 pub async fn remove(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<StatusCode> {
-    state.vfs.remove(&query.path).await?;
+    let ns = resolve_ns(&state, &ctx).await;
+    ns.vfs.remove(&query.path).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn capabilities(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<Json<CapabilitiesResponse>> {
-    let info = state.mount_table.get_mount_info(&query.path).await;
+    let ns = resolve_ns(&state, &ctx).await;
+    let info = ns.mount_table.get_mount_info(&query.path).await;
 
     match info {
         Some((mount, caps)) => {
@@ -176,8 +203,10 @@ pub async fn capabilities(
 
 pub async fn list_mounts(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
 ) -> Json<Vec<MountResponse>> {
-    let mounts = state.mount_table.list_mounts().await;
+    let ns = resolve_ns(&state, &ctx).await;
+    let mounts = ns.mount_table.list_mounts().await;
     Json(
         mounts
             .into_iter()
@@ -198,7 +227,7 @@ pub async fn load_plugin(
     Json(req): Json<LoadPluginRequest>,
 ) -> AppResult<Json<LoadPluginResponse>> {
     use std::path::Path;
-    
+
     state
         .plugin_manager
         .load(&req.name, Path::new(&req.path))
@@ -230,17 +259,18 @@ pub async fn list_plugins(
 
 pub async fn mount_plugin(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<MountPluginRequest>,
 ) -> AppResult<Json<MountResponse>> {
+    let ns = resolve_ns(&state, &ctx).await;
     let config = serde_json::to_string(&req.config).unwrap_or_default();
-    
+
     let provider = state
         .plugin_manager
         .create_provider(&req.provider, &config)
         .map_err(|e| FsError::internal(e.to_string()))?;
 
-    state
-        .mount_table
+    ns.mount_table
         .mount(&req.path, &req.provider, std::sync::Arc::new(provider))
         .await
         .map_err(|e| FsError::internal(e.to_string()))?;

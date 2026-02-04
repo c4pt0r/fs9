@@ -31,9 +31,21 @@ reqwest = { workspace = true, features = ["json"] }
 once_cell = "1.19"
 base64 = "0.22"
 
+[lib]
+name = "fs9_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fs9-server"
+path = "src/main.rs"
+
 [[test]]
 name = "contract"
 path = "tests/contract.rs"
+
+[[test]]
+name = "multitenant"
+path = "tests/multitenant.rs"
 
 [lints]
 workspace = true

@@ -1,14 +1,13 @@
-use fs9_core::{HandleRegistry, MountTable, PluginManager, VfsRouter};
+use fs9_core::PluginManager;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+use crate::namespace::{Namespace, NamespaceManager, DEFAULT_NAMESPACE};
+
 pub struct AppState {
-    pub vfs: Arc<VfsRouter>,
-    pub mount_table: Arc<MountTable>,
-    pub handle_registry: Arc<HandleRegistry>,
-    pub handle_map: Arc<RwLock<HandleMap>>,
+    pub namespace_manager: Arc<NamespaceManager>,
     pub plugin_manager: Arc<PluginManager>,
 }
 
@@ -64,18 +63,18 @@ impl AppState {
 
     #[must_use]
     pub fn with_handle_ttl(ttl: Duration) -> Self {
-        let mount_table = Arc::new(MountTable::new());
-        let handle_registry = Arc::new(HandleRegistry::new(ttl));
-        let vfs = Arc::new(VfsRouter::new(mount_table.clone(), handle_registry.clone()));
+        let namespace_manager = Arc::new(NamespaceManager::new(ttl));
         let plugin_manager = Arc::new(PluginManager::new());
 
         Self {
-            vfs,
-            mount_table,
-            handle_registry,
-            handle_map: Arc::new(RwLock::new(HandleMap::new())),
+            namespace_manager,
             plugin_manager,
         }
+    }
+
+    /// Get the default namespace, creating it if needed.
+    pub async fn default_namespace(&self) -> Arc<Namespace> {
+        self.namespace_manager.get_or_create(DEFAULT_NAMESPACE).await
     }
 }
 

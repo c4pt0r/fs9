@@ -90,7 +90,8 @@ RUST_LOG=info cargo run -p fs9-server
 |----------|---------|-------------|
 | `FS9_HOST` | `0.0.0.0` | Host address to bind |
 | `FS9_PORT` | `9999` | Port to listen on |
-| `FS9_JWT_SECRET` | *(empty)* | JWT secret for authentication. If not set, auth is disabled |
+| `FS9_JWT_SECRET` | *(empty)* | JWT secret for authentication. **Required for multi-tenancy.** All API requests must include a valid JWT when set |
+| `FS9_DANGER_SKIP_AUTH` | *(unset)* | Set to `1` to bypass all JWT checks. **Development/testing only — do NOT use in production.** All requests become anonymous admin in the default namespace |
 | `FS9_PLUGIN_DIR` | *(none)* | Additional directory to load plugins from |
 | `RUST_LOG` | *(none)* | Logging level: `error`, `warn`, `info`, `debug`, `trace` |
 
@@ -511,12 +512,120 @@ fusermount -u /tmp/fs9-git
 
 ---
 
+## Multi-Tenancy & Authentication
+
+FS9 supports multi-tenant isolation via JWT-based authentication and per-namespace state separation.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│                   FS9 Server                     │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │           Auth Middleware                  │   │
+│  │   JWT → RequestContext { ns, user, roles } │   │
+│  └──────────────┬───────────────────────────┘   │
+│                 │                                 │
+│  ┌──────────────▼───────────────────────────┐   │
+│  │         NamespaceManager                   │   │
+│  │                                            │   │
+│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  │   │
+│  │  │ ns:acme │  │ ns:beta │  │ ns:prod │  │   │
+│  │  │ VfsRouter│  │ VfsRouter│  │ VfsRouter│  │   │
+│  │  │ MountTbl │  │ MountTbl │  │ MountTbl │  │   │
+│  │  │ Handles  │  │ Handles  │  │ Handles  │  │   │
+│  │  └─────────┘  └─────────┘  └─────────┘  │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │     PluginManager (shared, global)        │   │
+│  │     .so loaded once, providers per-ns     │   │
+│  └──────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────┘
+```
+
+### Key Concepts
+
+- **Namespace**: An isolated unit of state. Each namespace has its own mount table, file handles, and VFS router. Data in one namespace is invisible to another.
+- **JWT Binding**: Each JWT token is bound to exactly one namespace via the `ns` claim. A token cannot access other namespaces.
+- **RequestContext**: Extracted from the JWT by the auth middleware and carried through every request. Contains `ns`, `user_id`, and `roles`.
+- **Shared Plugins**: Plugin libraries (`.so`) are loaded once globally. Provider instances are created per-namespace for isolation.
+
+### JWT Claims
+
+```json
+{
+  "sub": "user123",
+  "ns": "acme",
+  "roles": ["operator"],
+  "iat": 1706900000,
+  "exp": 1706903600
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `sub` | Yes | User/subject identifier |
+| `ns` | Yes | Namespace this token is bound to |
+| `roles` | No | Roles for authorization (`operator`, `admin`) |
+| `exp` | Yes | Expiration timestamp |
+| `iat` | Yes | Issued-at timestamp |
+
+### Enabling Authentication
+
+```bash
+# Set JWT secret to enable auth (required for multi-tenancy)
+FS9_JWT_SECRET="your-secret-key" ./target/release/fs9-server
+```
+
+When `FS9_JWT_SECRET` is set:
+- All API requests (except `/health`) require a valid `Authorization: Bearer <token>` header
+- Missing/invalid/expired tokens → **401 Unauthorized**
+- Unknown namespace → **403 Forbidden**
+
+### Generating Tokens (Example)
+
+```bash
+# Using a JWT library or CLI tool:
+# Header: {"alg": "HS256", "typ": "JWT"}
+# Payload: {"sub": "user1", "ns": "acme", "roles": ["operator"], "iat": ..., "exp": ...}
+# Secret: your-secret-key
+
+# Example with curl (assuming you have a token):
+TOKEN="eyJhbGciOiJIUzI1NiJ9..."
+
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:9999/api/v1/stat?path=/
+```
+
+### Namespace Isolation Guarantees
+
+| Isolation Type | Guarantee |
+|---------------|-----------|
+| **Data** | Tenant A writes `/file.txt` → Tenant B stat `/file.txt` returns not_found |
+| **Handles** | Tenant A's file handle cannot be used by Tenant B |
+| **Mounts** | Tenant A's mount table is invisible to Tenant B |
+| **Readdir** | Each tenant only sees their own files |
+| **Storage** | Keys are prefix-encoded with namespace for backend isolation |
+
+### Roles & Permissions
+
+| Role | Capabilities |
+|------|-------------|
+| *(none)* | Read/write files within namespace |
+| `operator` | Mount/unmount filesystems, load plugins |
+| `admin` | Namespace management, all operations |
+
+---
+
 ## API Overview
 
-FS9 exposes a 10-method REST API:
+FS9 exposes a 10-method REST API. All endpoints (except `/health`) require `Authorization: Bearer <JWT>` when auth is enabled.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/health` | GET | Health check (no auth required) |
 | `/api/v1/stat` | GET | Get file/directory metadata |
 | `/api/v1/wstat` | POST | Modify metadata (chmod, truncate, rename) |
 | `/api/v1/statfs` | GET | Get filesystem statistics |
@@ -527,6 +636,11 @@ FS9 exposes a 10-method REST API:
 | `/api/v1/readdir` | GET | List directory contents |
 | `/api/v1/remove` | DELETE | Delete file or empty directory |
 | `/api/v1/capabilities` | GET | Query provider capabilities |
+| `/api/v1/mounts` | GET | List mounts in current namespace |
+| `/api/v1/mount` | POST | Mount a filesystem (operator/admin) |
+| `/api/v1/plugin/list` | GET | List loaded plugins |
+| `/api/v1/plugin/load` | POST | Load a plugin (admin) |
+| `/api/v1/plugin/unload` | POST | Unload a plugin (admin) |
 
 ---
 

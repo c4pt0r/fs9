@@ -10,17 +10,35 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::api::models::ErrorResponse;
+/// Inline error response for auth failures (avoids coupling to api module).
+#[derive(Debug, serde::Serialize)]
+struct ErrorResponse {
+    error: String,
+    code: u16,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
     pub exp: u64,
     pub iat: u64,
+    /// Namespace binding — one JWT, one namespace.
+    #[serde(default)]
+    pub ns: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<String>,
     #[serde(default)]
     pub permissions: Vec<String>,
     #[serde(default)]
     pub mounts: Vec<String>,
+}
+
+/// Context extracted from JWT and carried through the entire request.
+#[derive(Debug, Clone)]
+pub struct RequestContext {
+    pub ns: String,
+    pub user_id: String,
+    pub roles: Vec<String>,
 }
 
 impl Claims {
@@ -34,8 +52,27 @@ impl Claims {
             sub: subject.to_string(),
             exp: now + ttl_secs,
             iat: now,
+            ns: None,
+            roles: Vec::new(),
             permissions,
             mounts,
+        }
+    }
+
+    pub fn with_namespace(subject: &str, ns: &str, roles: Vec<String>, ttl_secs: u64) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Self {
+            sub: subject.to_string(),
+            exp: now + ttl_secs,
+            iat: now,
+            ns: Some(ns.to_string()),
+            roles,
+            permissions: Vec::new(),
+            mounts: Vec::new(),
         }
     }
 
@@ -123,6 +160,9 @@ impl JwtConfig {
 pub struct AuthState {
     pub config: JwtConfig,
     pub enabled: bool,
+    /// When true, skip all JWT validation and use default namespace.
+    /// Activated by `FS9_DANGER_SKIP_AUTH=1`. For development/testing only.
+    pub danger_skip_auth: bool,
 }
 
 impl AuthState {
@@ -130,6 +170,7 @@ impl AuthState {
         Self {
             config,
             enabled: true,
+            danger_skip_auth: false,
         }
     }
 
@@ -137,6 +178,18 @@ impl AuthState {
         Self {
             config: JwtConfig::new("unused"),
             enabled: false,
+            danger_skip_auth: false,
+        }
+    }
+
+    /// Create an auth state that skips all JWT validation.
+    /// **DANGER**: Only for development/testing. All requests become anonymous
+    /// in the default namespace.
+    pub fn danger_skip() -> Self {
+        Self {
+            config: JwtConfig::new("unused"),
+            enabled: false,
+            danger_skip_auth: true,
         }
     }
 }
@@ -146,12 +199,24 @@ pub async fn auth_middleware(
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
-    if !auth.enabled {
+    let path = request.uri().path();
+    if path == "/health" || path.starts_with("/api/v1/auth") {
+        // Always inject a default RequestContext even for health checks
+        request.extensions_mut().insert(RequestContext {
+            ns: crate::namespace::DEFAULT_NAMESPACE.to_string(),
+            user_id: "anonymous".to_string(),
+            roles: Vec::new(),
+        });
         return next.run(request).await;
     }
 
-    let path = request.uri().path();
-    if path == "/health" || path.starts_with("/api/v1/auth") {
+    if !auth.enabled || auth.danger_skip_auth {
+        // Auth disabled or FS9_DANGER_SKIP_AUTH: use default namespace, anonymous user
+        request.extensions_mut().insert(RequestContext {
+            ns: crate::namespace::DEFAULT_NAMESPACE.to_string(),
+            user_id: "anonymous".to_string(),
+            roles: vec!["admin".to_string()], // skip-auth gets full access
+        });
         return next.run(request).await;
     }
 
@@ -175,6 +240,15 @@ pub async fn auth_middleware(
 
     match auth.config.decode(token) {
         Ok(claims) => {
+            let ctx = RequestContext {
+                ns: claims
+                    .ns
+                    .clone()
+                    .unwrap_or_else(|| crate::namespace::DEFAULT_NAMESPACE.to_string()),
+                user_id: claims.sub.clone(),
+                roles: claims.roles.clone(),
+            };
+            request.extensions_mut().insert(ctx);
             request.extensions_mut().insert(claims);
             next.run(request).await
         }
