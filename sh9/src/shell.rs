@@ -27,6 +27,7 @@ pub struct Shell {
     pub last_exit_code: i32,
     pub client: Option<Arc<Fs9Client>>,
     pub server_url: String,
+    pub token: Option<String>,
     pub jobs: Vec<BackgroundJob>,
     pub next_job_id: usize,
 }
@@ -41,14 +42,24 @@ impl Shell {
             last_exit_code: 0,
             client: None,
             server_url: server_url.to_string(),
+            token: None,
             jobs: Vec::new(),
             next_job_id: 1,
         }
     }
 
+    /// Set the authentication token
+    pub fn set_token(&mut self, token: String) {
+        self.token = Some(token);
+    }
+
     /// Connect to the FS9 server
     pub async fn connect(&mut self) -> Sh9Result<()> {
-        let client = Fs9Client::new(&self.server_url)
+        let mut builder = Fs9Client::builder(&self.server_url);
+        if let Some(ref token) = self.token {
+            builder = builder.token(token);
+        }
+        let client = builder.build()
             .map_err(|e| Sh9Error::Fs9(e.to_string()))?;
         self.client = Some(Arc::new(client));
         Ok(())
@@ -105,6 +116,7 @@ impl Shell {
             last_exit_code: self.last_exit_code,
             client: self.client.clone(),
             server_url: self.server_url.clone(),
+            token: self.token.clone(),
             jobs: Vec::new(),
             next_job_id: 1,
         }

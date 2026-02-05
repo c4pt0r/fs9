@@ -1,3 +1,4 @@
+use clap::Parser;
 use fs9_config::Fs9Config;
 use sh9::{Shell, Sh9Error};
 use std::env;
@@ -5,29 +6,57 @@ use std::sync::{Arc, RwLock};
 
 mod completer;
 
+/// sh9 - Interactive shell for the FS9 distributed filesystem
+#[derive(Parser, Debug)]
+#[command(name = "sh9", version, about)]
+struct Args {
+    /// FS9 server URL
+    #[arg(short, long, env = "FS9_SERVER")]
+    server: Option<String>,
+
+    /// Authentication token for multi-tenant access
+    #[arg(short, long, env = "FS9_TOKEN")]
+    token: Option<String>,
+
+    /// Execute command and exit
+    #[arg(short = 'c')]
+    command: Option<String>,
+
+    /// Script file to execute
+    script: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
+    let args = Args::parse();
 
     let config = fs9_config::load().unwrap_or_else(|_| Fs9Config::default());
-    let server_url = if config.shell.server.is_empty() {
-        "http://localhost:9999".to_string()
-    } else {
-        config.shell.server.clone()
-    };
+    
+    // Server URL priority: CLI arg > env > config > default
+    let server_url = args.server
+        .or_else(|| {
+            if config.shell.server.is_empty() {
+                None
+            } else {
+                Some(config.shell.server.clone())
+            }
+        })
+        .unwrap_or_else(|| "http://localhost:9999".to_string());
 
     let mut shell = Shell::new(&server_url);
+    
+    // Set token if provided
+    if let Some(token) = args.token {
+        shell.set_token(token);
+    }
     
     // Connect to FS9 server
     if let Err(e) = shell.connect().await {
         eprintln!("Warning: Could not connect to FS9 server: {}", e);
     }
     
-    if args.len() == 1 {
-        run_repl(&mut shell, &config.shell.prompt).await?;
-    } else if args.len() >= 3 && args[1] == "-c" {
-        // Execute command from argument
-        let command = args[2..].join(" ");
+    if let Some(command) = args.command {
+        // Execute command from -c argument
         match shell.execute(&command).await {
             Ok(code) => std::process::exit(code),
             Err(Sh9Error::Exit(code)) => std::process::exit(code),
@@ -36,10 +65,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         }
-    } else {
+    } else if let Some(script_path) = args.script {
         // Execute script file
-        let script_path = &args[1];
-        match std::fs::read_to_string(script_path) {
+        match std::fs::read_to_string(&script_path) {
             Ok(content) => match shell.execute(&content).await {
                 Ok(code) => std::process::exit(code),
                 Err(Sh9Error::Exit(code)) => std::process::exit(code),
@@ -53,6 +81,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         }
+    } else {
+        // Interactive REPL
+        run_repl(&mut shell, &config.shell.prompt).await?;
     }
     
     Ok(())
@@ -78,6 +109,9 @@ async fn run_repl(shell: &mut Shell, prompt_template: &str) -> Result<(), Box<dy
 
     println!("sh9 - FS9 Shell v{}", env!("CARGO_PKG_VERSION"));
     println!("Type 'exit' to quit, 'help' for help.");
+    if shell.token.is_some() {
+        println!("(authenticated)");
+    }
     println!();
 
     loop {

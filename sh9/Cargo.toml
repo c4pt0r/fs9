@@ -22,6 +22,9 @@ tokio = { workspace = true }
 fs9-client = { path = "../clients/rust" }
 fs9-config = { path = "../config" }
 
+# CLI arguments
+clap = { version = "4", features = ["derive", "env"] }
+
 # Parser
 chumsky = "0.9"
 
