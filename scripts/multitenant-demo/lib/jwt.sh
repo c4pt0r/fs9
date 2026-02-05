@@ -1,6 +1,6 @@
 #!/bin/bash
 # JWT Token Generator for FS9 Demo
-# 使用 bash + base64 + openssl 生成 HS256 JWT
+# Generates HS256 JWT using bash + base64 + openssl
 
 # Base64 URL encode
 base64url_encode() {

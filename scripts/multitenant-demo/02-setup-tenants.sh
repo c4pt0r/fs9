@@ -1,6 +1,6 @@
 #!/bin/bash
 # FS9 Multi-tenant Demo: Setup Tenants
-# 创建三个租户，每个租户有不同的用户
+# Creates three tenants, each with different users
 
 set -e
 
@@ -15,14 +15,14 @@ echo "  FS9 Multi-tenant Demo: Setup Tenants"
 echo "=========================================="
 echo ""
 
-# 先创建一个 bootstrap namespace 用于管理操作
-# (因为 JWT 必须有 ns 字段，我们用 "admin" namespace)
+# First create a bootstrap namespace for management operations
+# (JWT must have ns field, we use "admin" namespace)
 echo "[1/4] Creating admin namespace for management..."
 
-# 生成 admin token (ns=admin, role=admin)
+# Generate admin token (ns=admin, role=admin)
 ADMIN_TOKEN=$(generate_jwt "$JWT_SECRET" "superadmin" "admin" "admin" 3600)
 
-# 尝试创建 admin namespace（可能已存在）
+# Try to create admin namespace (may already exist)
 RESP=$(curl -s -w "\n%{http_code}" -X POST "$SERVER/api/v1/namespaces" \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
@@ -37,7 +37,7 @@ else
     echo "  ⚠️  Response ($HTTP_CODE): $BODY"
 fi
 
-# 创建三个租户
+# Create three tenants
 echo ""
 echo "[2/4] Creating tenant namespaces..."
 
@@ -61,13 +61,13 @@ for tenant in "${TENANTS[@]}"; do
     fi
 done
 
-# 列出所有 namespace
+# List all namespaces
 echo ""
 echo "[3/4] Listing all namespaces..."
 curl -s "$SERVER/api/v1/namespaces" \
     -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -m json.tool
 
-# 为每个租户创建示例用户 token
+# Generate sample user tokens for each tenant
 echo ""
 echo "[4/4] Generating user tokens..."
 echo ""
@@ -108,7 +108,7 @@ echo ""
 echo "Tokens saved to: $SCRIPT_DIR/tokens/"
 echo ""
 echo "Next steps:"
-echo "  ./03-tenant-demo.sh acme-corp alice    # ACME admin 操作"
-echo "  ./03-tenant-demo.sh beta-startup dave  # Beta admin 操作"
-echo "  ./03-tenant-demo.sh gamma-labs frank   # Gamma admin 操作"
+echo "  ./03-tenant-demo.sh acme-corp alice    # ACME admin operations"
+echo "  ./03-tenant-demo.sh beta-startup dave  # Beta admin operations"
+echo "  ./03-tenant-demo.sh gamma-labs frank   # Gamma admin operations"
 echo ""

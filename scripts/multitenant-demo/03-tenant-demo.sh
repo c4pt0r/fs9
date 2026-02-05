@@ -1,6 +1,6 @@
 #!/bin/bash
 # FS9 Multi-tenant Demo: Tenant Operations
-# 模拟特定租户下的用户操作
+# Simulates user operations under a specific tenant
 
 set -e
 
@@ -10,12 +10,12 @@ source "$SCRIPT_DIR/lib/jwt.sh"
 SERVER="http://127.0.0.1:9999"
 JWT_SECRET=$(cat "$SCRIPT_DIR/.jwt-secret" 2>/dev/null || echo "demo-secret-key-for-testing-only-12345")
 
-# 参数
+# Arguments
 TENANT="${1:-acme-corp}"
 USER="${2:-alice}"
 ROLE="${3:-admin}"
 
-# 生成 token
+# Generate token
 TOKEN=$(generate_jwt "$JWT_SECRET" "$USER" "$TENANT" "$ROLE" 3600)
 
 echo "=========================================="
@@ -49,7 +49,7 @@ api_raw() {
         "$@"
 }
 
-# 检查连接
+# Check connection
 echo "[1/7] Checking connection..."
 if api GET "/health" > /dev/null; then
     echo "  ✅ Server is reachable"
@@ -58,7 +58,7 @@ else
     exit 1
 fi
 
-# 挂载 memfs 到根目录（如果还没有）
+# Mount memfs to root (if not already mounted)
 echo ""
 echo "[2/7] Setting up filesystem (mount memfs at /)..."
 MOUNT_RESP=$(api POST "/api/v1/mount" -d '{"path": "/", "provider": "memfs", "config": {}}' 2>&1)
@@ -68,18 +68,18 @@ else
     echo "  ✅ Mounted memfs at /"
 fi
 
-# 列出当前挂载
+# List current mounts
 echo ""
 echo "[3/7] Current mounts:"
 api GET "/api/v1/mounts" | python3 -m json.tool 2>/dev/null || echo "  (no mounts)"
 
-# 创建目录结构
+# Create directory structure
 echo ""
 echo "[4/7] Creating directory structure..."
 
-# 先创建一些文件来建立目录
+# Create some files to establish directories
 for dir in "projects" "shared" "tmp"; do
-    # 创建一个隐藏文件来"创建"目录（memfs 自动创建父目录）
+    # Create a hidden file to "create" the directory (memfs auto-creates parent dirs)
     RESP=$(api POST "/api/v1/open" -d "{\"path\": \"/$dir/.keep\", \"flags\": 578}")
     HANDLE=$(echo "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("handle_id",""))' 2>/dev/null)
     if [ -n "$HANDLE" ]; then
@@ -88,7 +88,7 @@ for dir in "projects" "shared" "tmp"; do
     fi
 done
 
-# 写入一些文件
+# Write some files
 echo ""
 echo "[5/7] Writing files..."
 
@@ -141,7 +141,7 @@ Tenant: $TENANT
 Role: $ROLE
 "
 
-# 读取文件列表
+# List files
 echo ""
 echo "[6/7] Listing files..."
 
@@ -162,7 +162,7 @@ list_dir "/projects"
 list_dir "/shared"
 list_dir "/tmp"
 
-# 读取一个文件内容
+# Read a file content
 echo ""
 echo "[7/7] Reading file content..."
 echo ""

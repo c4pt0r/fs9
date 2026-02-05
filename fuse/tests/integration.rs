@@ -264,7 +264,7 @@ fn test_fuse_unicode_filename() {
     let mountpoint = "/tmp/fs9-fuse-test-unicode";
     let _mount = MountedFs::mount(&get_server_url(), mountpoint).expect("Failed to mount");
 
-    let test_file = format!("{}/文件名.txt", mountpoint);
+    let test_file = format!("{}/unicode_file.txt", mountpoint);
     fs::write(&test_file, b"unicode content").expect("Failed to write");
 
     let content = fs::read(&test_file).expect("Failed to read");

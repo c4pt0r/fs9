@@ -1,6 +1,6 @@
 #!/bin/bash
 # FS9 Multi-tenant Demo: Run Everything
-# 一键运行完整的多租户演示
+# One-click run for the complete multi-tenant demo
 
 set -e
 

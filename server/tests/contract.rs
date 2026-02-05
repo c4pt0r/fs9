@@ -138,7 +138,7 @@ async fn contract_write_close_stat_read() {
         .unwrap();
 }
 
-/// Core Contract #2: close 后再 read/write 必须报 invalid handle
+/// Core Contract #2: read/write after close must return invalid handle error
 #[tokio::test]
 async fn contract_closed_handle_rejected() {
     let server = TestServer::start().await;
@@ -183,7 +183,7 @@ async fn contract_closed_handle_rejected() {
         .unwrap();
 }
 
-/// Core Contract #3: readdir("/") 必须能看到新建文件
+/// Core Contract #3: readdir("/") must see newly created files
 #[tokio::test]
 async fn contract_readdir_sees_new_file() {
     let server = TestServer::start().await;
@@ -227,7 +227,7 @@ async fn contract_readdir_sees_new_file() {
         .unwrap();
 }
 
-/// Core Contract #4: remove 后 stat 必须返回 not_found
+/// Core Contract #4: stat after remove must return not_found
 #[tokio::test]
 async fn contract_remove_then_stat_not_found() {
     let server = TestServer::start().await;

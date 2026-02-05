@@ -1,6 +1,6 @@
 #!/bin/bash
 # FS9 Multi-tenant Demo: Verify Isolation
-# 验证租户之间的数据隔离
+# Verifies data isolation between tenants
 
 set -e
 
