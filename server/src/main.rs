@@ -32,21 +32,15 @@ async fn main() {
     load_plugins(&state, &config);
     setup_mounts(&state, &registry, &config).await;
 
-    let danger_skip = std::env::var("FS9_DANGER_SKIP_AUTH")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    let auth_state = if danger_skip {
-        tracing::warn!("⚠️  FS9_DANGER_SKIP_AUTH is set — all auth checks BYPASSED. Do NOT use in production!");
-        AuthState::danger_skip()
-    } else if config.server.auth.enabled && !config.server.auth.jwt_secret.is_empty() {
-        AuthState::new(JwtConfig::new(config.server.auth.jwt_secret.clone()))
+    let jwt_secret = if config.server.auth.jwt_secret.is_empty() {
+        let generated = format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        tracing::warn!("⚠️  jwt_secret is empty — generated a random secret. Tokens from previous runs will NOT work.");
+        generated
     } else {
-        if config.server.auth.enabled {
-            tracing::warn!("Auth enabled but jwt_secret is empty, disabling auth");
-        }
-        AuthState::disabled()
+        config.server.auth.jwt_secret.clone()
     };
+
+    let auth_state = AuthState::new(JwtConfig::new(jwt_secret));
 
     let app = api::create_router(state)
         .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))

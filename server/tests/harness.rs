@@ -255,6 +255,15 @@ impl MultiTenantTestServer {
             .await
             .unwrap();
 
+        // Pre-create tenant namespaces used in tests
+        for ns_name in &["acme", "beta"] {
+            let ns = ns_manager.get_or_create(ns_name).await;
+            ns.mount_table
+                .mount("/", "memfs", Arc::new(MemoryFs::new()))
+                .await
+                .unwrap();
+        }
+
         let state = Arc::new(MultiTenantAppState {
             namespace_manager: ns_manager,
         });
@@ -372,10 +381,18 @@ fn build_multitenant_router(
                 match jsonwebtoken::decode::<serde_json::Value>(token, &key, &validation) {
                     Ok(data) => {
                         let claims = data.claims;
-                        let ns = claims.get("ns")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(DEFAULT_NAMESPACE)
-                            .to_string();
+                        let ns = match claims.get("ns").and_then(|v| v.as_str()) {
+                            Some(ns) => ns.to_string(),
+                            None => {
+                                return axum::response::Response::builder()
+                                    .status(401)
+                                    .header("content-type", "application/json")
+                                    .body(axum::body::Body::from(
+                                        r#"{"error":"Token missing required 'ns' claim","code":401}"#
+                                    ))
+                                    .unwrap();
+                            }
+                        };
                         let user_id = claims.get("sub")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown")
@@ -430,14 +447,10 @@ fn mt_err(e: FsError) -> (StatusCode, String) {
     (s, e.to_string())
 }
 
-/// Resolve or lazily create the namespace, auto-mounting memfs at "/" for new ones.
-async fn mt_resolve_ns(state: &MultiTenantAppState, ctx: &RequestContext) -> Arc<fs9_server::namespace::Namespace> {
-    let ns = state.namespace_manager.get_or_create(&ctx.ns).await;
-    // Auto-mount memfs at root if namespace is empty (lazy namespace creation)
-    if ns.mount_table.count().await == 0 {
-        let _ = ns.mount_table.mount("/", "memfs", Arc::new(MemoryFs::new())).await;
-    }
-    ns
+/// Resolve namespace — unknown namespaces are rejected with 403.
+async fn mt_resolve_ns(state: &MultiTenantAppState, ctx: &RequestContext) -> Result<Arc<fs9_server::namespace::Namespace>, (StatusCode, String)> {
+    state.namespace_manager.get(&ctx.ns).await
+        .ok_or_else(|| (StatusCode::FORBIDDEN, format!("Namespace '{}' not found or access denied", ctx.ns)))
 }
 
 async fn mt_stat(
@@ -445,7 +458,7 @@ async fn mt_stat(
     Extension(ctx): Extension<RequestContext>,
     Query(q): Query<PathQuery>,
 ) -> MtResult<Json<FileInfoResp>> {
-    let ns = mt_resolve_ns(&state, &ctx).await;
+    let ns = mt_resolve_ns(&state, &ctx).await?;
     let info = ns.vfs.stat(&q.path).await.map_err(mt_err)?;
     let is_dir = info.is_dir();
     Ok(Json(FileInfoResp { path: info.path, size: info.size, mode: info.mode, is_dir }))
@@ -470,7 +483,7 @@ async fn mt_open(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<OpenReq>,
 ) -> MtResult<Json<OpenResp>> {
-    let ns = mt_resolve_ns(&state, &ctx).await;
+    let ns = mt_resolve_ns(&state, &ctx).await?;
     let flags = parse_flags(req.flags);
     let handle = ns.vfs.open(&req.path, flags).await.map_err(mt_err)?;
     let uuid = uuid::Uuid::new_v4().to_string();
@@ -486,7 +499,7 @@ async fn mt_read(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<ReadReq>,
 ) -> MtResult<Vec<u8>> {
-    let ns = mt_resolve_ns(&state, &ctx).await;
+    let ns = mt_resolve_ns(&state, &ctx).await?;
     let hid = ns.handle_map.read().await.get_id(&req.handle_id)
         .ok_or((StatusCode::BAD_REQUEST, "Invalid handle".into()))?;
     let data = ns.vfs.read(&Handle::new(hid), req.offset, req.size).await.map_err(mt_err)?;
@@ -504,7 +517,7 @@ async fn mt_write(
     Query(q): Query<WriteQ>,
     body: axum::body::Bytes,
 ) -> MtResult<Json<WriteResp>> {
-    let ns = mt_resolve_ns(&state, &ctx).await;
+    let ns = mt_resolve_ns(&state, &ctx).await?;
     let hid = ns.handle_map.read().await.get_id(&q.handle_id)
         .ok_or((StatusCode::BAD_REQUEST, "Invalid handle".into()))?;
     let bw = ns.vfs.write(&Handle::new(hid), q.offset, body).await.map_err(mt_err)?;
@@ -519,7 +532,7 @@ async fn mt_close(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<CloseReq>,
 ) -> MtResult<StatusCode> {
-    let ns = mt_resolve_ns(&state, &ctx).await;
+    let ns = mt_resolve_ns(&state, &ctx).await?;
     let hid = ns.handle_map.write().await.remove_by_uuid(&req.handle_id)
         .ok_or((StatusCode::BAD_REQUEST, "Invalid handle".into()))?;
     ns.vfs.close(Handle::new(hid), req.sync).await.map_err(mt_err)?;
@@ -531,7 +544,7 @@ async fn mt_readdir(
     Extension(ctx): Extension<RequestContext>,
     Query(q): Query<PathQuery>,
 ) -> MtResult<Json<Vec<FileInfoResp>>> {
-    let ns = mt_resolve_ns(&state, &ctx).await;
+    let ns = mt_resolve_ns(&state, &ctx).await?;
     let entries = ns.vfs.readdir(&q.path).await.map_err(mt_err)?;
     Ok(Json(entries.into_iter().map(|i| {
         let is_dir = i.is_dir();
@@ -544,7 +557,7 @@ async fn mt_remove(
     Extension(ctx): Extension<RequestContext>,
     Query(q): Query<PathQuery>,
 ) -> MtResult<StatusCode> {
-    let ns = mt_resolve_ns(&state, &ctx).await;
+    let ns = mt_resolve_ns(&state, &ctx).await?;
     ns.vfs.remove(&q.path).await.map_err(mt_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -555,10 +568,10 @@ struct MountInfoResp { path: String, name: String }
 async fn mt_list_mounts(
     State(state): State<Arc<MultiTenantAppState>>,
     Extension(ctx): Extension<RequestContext>,
-) -> Json<Vec<MountInfoResp>> {
-    let ns = mt_resolve_ns(&state, &ctx).await;
+) -> MtResult<Json<Vec<MountInfoResp>>> {
+    let ns = mt_resolve_ns(&state, &ctx).await?;
     let mounts = ns.mount_table.list_mounts().await;
-    Json(mounts.into_iter().map(|m| MountInfoResp { path: m.path, name: m.provider_name }).collect())
+    Ok(Json(mounts.into_iter().map(|m| MountInfoResp { path: m.path, name: m.provider_name }).collect()))
 }
 
 // ============================================================================

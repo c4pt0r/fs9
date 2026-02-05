@@ -306,7 +306,7 @@ async fn no_token_rejected() {
 }
 
 // ============================================================================
-// Test 7: Wrong secret → rejected
+// Test 7: Wrong secret → rejected  
 // ============================================================================
 
 #[tokio::test]
@@ -345,5 +345,72 @@ async fn wrong_secret_rejected() {
         resp.status().as_u16(),
         401,
         "Token with wrong secret should be rejected"
+    );
+}
+
+// ============================================================================
+// Test 8: Unknown namespace → 403
+// ============================================================================
+
+#[tokio::test]
+async fn unknown_namespace_rejected() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    // Valid token but namespace "ghost" was never created
+    let token = server.token("user_x", "ghost", &["operator"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/stat?path=/", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Unknown namespace should be rejected with 403"
+    );
+}
+
+// ============================================================================
+// Test 9: Token missing 'ns' claim → 401
+// ============================================================================
+
+#[tokio::test]
+async fn token_missing_ns_rejected() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    // Generate a valid token WITHOUT the ns field
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let claims = json!({
+        "sub": "user_no_ns",
+        "roles": ["operator"],
+        "exp": now + 3600,
+        "iat": now,
+    });
+
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(JWT_SECRET.as_bytes()),
+    )
+    .unwrap();
+
+    let resp = client
+        .get(format!("{}/api/v1/stat?path=/", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        401,
+        "Token without 'ns' claim should be rejected with 401"
     );
 }

@@ -1,4 +1,4 @@
-use fs9_core::{HandleRegistry, MountTable, PluginManager, VfsRouter};
+use fs9_core::{HandleRegistry, MountTable, VfsRouter};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -51,6 +51,7 @@ impl NamespaceManager {
     }
 
     /// Get an existing namespace or create a new empty one.
+    /// Internal/test use only — production requests should use `get()` and reject unknown namespaces.
     pub async fn get_or_create(&self, name: &str) -> Arc<Namespace> {
         // Fast path: read lock
         {
@@ -76,6 +77,11 @@ impl NamespaceManager {
     /// Get a namespace if it exists (no creation).
     pub async fn get(&self, name: &str) -> Option<Arc<Namespace>> {
         self.namespaces.read().await.get(name).cloned()
+    }
+
+    /// Check if a namespace exists without returning it.
+    pub async fn exists(&self, name: &str) -> bool {
+        self.namespaces.read().await.contains_key(name)
     }
 
     /// Insert a pre-built namespace (used during startup for config-defined namespaces).

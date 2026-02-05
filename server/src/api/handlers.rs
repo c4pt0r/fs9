@@ -15,28 +15,49 @@ use crate::state::AppState;
 
 pub type AppResult<T> = Result<T, AppError>;
 
-pub struct AppError(FsError);
+pub enum AppError {
+    Fs(FsError),
+    Forbidden(String),
+}
 
 impl From<FsError> for AppError {
     fn from(err: FsError) -> Self {
-        Self(err)
+        Self::Fs(err)
+    }
+}
+
+impl AppError {
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self::Forbidden(msg.into())
     }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        let status = StatusCode::from_u16(self.0.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let body = Json(ErrorResponse {
-            error: self.0.to_string(),
-            code: self.0.http_status(),
-        });
-        (status, body).into_response()
+        match self {
+            Self::Fs(e) => {
+                let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                let body = Json(ErrorResponse {
+                    error: e.to_string(),
+                    code: e.http_status(),
+                });
+                (status, body).into_response()
+            }
+            Self::Forbidden(msg) => {
+                let body = Json(ErrorResponse {
+                    error: msg,
+                    code: 403,
+                });
+                (StatusCode::FORBIDDEN, body).into_response()
+            }
+        }
     }
 }
 
 /// Resolve the namespace for this request from the RequestContext.
-async fn resolve_ns(state: &AppState, ctx: &RequestContext) -> Arc<Namespace> {
-    state.namespace_manager.get_or_create(&ctx.ns).await
+async fn resolve_ns(state: &AppState, ctx: &RequestContext) -> Result<Arc<Namespace>, AppError> {
+    state.namespace_manager.get(&ctx.ns).await
+        .ok_or_else(|| AppError::forbidden("Namespace not found or access denied"))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -49,7 +70,7 @@ pub async fn stat(
     Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<Json<FileInfoResponse>> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let info = ns.vfs.stat(&query.path).await?;
     Ok(Json(info.into()))
 }
@@ -59,7 +80,7 @@ pub async fn wstat(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<WstatRequest>,
 ) -> AppResult<StatusCode> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     ns.vfs.wstat(&req.path, req.changes.into()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -69,7 +90,7 @@ pub async fn statfs(
     Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<Json<FsStatsResponse>> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let stats = ns.vfs.statfs(&query.path).await?;
     Ok(Json(stats.into()))
 }
@@ -79,7 +100,7 @@ pub async fn open(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<OpenRequest>,
 ) -> AppResult<Json<OpenResponse>> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let handle = ns.vfs.open(&req.path, req.flags.into()).await?;
     let metadata = ns.vfs.stat(&req.path).await?;
 
@@ -97,7 +118,7 @@ pub async fn read(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<ReadRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let handle_id = ns
         .handle_map
         .read()
@@ -115,7 +136,7 @@ pub async fn write(
     Query(query): Query<WriteQuery>,
     body: Bytes,
 ) -> AppResult<Json<WriteResponse>> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let handle_id = ns
         .handle_map
         .read()
@@ -138,7 +159,7 @@ pub async fn close(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<CloseRequest>,
 ) -> AppResult<StatusCode> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let handle_id = ns
         .handle_map
         .write()
@@ -155,7 +176,7 @@ pub async fn readdir(
     Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<Json<Vec<FileInfoResponse>>> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let entries = ns.vfs.readdir(&query.path).await?;
     Ok(Json(entries.into_iter().map(Into::into).collect()))
 }
@@ -165,7 +186,7 @@ pub async fn remove(
     Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<StatusCode> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     ns.vfs.remove(&query.path).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -175,7 +196,7 @@ pub async fn capabilities(
     Extension(ctx): Extension<RequestContext>,
     Query(query): Query<PathQuery>,
 ) -> AppResult<Json<CapabilitiesResponse>> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let info = ns.mount_table.get_mount_info(&query.path).await;
 
     match info {
@@ -204,10 +225,10 @@ pub async fn capabilities(
 pub async fn list_mounts(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<RequestContext>,
-) -> Json<Vec<MountResponse>> {
-    let ns = resolve_ns(&state, &ctx).await;
+) -> AppResult<Json<Vec<MountResponse>>> {
+    let ns = resolve_ns(&state, &ctx).await?;
     let mounts = ns.mount_table.list_mounts().await;
-    Json(
+    Ok(Json(
         mounts
             .into_iter()
             .map(|m| MountResponse {
@@ -215,7 +236,7 @@ pub async fn list_mounts(
                 provider_name: m.provider_name,
             })
             .collect(),
-    )
+    ))
 }
 
 pub async fn health() -> &'static str {
@@ -262,7 +283,7 @@ pub async fn mount_plugin(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<MountPluginRequest>,
 ) -> AppResult<Json<MountResponse>> {
-    let ns = resolve_ns(&state, &ctx).await;
+    let ns = resolve_ns(&state, &ctx).await?;
     let config = serde_json::to_string(&req.config).unwrap_or_default();
 
     let provider = state
