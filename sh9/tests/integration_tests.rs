@@ -34,6 +34,11 @@ impl TestServer {
             .env("FS9_PORT", port.to_string())
             .env("FS9_HOST", "127.0.0.1")
             .env("FS9_PLUGIN_DIR", plugins_dir)
+            // Keep sh9 integration tests hermetic (don't inherit auth/meta settings from the parent env).
+            .env("FS9_JWT_SECRET", "")
+            .env("FS9_META_URL", "")
+            .env("FS9_META_KEY", "")
+            .env("FS9_SKIP_META_CHECK", "1")
             .env("RUST_LOG", "warn")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -329,4 +334,3 @@ fn line_matches(pattern: &str, actual: &str) -> bool {
     
     true
 }
-

@@ -21,6 +21,11 @@ impl TestServer {
         let process = Command::new(&server_bin)
             .env("FS9_PORT", port.to_string())
             .env("FS9_HOST", "127.0.0.1")
+            // Ensure E2E tests run with auth disabled, regardless of the parent environment.
+            .env("FS9_JWT_SECRET", "")
+            .env("FS9_META_URL", "")
+            .env("FS9_META_KEY", "")
+            .env("FS9_SKIP_META_CHECK", "1")
             .env("RUST_LOG", "warn")
             .stdout(Stdio::null())
             .stderr(Stdio::null())

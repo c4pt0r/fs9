@@ -154,13 +154,16 @@ For plugins: VfsRouter → PluginProvider → FFI vtable call → Plugin impleme
 # Build plugins first
 make plugins
 
-# Start server (auto-loads from ./plugins/)
-RUST_LOG=info cargo run -p fs9-server
+# Start server (requires fs9-meta service)
+FS9_META_URL=http://localhost:9998 RUST_LOG=info cargo run -p fs9-server
+
+# Start server without meta service (development/testing only)
+FS9_SKIP_META_CHECK=1 RUST_LOG=info cargo run -p fs9-server
 # Output shows: "Loaded plugins from ./plugins count=4"
 # Output shows: "Available plugins plugins=[\"pagefs\", \"streamfs\", \"kv\", \"hellofs\"]"
 
 # Or specify custom plugin directory
-FS9_PLUGIN_DIR=/path/to/plugins RUST_LOG=info cargo run -p fs9-server
+FS9_PLUGIN_DIR=/path/to/plugins FS9_SKIP_META_CHECK=1 RUST_LOG=info cargo run -p fs9-server
 ```
 
 ### Using FUSE
@@ -270,6 +273,9 @@ FFI plugins use error codes: FS9_OK, FS9_ERR_NOT_FOUND, FS9_ERR_ALREADY_EXISTS, 
 | `FS9_HOST` | `0.0.0.0` | Server bind address |
 | `FS9_PORT` | `9999` | Server port |
 | `FS9_JWT_SECRET` | *(empty)* | JWT secret for auth (disabled if not set) |
+| `FS9_META_URL` | *(none)* | **Required.** URL of fs9-meta service for token validation |
+| `FS9_META_KEY` | *(none)* | Admin key for fs9-meta service |
+| `FS9_SKIP_META_CHECK` | *(none)* | Set to skip meta_url requirement (testing only) |
 | `FS9_PLUGIN_DIR` | *(none)* | Additional plugin directory to auto-load |
 | `FS9_SERVER_URL` | `http://localhost:9999` | Server URL for sh9 client |
 | `RUST_LOG` | *(none)* | Logging level: error, warn, info, debug, trace |

@@ -1,7 +1,6 @@
 # FS9 PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-02-04  
-**Commit:** 620e069  
+**Generated:** 2026-02-05
 **Branch:** master
 
 ## OVERVIEW
@@ -16,7 +15,8 @@ fs9/
 ├── sdk-ffi/          # C FFI layer: PluginVTable, CFileInfo, CBytes, CResult, error codes
 ├── core/             # VFS: router, mount table, handle registry, plugin manager, built-in providers
 ├── config/           # YAML config loader with layered priority (files → env vars)
-├── server/           # Axum HTTP server: REST API handlers, JWT auth middleware
+├── server/           # Axum HTTP server: REST API handlers, JWT auth, fs9-meta integration
+├── meta/             # Token metadata service: user/namespace management, SQLite/Postgres backend
 ├── fuse/             # FUSE adapter: translates FUSE ops → FsProvider calls via HTTP client
 ├── sh9/              # Bash-like shell: lexer → parser → AST → evaluator, 68 test scripts
 ├── plugins/
@@ -43,6 +43,7 @@ fs9/
 | Add sh9 built-in cmd | `sh9/src/eval.rs` | Search `"cmd_name"` pattern in eval dispatch |
 | Config option | `config/src/types.rs` | YAML struct definitions with serde defaults |
 | Auth changes | `server/src/auth.rs` | JWT middleware, `AuthState` |
+| Meta integration | `server/src/meta_client.rs` | Token validation via fs9-meta service |
 | Mount/path resolution | `core/src/mount.rs` | BTreeMap longest-prefix match |
 | Handle lifecycle | `core/src/handle.rs` | Two-layer: VFS global → provider-local handles |
 | FUSE behavior | `fuse/src/fs.rs` | `Fs9Fuse` implements `fuser::Filesystem` |
@@ -74,6 +75,7 @@ fs9/
 - **Handle two-layer**: VFS assigns global handle IDs, provider manages its own. Never leak provider handles to clients
 - **Path rewriting**: VfsRouter always converts provider-relative paths back to absolute VFS paths in responses
 - **Config loading**: Defaults → `/etc/fs9/` → `~/.config/fs9/` → `./fs9.yaml` → `FS9_CONFIG=` → env vars (highest priority)
+- **Meta service required**: `FS9_META_URL` must be set for production. Use `FS9_SKIP_META_CHECK=1` only for testing
 - **`#[allow(dead_code)]`** used on struct fields in 8 files — acceptable for WIP fields
 
 ## ANTI-PATTERNS
@@ -96,7 +98,8 @@ make test-e2e           # E2E (builds server first)
 make lint               # clippy --workspace -D warnings
 make fmt                # cargo fmt + ruff format
 make check              # fmt + lint + test
-make server             # RUST_LOG=info cargo run -p fs9-server
+make server             # RUST_LOG=info cargo run -p fs9-server (requires FS9_META_URL)
+FS9_SKIP_META_CHECK=1 make server  # Dev mode without meta service
 cargo test -p sh9       # sh9 tests (includes 68 integration scripts)
 cargo test -p fs9-fuse --test integration -- --ignored  # FUSE tests (needs server)
 ```
@@ -120,3 +123,5 @@ All crates depend on `sdk`. Plugins depend on `sdk-ffi` (C ABI). Server and fuse
 - **pubsubfs is not in CLAUDE.md's plugin list** but IS in Cargo.toml and Makefile — it's a valid plugin
 - **ProxyFs enables cross-server mounting** — has hop limit protection (`TooManyHops` error)
 - **Plugin .so naming**: `libfs9_plugin_{name}.so` (Linux) / `.dylib` (macOS)
+- **fs9-meta is required** — server exits on startup if `FS9_META_URL` is not set (unless `FS9_SKIP_META_CHECK=1`)
+- **Key env vars**: `FS9_META_URL` (meta service URL), `FS9_META_KEY` (admin key), `FS9_SKIP_META_CHECK` (testing only)

@@ -46,11 +46,23 @@ async fn main() {
 
     init_logging(&config);
 
-    // Create MetaClient if meta_url is configured
-    let meta_client = config.server.meta_url.as_ref().map(|url| {
-        tracing::info!(meta_url = %url, "Meta service integration enabled");
-        MetaClient::new(url, config.server.meta_key.clone())
-    });
+    // meta_url is required unless FS9_SKIP_META_CHECK is set (for testing)
+    let skip_meta_check = std::env::var("FS9_SKIP_META_CHECK").is_ok();
+    let has_meta = config.server.meta_url.is_some();
+    let meta_client = match config.server.meta_url.as_ref() {
+        Some(url) => {
+            tracing::info!(meta_url = %url, "Meta service integration enabled");
+            Some(MetaClient::new(url, config.server.meta_key.clone()))
+        }
+        None if skip_meta_check => {
+            tracing::warn!("Meta service integration disabled (FS9_SKIP_META_CHECK is set)");
+            None
+        }
+        None => {
+            eprintln!("Error: meta_url is required. Set FS9_META_URL or configure server.meta_url in fs9.yaml");
+            std::process::exit(1);
+        }
+    };
 
     let state = Arc::new(state::AppState::with_meta(meta_client));
     let registry = default_registry();
@@ -69,7 +81,7 @@ async fn main() {
     // Store jwt_secret in app state for refresh endpoint
     state.set_jwt_secret(jwt_secret.clone()).await;
 
-    let auth_enabled = config.server.auth.enabled || config.server.meta_url.is_some();
+    let auth_enabled = config.server.auth.enabled || has_meta;
     let auth_state = AuthState::new(auth_enabled, JwtConfig::new(jwt_secret));
     let auth_middleware_state = AuthMiddlewareState::new(auth_state, Arc::clone(&state));
 
