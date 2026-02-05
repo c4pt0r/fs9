@@ -4,7 +4,7 @@
 .PHONY: all build test clean fmt lint check doc server install help
 .PHONY: test-rust test-python test-e2e test-unit
 .PHONY: dev setup-python clean-all
-.PHONY: plugins release-all
+.PHONY: plugins release-all admin-cli
 
 # Default target - build everything
 all: build plugins
@@ -43,6 +43,13 @@ release-all:
 ## Build only the server
 server-build:
 	cargo build -p fs9-server
+
+## Build the admin CLI (multi-tenant management)
+admin-cli:
+	cargo build --release -p fs9-cli
+	@echo ""
+	@echo "Admin CLI built: target/release/fs9-admin"
+	@echo "Usage: ./target/release/fs9-admin --help"
 
 # =============================================================================
 # Test
@@ -182,6 +189,7 @@ help:
 	@echo "  plugins        Build plugins (release) and copy to ./plugins"
 	@echo "  release        Build everything in release mode"
 	@echo "  server-build   Build only the server"
+	@echo "  admin-cli      Build the admin CLI (multi-tenant management)"
 	@echo ""
 	@echo "Test:"
 	@echo "  test           Run all tests (Rust + Python)"
