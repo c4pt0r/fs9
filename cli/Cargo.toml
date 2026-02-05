@@ -1,0 +1,21 @@
+[package]
+name = "fs9-cli"
+version = "0.1.0"
+edition = "2021"
+description = "FS9 Multi-tenant Administration CLI"
+
+[[bin]]
+name = "fs9-admin"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jsonwebtoken = "9"
+chrono = "0.4"
+colored = "2"
+dirs = "5"
+toml = "0.8"
+base64 = "0.21"

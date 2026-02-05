@@ -15,6 +15,7 @@ members = [
     "clients/rust",
     "tests",
     "sh9",
+    "cli",
 ]
 
 [workspace.package]
