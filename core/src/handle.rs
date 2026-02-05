@@ -297,8 +297,7 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_secs(300));
         let fs = Arc::new(MemoryFs::new());
 
-        let provider_handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
-        let metadata = fs.stat("/test.txt").await.unwrap();
+        let (provider_handle, metadata) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
 
         let id = registry
             .register(
@@ -320,8 +319,7 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_secs(300));
         let fs = Arc::new(MemoryFs::new());
 
-        let provider_handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
-        let metadata = fs.stat("/test.txt").await.unwrap();
+        let (provider_handle, metadata) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
 
         let id = registry
             .register(
@@ -343,8 +341,7 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_millis(10));
         let fs = Arc::new(MemoryFs::new());
 
-        let provider_handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
-        let metadata = fs.stat("/test.txt").await.unwrap();
+        let (provider_handle, metadata) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
 
         let id = registry
             .register(
@@ -368,14 +365,12 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_secs(300));
         let fs = Arc::new(MemoryFs::new());
 
-        let h1 = fs.open("/file1.txt", OpenFlags::create_file()).await.unwrap();
-        let m1 = fs.stat("/file1.txt").await.unwrap();
+        let (h1, m1) = fs.open("/file1.txt", OpenFlags::create_file()).await.unwrap();
         registry
             .register(fs.clone(), "/file1.txt".to_string(), OpenFlags::create_file(), m1, h1)
             .await;
 
-        let h2 = fs.open("/file2.txt", OpenFlags::create_file()).await.unwrap();
-        let m2 = fs.stat("/file2.txt").await.unwrap();
+        let (h2, m2) = fs.open("/file2.txt", OpenFlags::create_file()).await.unwrap();
         registry
             .register(fs.clone(), "/file2.txt".to_string(), OpenFlags::create_file(), m2, h2)
             .await;
@@ -393,8 +388,7 @@ mod tests {
         let mut ids = Vec::new();
         for i in 0..128 {
             let path = format!("/file{i}.txt");
-            let h = fs.open(&path, OpenFlags::create_file()).await.unwrap();
-            let m = fs.stat(&path).await.unwrap();
+            let (h, m) = fs.open(&path, OpenFlags::create_file()).await.unwrap();
             let id = registry.register(fs.clone(), path, OpenFlags::create_file(), m, h).await;
             ids.push(id);
         }
@@ -428,7 +422,7 @@ mod tests {
         // Prepare files
         for i in 0..100 {
             let path = format!("/concurrent{i}.txt");
-            let h = fs.open(&path, OpenFlags::create_file()).await.unwrap();
+            let (h, _) = fs.open(&path, OpenFlags::create_file()).await.unwrap();
             fs.close(h, false).await.unwrap();
         }
 
@@ -440,8 +434,7 @@ mod tests {
             let fs_clone = fs.clone();
             tasks.spawn(async move {
                 let path = format!("/concurrent{i}.txt");
-                let h = fs_clone.open(&path, OpenFlags::read()).await.unwrap();
-                let m = fs_clone.stat(&path).await.unwrap();
+                let (h, m) = fs_clone.open(&path, OpenFlags::read()).await.unwrap();
                 reg.register(fs_clone, path, OpenFlags::read(), m, h).await
             });
         }
@@ -483,8 +476,7 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_secs(300));
         let fs = Arc::new(MemoryFs::new());
 
-        let provider_handle = fs.open("/ref_test.txt", OpenFlags::create_file()).await.unwrap();
-        let metadata = fs.stat("/ref_test.txt").await.unwrap();
+        let (provider_handle, metadata) = fs.open("/ref_test.txt", OpenFlags::create_file()).await.unwrap();
 
         let id = registry
             .register(

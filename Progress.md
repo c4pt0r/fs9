@@ -86,14 +86,19 @@
 ## Phase 3: Stability (P2)
 
 ### 3.1 VfsRouter::open Avoid Double Stat
-- **Status**: Deferred to v2
-- **Files**: `core/src/vfs.rs`, `sdk/src/provider.rs`
+- **Status**: Completed
+- **Files**: `sdk/src/provider.rs`, `sdk-ffi/src/lib.rs`, `core/src/vfs.rs`, `core/src/plugin.rs`, `core/src/providers/{memfs,localfs,proxyfs}`, `plugins/{hellofs,pagefs,pubsubfs,streamfs,kv}`, `server/src/api/handlers.rs`
 - **Started**: 2026-02-05
-- **Completed**: -
+- **Completed**: 2026-02-05
 - **Notes**: 
-  - Requires breaking change to `FsProvider::open` signature to return `(Handle, FileInfo)`
-  - Would need updates to: trait, Box/Arc impls, all built-in providers, FFI vtable, all plugins
-  - Deferred to v2 major release to avoid breaking changes
+  - Breaking change: `FsProvider::open` now returns `(Handle, FileInfo)` instead of just `Handle`
+  - SDK version bumped from 1 to 2 (`FS9_SDK_VERSION`)
+  - FFI `OpenFn` signature updated with `out_info: *mut CFileInfo` parameter
+  - All built-in providers (memfs, localfs, proxyfs) updated
+  - All 5 plugins (hellofs, pagefs, pubsubfs, streamfs, kv) updated with internal + FFI changes
+  - VfsRouter no longer calls stat() after open() - eliminates redundant filesystem operation
+  - Server handler uses returned FileInfo directly
+  - All 56 core tests, 16 server lib tests, 27 multitenant tests passing
 
 ### 3.2 Request Timeout and Backpressure
 - **Status**: Completed
@@ -158,7 +163,7 @@
 | MountTable O(log n) | Passed (8 tests) | N/A | Pending |
 | TokenCache | Passed (8 tests) | N/A | N/A |
 | Handle Cleanup | N/A | Passed (27 tests) | N/A |
-| Double Stat | Deferred | N/A | N/A |
+| Double Stat | Passed (56 tests) | Passed (43 tests) | N/A |
 | Timeout/Backpressure | N/A | Passed | N/A |
 | Namespace Lock | N/A | Passed (27 tests) | N/A |
 | HandleMap | N/A | Passed (40 tests) | N/A |
@@ -169,9 +174,17 @@
 
 ### 2026-02-05 (continued)
 - Completed P1 Phase: TokenCache with moka, handle cleanup wiring
-- Completed P2 Phase: Request timeout/backpressure (deferred double-stat optimization)
+- Completed P2 Phase: Request timeout/backpressure, double-stat optimization
 - Completed P3 Phase: NamespaceManager lock optimization, HandleMap compact representation
 - All server tests passing (56 total across lib, contract, multitenant)
+
+### 2026-02-05 (double-stat refactor)
+- Completed previously-deferred double-stat optimization
+- `FsProvider::open` now returns `(Handle, FileInfo)` - eliminates redundant stat() call
+- SDK version bumped to 2 (breaking FFI change)
+- All providers (memfs, localfs, proxyfs) and plugins (hellofs, pagefs, pubsubfs, streamfs, kv) updated
+- VfsRouter and server handlers updated to use returned FileInfo
+- All tests updated and passing: 56 core lib, 16 server lib, 27 multitenant
 
 ### 2026-02-05
 - Created PLAN.md with detailed optimization plan

@@ -13,7 +13,7 @@ pub trait FsProvider: Send + Sync {
 
     async fn statfs(&self, path: &str) -> FsResult<FsStats>;
 
-    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle>;
+    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)>;
 
     async fn read(&self, handle: &Handle, offset: u64, size: usize) -> FsResult<Bytes>;
 
@@ -42,7 +42,7 @@ impl<P: FsProvider + ?Sized> FsProvider for Box<P> {
         (**self).statfs(path).await
     }
 
-    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         (**self).open(path, flags).await
     }
 
@@ -85,7 +85,7 @@ impl<P: FsProvider + ?Sized> FsProvider for std::sync::Arc<P> {
         (**self).statfs(path).await
     }
 
-    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         (**self).open(path, flags).await
     }
 

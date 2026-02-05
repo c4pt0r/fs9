@@ -149,7 +149,6 @@ impl From<OpenFlags> for OpenFlagsRequest {
 #[derive(Debug, Deserialize)]
 struct OpenResponse {
     handle_id: String,
-    #[allow(dead_code)]
     metadata: FileInfoResponse,
 }
 
@@ -342,7 +341,7 @@ impl FsProvider for ProxyFs {
         Ok(stats.into())
     }
 
-    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         self.check_hop_limit()?;
 
         let req_body = OpenRequest {
@@ -372,7 +371,7 @@ impl FsProvider for ProxyFs {
             .unwrap()
             .insert(local_handle, open_resp.handle_id);
 
-        Ok(Handle::new(local_handle))
+        Ok((Handle::new(local_handle), open_resp.metadata.into()))
     }
 
     async fn read(&self, handle: &Handle, offset: u64, size: usize) -> FsResult<Bytes> {

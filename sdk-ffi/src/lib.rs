@@ -6,7 +6,7 @@ use std::ffi::CStr;
 use std::ptr;
 use std::slice;
 
-pub const FS9_SDK_VERSION: u32 = 1;
+pub const FS9_SDK_VERSION: u32 = 2;
 
 pub const FS9_OK: i32 = 0;
 pub const FS9_ERR_NOT_FOUND: i32 = -1;
@@ -205,6 +205,7 @@ pub type OpenFn = unsafe extern "C" fn(
     path_len: size_t,
     flags: *const COpenFlags,
     out_handle: *mut u64,
+    out_info: *mut CFileInfo,
 ) -> CResult;
 
 pub type ReadFn = unsafe extern "C" fn(

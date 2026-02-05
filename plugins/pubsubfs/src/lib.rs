@@ -163,9 +163,11 @@ impl Topic {
 
     fn publish(&self, data: Bytes) -> FsResult<usize> {
         if data.len() > MAX_MESSAGE_SIZE {
-            return Err(FsError::invalid_argument(
-                format!("message too large: {} > {}", data.len(), MAX_MESSAGE_SIZE)
-            ));
+            return Err(FsError::invalid_argument(format!(
+                "message too large: {} > {}",
+                data.len(),
+                MAX_MESSAGE_SIZE
+            )));
         }
 
         let msg = Message::new(data);
@@ -201,10 +203,7 @@ impl Topic {
         self.subscribers.write().unwrap().insert(id, info);
 
         // Get historical messages from ring buffer
-        let historical = self.ring_buffer.read().unwrap()
-            .iter()
-            .cloned()
-            .collect();
+        let historical = self.ring_buffer.read().unwrap().iter().cloned().collect();
 
         (id, receiver, historical)
     }
@@ -216,11 +215,15 @@ impl Topic {
     fn get_info(&self) -> String {
         let subscriber_count = self.subscribers.read().unwrap().len();
         let message_count = self.total_messages.load(Ordering::SeqCst);
-        let created = self.created_at
+        let created = self
+            .created_at
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let modified = self.mtime.read().unwrap()
+        let modified = self
+            .mtime
+            .read()
+            .unwrap()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
@@ -232,7 +235,8 @@ impl Topic {
             message_count,
             self.ring_size,
             chrono::DateTime::<chrono::Utc>::from(self.created_at).format("%Y-%m-%d %H:%M:%S"),
-            chrono::DateTime::<chrono::Utc>::from(*self.mtime.read().unwrap()).format("%Y-%m-%d %H:%M:%S"),
+            chrono::DateTime::<chrono::Utc>::from(*self.mtime.read().unwrap())
+                .format("%Y-%m-%d %H:%M:%S"),
         )
     }
 }
@@ -396,7 +400,7 @@ impl PubSubFsProvider {
         Err(FsError::not_found(&path))
     }
 
-    fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         let path = Self::normalize_path(path);
         let handle_id = self.next_handle_id.fetch_add(1, Ordering::SeqCst);
 
@@ -405,37 +409,35 @@ impl PubSubFsProvider {
                 return Err(FsError::permission_denied("README is read-only"));
             }
             HandleType::ReadmeFile(README_CONTENT.as_bytes().to_vec())
-        } else if let Some(topic_name) = path.strip_prefix('/').and_then(|p| p.strip_suffix(".info")) {
-            // Opening .info file
+        } else if let Some(topic_name) =
+            path.strip_prefix('/').and_then(|p| p.strip_suffix(".info"))
+        {
             if flags.write {
                 return Err(FsError::permission_denied(".info files are read-only"));
             }
             let topics = self.topics.read().unwrap();
-            let topic = topics.get(topic_name)
+            let topic = topics
+                .get(topic_name)
                 .ok_or_else(|| FsError::not_found(topic_name))?
                 .clone();
             HandleType::TopicInfo(topic)
         } else if let Some(topic_name) = path.strip_prefix('/') {
-            // Opening topic file (e.g., /pubsub/chat)
             if topic_name.is_empty() || topic_name.contains('/') || topic_name == "README" {
                 return Err(FsError::not_found(&path));
             }
 
-            // Determine mode based on flags
-            // For PubSubFS: write = publish, read = subscribe
             if flags.read && flags.write {
                 return Err(FsError::invalid_argument(
                     "cannot open a topic for both read (subscribe) and write (publish)",
                 ));
             }
             if flags.write {
-                // Write mode = Publish
                 let topic = self.create_topic_if_needed(topic_name);
                 HandleType::TopicPublish(topic)
             } else if flags.read {
-                // Read mode = Subscribe
                 let topics = self.topics.read().unwrap();
-                let topic = topics.get(topic_name)
+                let topic = topics
+                    .get(topic_name)
                     .ok_or_else(|| FsError::not_found(topic_name))?
                     .clone();
 
@@ -457,6 +459,8 @@ impl PubSubFsProvider {
             return Err(FsError::not_found(&path));
         };
 
+        let info = self.stat(&path)?;
+
         let handle = PubSubHandle {
             id: handle_id,
             path: path.clone(),
@@ -464,12 +468,13 @@ impl PubSubFsProvider {
         };
 
         self.handles.lock().unwrap().insert(handle_id, handle);
-        Ok(Handle::new(handle_id))
+        Ok((Handle::new(handle_id), info))
     }
 
     fn read(&self, handle: u64, offset: u64, size: usize) -> FsResult<Bytes> {
         let mut handles = self.handles.lock().unwrap();
-        let h = handles.get_mut(&handle)
+        let h = handles
+            .get_mut(&handle)
             .ok_or_else(|| FsError::invalid_handle(handle))?;
 
         match &mut h.handle_type {
@@ -548,13 +553,12 @@ impl PubSubFsProvider {
 
     fn write(&self, handle: u64, data: &[u8]) -> FsResult<usize> {
         let handles = self.handles.lock().unwrap();
-        let h = handles.get(&handle)
+        let h = handles
+            .get(&handle)
             .ok_or_else(|| FsError::invalid_handle(handle))?;
 
         match &h.handle_type {
-            HandleType::TopicPublish(topic) => {
-                topic.publish(Bytes::copy_from_slice(data))
-            }
+            HandleType::TopicPublish(topic) => topic.publish(Bytes::copy_from_slice(data)),
             _ => Err(FsError::permission_denied("cannot write to this handle")),
         }
     }
@@ -563,7 +567,12 @@ impl PubSubFsProvider {
         let mut handles = self.handles.lock().unwrap();
 
         if let Some(h) = handles.remove(&handle) {
-            if let HandleType::TopicSubscribe { topic, subscriber_id, .. } = h.handle_type {
+            if let HandleType::TopicSubscribe {
+                topic,
+                subscriber_id,
+                ..
+            } = h.handle_type
+            {
                 topic.unsubscribe(subscriber_id);
             }
         }
@@ -575,21 +584,19 @@ impl PubSubFsProvider {
         let path = Self::normalize_path(path);
 
         if path == "/" {
-            let mut entries = vec![
-                FileInfo {
-                    path: "/README".to_string(),
-                    size: README_CONTENT.len() as u64,
-                    file_type: FileType::Regular,
-                    mode: 0o444,
-                    uid: 0,
-                    gid: 0,
-                    atime: SystemTime::UNIX_EPOCH,
-                    mtime: SystemTime::UNIX_EPOCH,
-                    ctime: SystemTime::UNIX_EPOCH,
-                    etag: "readme".to_string(),
-                    symlink_target: None,
-                },
-            ];
+            let mut entries = vec![FileInfo {
+                path: "/README".to_string(),
+                size: README_CONTENT.len() as u64,
+                file_type: FileType::Regular,
+                mode: 0o444,
+                uid: 0,
+                gid: 0,
+                atime: SystemTime::UNIX_EPOCH,
+                mtime: SystemTime::UNIX_EPOCH,
+                ctime: SystemTime::UNIX_EPOCH,
+                etag: "readme".to_string(),
+                symlink_target: None,
+            }];
 
             // Add all topics and their .info files
             let topics = self.topics.read().unwrap();
@@ -643,7 +650,9 @@ impl PubSubFsProvider {
 
         // Check if it's a .info file
         if path.ends_with(".info") {
-            return Err(FsError::permission_denied(".info files cannot be deleted directly; delete the topic instead"));
+            return Err(FsError::permission_denied(
+                ".info files cannot be deleted directly; delete the topic instead",
+            ));
         }
 
         // Try to remove topic
@@ -736,9 +745,8 @@ unsafe extern "C" fn stat_fn(
     }
 
     let provider = &*(provider as *const PubSubFsProvider);
-    let path = std::str::from_utf8_unchecked(
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    );
+    let path =
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(path as *const u8, path_len));
 
     match provider.stat(path) {
         Ok(info) => {
@@ -795,15 +803,15 @@ unsafe extern "C" fn open_fn(
     path_len: size_t,
     flags: *const COpenFlags,
     out_handle: *mut u64,
+    out_info: *mut CFileInfo,
 ) -> CResult {
-    if provider.is_null() || flags.is_null() || out_handle.is_null() {
+    if provider.is_null() || flags.is_null() || out_handle.is_null() || out_info.is_null() {
         return make_cresult_err(FS9_ERR_INVALID_ARGUMENT);
     }
 
     let provider = &*(provider as *const PubSubFsProvider);
-    let path = std::str::from_utf8_unchecked(
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    );
+    let path =
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(path as *const u8, path_len));
     let flags = &*flags;
 
     let open_flags = OpenFlags {
@@ -816,8 +824,20 @@ unsafe extern "C" fn open_fn(
     };
 
     match provider.open(path, open_flags) {
-        Ok(handle) => {
+        Ok((handle, info)) => {
             *out_handle = handle.id();
+            (*out_info).size = info.size;
+            (*out_info).file_type = if info.file_type == FileType::Directory {
+                FILE_TYPE_DIRECTORY
+            } else {
+                FILE_TYPE_REGULAR
+            };
+            (*out_info).mode = info.mode;
+            (*out_info).uid = info.uid;
+            (*out_info).gid = info.gid;
+            (*out_info).mtime = systemtime_to_timestamp(info.mtime);
+            (*out_info).atime = systemtime_to_timestamp(info.atime);
+            (*out_info).ctime = systemtime_to_timestamp(info.ctime);
             make_cresult_ok()
         }
         Err(e) => make_cresult_err(fserror_to_code(&e)),
@@ -899,9 +919,8 @@ unsafe extern "C" fn readdir_fn(
     }
 
     let provider = &*(provider as *const PubSubFsProvider);
-    let path = std::str::from_utf8_unchecked(
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    );
+    let path =
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(path as *const u8, path_len));
 
     match provider.readdir(path) {
         Ok(entries) => {
@@ -943,9 +962,8 @@ unsafe extern "C" fn remove_fn(
     }
 
     let provider = &*(provider as *const PubSubFsProvider);
-    let path = std::str::from_utf8_unchecked(
-        std::slice::from_raw_parts(path as *const u8, path_len)
-    );
+    let path =
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(path as *const u8, path_len));
 
     match provider.remove(path) {
         Ok(()) => make_cresult_ok(),
@@ -1018,10 +1036,15 @@ mod tests {
         let provider = PubSubFsProvider::new(PubSubFsConfig::default());
 
         // Topic created automatically on first write
-        let handle = provider.open("/test_topic", OpenFlags {
-            write: true,
-            ..Default::default()
-        }).unwrap();
+        let handle = provider
+            .open(
+                "/test_topic",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
         let topics = provider.topics.read().unwrap();
         assert!(topics.contains_key("test_topic"));
@@ -1034,10 +1057,15 @@ mod tests {
         let provider = PubSubFsProvider::new(PubSubFsConfig::default());
 
         // Create topic
-        let h = provider.open("/test", OpenFlags {
-            write: true,
-            ..Default::default()
-        }).unwrap();
+        let h = provider
+            .open(
+                "/test",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         provider.close(h.id()).unwrap();
 
         // Delete topic
@@ -1052,16 +1080,26 @@ mod tests {
         let provider = PubSubFsProvider::new(PubSubFsConfig::default());
 
         // Open pub handle (auto-creates topic)
-        let pub_h = provider.open("/chat", OpenFlags {
-            write: true,
-            ..Default::default()
-        }).unwrap();
+        let pub_h = provider
+            .open(
+                "/chat",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
         // Open sub handle
-        let sub_h = provider.open("/chat", OpenFlags {
-            read: true,
-            ..Default::default()
-        }).unwrap();
+        let sub_h = provider
+            .open(
+                "/chat",
+                OpenFlags {
+                    read: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
         // Publish a message
         provider.write(pub_h.id(), b"hello world").unwrap();
@@ -1078,20 +1116,35 @@ mod tests {
     fn multiple_subscribers() {
         let provider = PubSubFsProvider::new(PubSubFsConfig::default());
 
-        let pub_h = provider.open("/broadcast", OpenFlags {
-            write: true,
-            ..Default::default()
-        }).unwrap();
+        let pub_h = provider
+            .open(
+                "/broadcast",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
-        let sub1 = provider.open("/broadcast", OpenFlags {
-            read: true,
-            ..Default::default()
-        }).unwrap();
+        let sub1 = provider
+            .open(
+                "/broadcast",
+                OpenFlags {
+                    read: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
-        let sub2 = provider.open("/broadcast", OpenFlags {
-            read: true,
-            ..Default::default()
-        }).unwrap();
+        let sub2 = provider
+            .open(
+                "/broadcast",
+                OpenFlags {
+                    read: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
         provider.write(pub_h.id(), b"broadcast message").unwrap();
 
@@ -1111,17 +1164,27 @@ mod tests {
         let provider = PubSubFsProvider::new(PubSubFsConfig::default());
 
         // Create topic
-        let h = provider.open("/test", OpenFlags {
-            write: true,
-            ..Default::default()
-        }).unwrap();
+        let h = provider
+            .open(
+                "/test",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         provider.close(h.id()).unwrap();
 
         // Read info
-        let info_h = provider.open("/test.info", OpenFlags {
-            read: true,
-            ..Default::default()
-        }).unwrap();
+        let info_h = provider
+            .open(
+                "/test.info",
+                OpenFlags {
+                    read: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
         let data = provider.read(info_h.id(), 0, 4096).unwrap();
         let info = String::from_utf8_lossy(&data);
@@ -1138,14 +1201,24 @@ mod tests {
         let provider = PubSubFsProvider::new(PubSubFsConfig::default());
 
         // Create topics
-        let h1 = provider.open("/topic1", OpenFlags {
-            write: true,
-            ..Default::default()
-        }).unwrap();
-        let h2 = provider.open("/topic2", OpenFlags {
-            write: true,
-            ..Default::default()
-        }).unwrap();
+        let h1 = provider
+            .open(
+                "/topic1",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let h2 = provider
+            .open(
+                "/topic2",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         provider.close(h1.id()).unwrap();
         provider.close(h2.id()).unwrap();
 
@@ -1163,8 +1236,24 @@ mod tests {
         let provider = PubSubFsProvider::new(PubSubFsConfig::default());
 
         // Create some topics
-        let h1 = provider.open("/chat", OpenFlags { write: true, ..Default::default() }).unwrap();
-        let h2 = provider.open("/logs", OpenFlags { write: true, ..Default::default() }).unwrap();
+        let h1 = provider
+            .open(
+                "/chat",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let h2 = provider
+            .open(
+                "/logs",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         provider.close(h1.id()).unwrap();
         provider.close(h2.id()).unwrap();
 
@@ -1185,10 +1274,15 @@ mod tests {
         };
         let provider = PubSubFsProvider::new(config);
 
-        let pub_h = provider.open("/test", OpenFlags {
-            write: true,
-            ..Default::default()
-        }).unwrap();
+        let pub_h = provider
+            .open(
+                "/test",
+                OpenFlags {
+                    write: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
         // Publish several messages
         provider.write(pub_h.id(), b"msg1").unwrap();
@@ -1197,10 +1291,15 @@ mod tests {
         provider.write(pub_h.id(), b"msg4").unwrap(); // This will evict msg1
 
         // Late subscriber should get last 3 messages
-        let sub_h = provider.open("/test", OpenFlags {
-            read: true,
-            ..Default::default()
-        }).unwrap();
+        let sub_h = provider
+            .open(
+                "/test",
+                OpenFlags {
+                    read: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
         let data = provider.read(sub_h.id(), 0, 4096).unwrap();
         let content = String::from_utf8_lossy(&data);
@@ -1219,11 +1318,14 @@ mod tests {
         let provider = PubSubFsProvider::new(PubSubFsConfig::default());
 
         // Try to open for both read and write
-        let result = provider.open("/test", OpenFlags {
-            read: true,
-            write: true,
-            ..Default::default()
-        });
+        let result = provider.open(
+            "/test",
+            OpenFlags {
+                read: true,
+                write: true,
+                ..Default::default()
+            },
+        );
 
         assert!(result.is_err());
     }

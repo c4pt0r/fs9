@@ -222,11 +222,14 @@ impl FsProvider for LocalFs {
         }
     }
 
-    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         let full_path = self.resolve_path(path)?;
 
         if flags.create && flags.directory {
             fs::create_dir(&full_path).map_err(|e| map_io_error(e, path))?;
+            let meta = fs::metadata(&full_path).map_err(|e| map_io_error(e, path))?;
+            let info = Self::metadata_to_file_info(path, &meta, None);
+
             let handle_id = self.next_handle.fetch_add(1, Ordering::SeqCst);
             self.handles.write().unwrap().insert(
                 handle_id,
@@ -236,7 +239,7 @@ impl FsProvider for LocalFs {
                     flags,
                 },
             );
-            return Ok(Handle::new(handle_id));
+            return Ok((Handle::new(handle_id), info));
         }
 
         let file = OpenOptions::new()
@@ -248,6 +251,14 @@ impl FsProvider for LocalFs {
             .open(&full_path)
             .map_err(|e| map_io_error(e, path))?;
 
+        let meta = file.metadata().map_err(|e| map_io_error(e, path))?;
+        let symlink_target = if meta.file_type().is_symlink() {
+            fs::read_link(&full_path).ok().map(|p| p.to_string_lossy().to_string())
+        } else {
+            None
+        };
+        let info = Self::metadata_to_file_info(path, &meta, symlink_target);
+
         let handle_id = self.next_handle.fetch_add(1, Ordering::SeqCst);
         self.handles.write().unwrap().insert(
             handle_id,
@@ -258,7 +269,7 @@ impl FsProvider for LocalFs {
             },
         );
 
-        Ok(Handle::new(handle_id))
+        Ok((Handle::new(handle_id), info))
     }
 
     async fn read(&self, handle: &Handle, offset: u64, size: usize) -> FsResult<Bytes> {
@@ -400,11 +411,11 @@ mod tests {
     async fn create_and_read_file() {
         let (_temp, fs) = setup().await;
 
-        let handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
         fs.close(handle, true).await.unwrap();
 
-        let handle = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
         let data = fs.read(&handle, 0, 1024).await.unwrap();
         assert_eq!(&data[..], b"hello world");
         fs.close(handle, false).await.unwrap();
@@ -414,7 +425,7 @@ mod tests {
     async fn create_directory() {
         let (_temp, fs) = setup().await;
 
-        fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
+        let _ = fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
 
         let info = fs.stat("/mydir").await.unwrap();
         assert!(info.is_dir());
@@ -424,10 +435,10 @@ mod tests {
     async fn readdir_contents() {
         let (_temp, fs) = setup().await;
 
-        fs.open("/dir", OpenFlags::create_dir()).await.unwrap();
-        let h1 = fs.open("/dir/a.txt", OpenFlags::create_file()).await.unwrap();
+        let _ = fs.open("/dir", OpenFlags::create_dir()).await.unwrap();
+        let (h1, _) = fs.open("/dir/a.txt", OpenFlags::create_file()).await.unwrap();
         fs.close(h1, false).await.unwrap();
-        let h2 = fs.open("/dir/b.txt", OpenFlags::create_file()).await.unwrap();
+        let (h2, _) = fs.open("/dir/b.txt", OpenFlags::create_file()).await.unwrap();
         fs.close(h2, false).await.unwrap();
 
         let entries = fs.readdir("/dir").await.unwrap();
@@ -438,7 +449,7 @@ mod tests {
     async fn remove_file() {
         let (_temp, fs) = setup().await;
 
-        let handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
         fs.remove("/test.txt").await.unwrap();
@@ -449,7 +460,7 @@ mod tests {
     async fn rename_file() {
         let (_temp, fs) = setup().await;
 
-        let handle = fs.open("/old.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/old.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("content")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
@@ -464,7 +475,7 @@ mod tests {
     async fn truncate_file() {
         let (_temp, fs) = setup().await;
 
-        let handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 

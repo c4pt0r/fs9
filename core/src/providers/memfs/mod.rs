@@ -403,10 +403,10 @@ impl FsProvider for MemoryFs {
         })
     }
 
-    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         let path = Self::normalize_path(path);
 
-        {
+        let entry = {
             let mut entries = self.entries.write().unwrap();
 
             if flags.create && flags.directory {
@@ -436,18 +436,20 @@ impl FsProvider for MemoryFs {
             } else if !entries.contains_key(&path) {
                 return Err(FsError::not_found(&path));
             }
-        }
+
+            entries.get(&path).unwrap().clone()
+        };
 
         let handle_id = self.next_handle.fetch_add(1, Ordering::SeqCst);
         self.handles.write().unwrap().insert(
             handle_id,
             OpenHandle {
-                path,
+                path: path.clone(),
                 flags,
             },
         );
 
-        Ok(Handle::new(handle_id))
+        Ok((Handle::new(handle_id), entry.to_file_info(&path)))
     }
 
     async fn read(&self, handle: &Handle, offset: u64, size: usize) -> FsResult<Bytes> {
@@ -599,11 +601,11 @@ mod tests {
     async fn create_and_read_file() {
         let fs = MemoryFs::new();
 
-        let handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
-        let handle = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
         let data = fs.read(&handle, 0, 1024).await.unwrap();
         assert_eq!(&data[..], b"hello world");
         fs.close(handle, false).await.unwrap();
@@ -613,13 +615,13 @@ mod tests {
     async fn create_directory_and_list() {
         let fs = MemoryFs::new();
 
-        fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
+        let _ = fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
 
-        let handle = fs.open("/mydir/file1.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/mydir/file1.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("content1")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
-        let handle = fs.open("/mydir/file2.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/mydir/file2.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("content2")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
@@ -633,7 +635,7 @@ mod tests {
     async fn stat_file() {
         let fs = MemoryFs::new();
 
-        let handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("hello")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
@@ -646,7 +648,7 @@ mod tests {
     async fn rename_file() {
         let fs = MemoryFs::new();
 
-        let handle = fs.open("/old.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/old.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("content")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
@@ -661,13 +663,13 @@ mod tests {
     async fn truncate_file() {
         let fs = MemoryFs::new();
 
-        let handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
         fs.wstat("/test.txt", StatChanges::truncate(5)).await.unwrap();
 
-        let handle = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
         let data = fs.read(&handle, 0, 1024).await.unwrap();
         assert_eq!(&data[..], b"hello");
     }
@@ -676,7 +678,7 @@ mod tests {
     async fn create_symlink() {
         let fs = MemoryFs::new();
 
-        let handle = fs.open("/target.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/target.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("target content")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
@@ -691,7 +693,7 @@ mod tests {
     async fn remove_empty_directory() {
         let fs = MemoryFs::new();
 
-        fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
+        let _ = fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
         fs.remove("/mydir").await.unwrap();
 
         assert!(fs.stat("/mydir").await.is_err());
@@ -701,8 +703,8 @@ mod tests {
     async fn cannot_remove_non_empty_directory() {
         let fs = MemoryFs::new();
 
-        fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
-        let handle = fs.open("/mydir/file.txt", OpenFlags::create_file()).await.unwrap();
+        let _ = fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
+        let (handle, _) = fs.open("/mydir/file.txt", OpenFlags::create_file()).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
         let result = fs.remove("/mydir").await;
@@ -722,15 +724,15 @@ mod tests {
     async fn append_mode() {
         let fs = MemoryFs::new();
 
-        let handle = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
         fs.write(&handle, 0, Bytes::from("hello")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
-        let handle = fs.open("/test.txt", OpenFlags::append()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::append()).await.unwrap();
         fs.write(&handle, 0, Bytes::from(" world")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
-        let handle = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
+        let (handle, _) = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
         let data = fs.read(&handle, 0, 1024).await.unwrap();
         assert_eq!(&data[..], b"hello world");
     }

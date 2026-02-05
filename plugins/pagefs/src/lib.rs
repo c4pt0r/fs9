@@ -596,7 +596,7 @@ impl PageFsProvider {
         })
     }
 
-    pub fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    pub fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         let path = self.normalize_path(path);
 
         let inode_id = if flags.create {
@@ -640,6 +640,8 @@ impl PageFsProvider {
             }
         }
 
+        let info = self.stat(&path)?;
+
         let mut next = self.next_handle.lock().unwrap();
         let handle_id = *next;
         *next += 1;
@@ -649,7 +651,7 @@ impl PageFsProvider {
             .unwrap()
             .insert(handle_id, (inode_id, path, flags));
 
-        Ok(Handle::new(handle_id))
+        Ok((Handle::new(handle_id), info))
     }
 
     pub fn read(&self, handle: u64, offset: u64, size: usize) -> FsResult<Bytes> {
@@ -1134,8 +1136,9 @@ unsafe extern "C" fn open_fn(
     path_len: size_t,
     flags: *const COpenFlags,
     out_handle: *mut u64,
+    out_info: *mut CFileInfo,
 ) -> CResult {
-    if provider.is_null() || flags.is_null() || out_handle.is_null() {
+    if provider.is_null() || flags.is_null() || out_handle.is_null() || out_info.is_null() {
         return make_cresult_err(fs9_sdk_ffi::FS9_ERR_INVALID_ARGUMENT);
     }
 
@@ -1154,8 +1157,20 @@ unsafe extern "C" fn open_fn(
     };
 
     match provider.open(path, open_flags) {
-        Ok(handle) => {
+        Ok((handle, info)) => {
             *out_handle = handle.id();
+            (*out_info).size = info.size;
+            (*out_info).file_type = if info.file_type == FileType::Directory {
+                FILE_TYPE_DIRECTORY
+            } else {
+                FILE_TYPE_REGULAR
+            };
+            (*out_info).mode = info.mode;
+            (*out_info).uid = info.uid;
+            (*out_info).gid = info.gid;
+            (*out_info).mtime = systemtime_to_timestamp(info.mtime);
+            (*out_info).atime = systemtime_to_timestamp(info.atime);
+            (*out_info).ctime = systemtime_to_timestamp(info.ctime);
             CResult {
                 code: FS9_OK,
                 error_msg: ptr::null(),

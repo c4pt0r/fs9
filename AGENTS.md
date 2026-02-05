@@ -141,9 +141,16 @@ All crates depend on `sdk`. Plugins depend on `sdk-ffi` (C ABI). Server and fuse
 | Namespace lock opt | `server/src/namespace.rs` | Optimistic creation outside write lock |
 | HandleMap compact | `server/src/state.rs` | HashSet<u64> replaces bidirectional HashMap<UUID,u64> |
 
-### Deferred (Breaking Changes)
+### Completed (Breaking Change - SDK v2)
 
-- **VfsRouter::open double stat** — requires `FsProvider::open` to return `(Handle, FileInfo)`, affects trait + all impls + FFI
+| Optimization | Location | Improvement |
+|--------------|----------|-------------|
+| FsProvider::open returns (Handle, FileInfo) | `sdk/src/provider.rs`, all providers/plugins | Eliminates redundant stat() call after open() |
+
+**Breaking change notes:**
+- SDK version bumped from 1 to 2 (`FS9_SDK_VERSION` in sdk-ffi)
+- FFI `OpenFn` signature changed: added `out_info: *mut CFileInfo` parameter
+- All plugins must be recompiled against SDK v2
 
 ### Config Options Added
 

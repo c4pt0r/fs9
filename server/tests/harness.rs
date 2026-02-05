@@ -501,7 +501,7 @@ async fn mt_open(
 ) -> MtResult<Json<OpenResp>> {
     let ns = mt_resolve_ns(&state, &ctx).await?;
     let flags = parse_flags(req.flags);
-    let handle = ns.vfs.open(&req.path, flags).await.map_err(mt_err)?;
+    let (handle, _info) = ns.vfs.open(&req.path, flags).await.map_err(mt_err)?;
     let handle_id = handle.id();
     ns.handle_map.write().await.insert(handle_id);
     Ok(Json(OpenResp { handle_id: handle_id.to_string() }))
@@ -847,7 +847,7 @@ struct LegacyOpenResp { handle_id: String }
 
 async fn open(State(state): State<Arc<TestAppState>>, Json(req): Json<LegacyOpenReq>) -> AppResult<Json<LegacyOpenResp>> {
     let flags = parse_flags(req.flags);
-    let handle = state.vfs.open(&req.path, flags).await.map_err(map_err)?;
+    let (handle, _info) = state.vfs.open(&req.path, flags).await.map_err(map_err)?;
     let uuid = uuid::Uuid::new_v4().to_string();
     state.handle_map.write().await.insert(uuid.clone(), handle.id());
     Ok(Json(LegacyOpenResp { handle_id: uuid }))

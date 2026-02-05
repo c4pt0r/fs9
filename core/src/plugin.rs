@@ -528,7 +528,7 @@ impl FsProvider for PluginProvider {
         .map_err(|e| FsError::internal(e.to_string()))?
     }
 
-    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         let path_cstr = CString::new(path).map_err(|e| FsError::invalid_argument(e.to_string()))?;
         let path_len = path.len();
         let c_flags = openflags_to_copenflags(&flags);
@@ -537,11 +537,12 @@ impl FsProvider for PluginProvider {
 
         tokio::task::spawn_blocking(move || {
             let mut out_handle: u64 = 0;
+            let mut out_info = CFileInfo::default();
             let result = unsafe {
-                (vtable.open)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &c_flags, &mut out_handle)
+                (vtable.open)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &c_flags, &mut out_handle, &mut out_info)
             };
             if result.code == FS9_OK {
-                Ok(Handle::new(out_handle))
+                Ok((Handle::new(out_handle), cfileinfo_to_fileinfo(&out_info)))
             } else {
                 Err(cresult_to_fserror(result))
             }

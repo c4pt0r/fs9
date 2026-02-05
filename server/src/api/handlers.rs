@@ -133,8 +133,7 @@ pub async fn open(
     Json(req): Json<OpenRequest>,
 ) -> AppResult<Json<OpenResponse>> {
     let ns = resolve_ns(&state, &ctx).await?;
-    let handle = ns.vfs.open(&req.path, req.flags.into()).await?;
-    let metadata = ns.vfs.stat(&req.path).await?;
+    let (handle, metadata) = ns.vfs.open(&req.path, req.flags.into()).await?;
 
     let handle_id = handle.id();
     ns.handle_map.write().await.insert(handle_id);

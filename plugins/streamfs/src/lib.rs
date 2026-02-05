@@ -285,10 +285,11 @@ impl StreamFsProvider {
         Ok(stream.get_info())
     }
 
-    fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
+    fn open(&self, path: &str, flags: OpenFlags) -> FsResult<(Handle, FileInfo)> {
         let path = Self::normalize_path(path);
 
         if path == "/README" {
+            let info = self.stat(&path)?;
             let handle_id = self.next_handle_id.fetch_add(1, Ordering::SeqCst);
             let handle = StreamHandle {
                 id: handle_id,
@@ -303,7 +304,7 @@ impl StreamFsProvider {
                 historical_index: 0,
             };
             self.handles.lock().unwrap().insert(handle_id, handle);
-            return Ok(Handle::new(handle_id));
+            return Ok((Handle::new(handle_id), info));
         }
 
         let stream = {
@@ -351,7 +352,8 @@ impl StreamFsProvider {
 
         self.handles.lock().unwrap().insert(handle_id, handle);
 
-        Ok(Handle::new(handle_id))
+        let info = self.stat(&path)?;
+        Ok((Handle::new(handle_id), info))
     }
 
     fn read(&self, handle: u64, offset: u64, size: usize) -> FsResult<Bytes> {
@@ -602,8 +604,9 @@ unsafe extern "C" fn open_fn(
     path_len: size_t,
     flags: *const COpenFlags,
     out_handle: *mut u64,
+    out_info: *mut CFileInfo,
 ) -> CResult {
-    if provider.is_null() || flags.is_null() || out_handle.is_null() {
+    if provider.is_null() || flags.is_null() || out_handle.is_null() || out_info.is_null() {
         return make_cresult_err(fs9_sdk_ffi::FS9_ERR_INVALID_ARGUMENT);
     }
 
@@ -622,8 +625,20 @@ unsafe extern "C" fn open_fn(
     };
 
     match provider.open(path, open_flags) {
-        Ok(handle) => {
+        Ok((handle, info)) => {
             *out_handle = handle.id();
+            (*out_info).size = info.size;
+            (*out_info).file_type = if info.file_type == FileType::Directory {
+                FILE_TYPE_DIRECTORY
+            } else {
+                FILE_TYPE_REGULAR
+            };
+            (*out_info).mode = info.mode;
+            (*out_info).uid = info.uid;
+            (*out_info).gid = info.gid;
+            (*out_info).mtime = systemtime_to_timestamp(info.mtime);
+            (*out_info).atime = systemtime_to_timestamp(info.atime);
+            (*out_info).ctime = systemtime_to_timestamp(info.ctime);
             CResult {
                 code: FS9_OK,
                 error_msg: ptr::null(),
