@@ -1,4 +1,4 @@
-use fs9_core::PluginManager;
+use fs9_core::{PluginManager, ProviderRegistry};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -9,6 +9,7 @@ use crate::namespace::{Namespace, NamespaceManager, DEFAULT_NAMESPACE};
 pub struct AppState {
     pub namespace_manager: Arc<NamespaceManager>,
     pub plugin_manager: Arc<PluginManager>,
+    pub provider_registry: Arc<ProviderRegistry>,
 }
 
 pub struct HandleMap {
@@ -65,10 +66,12 @@ impl AppState {
     pub fn with_handle_ttl(ttl: Duration) -> Self {
         let namespace_manager = Arc::new(NamespaceManager::new(ttl));
         let plugin_manager = Arc::new(PluginManager::new());
+        let provider_registry = Arc::new(fs9_core::default_registry());
 
         Self {
             namespace_manager,
             plugin_manager,
+            provider_registry,
         }
     }
 

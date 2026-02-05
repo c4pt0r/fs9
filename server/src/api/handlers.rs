@@ -320,18 +320,41 @@ pub async fn mount_plugin(
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<MountPluginRequest>,
 ) -> AppResult<Json<MountResponse>> {
+    use fs9_core::ProviderConfig;
+
     require_role(&ctx, &["operator", "admin"])?;
 
     let ns = resolve_ns(&state, &ctx).await?;
-    let config = serde_json::to_string(&req.config).unwrap_or_default();
 
-    let provider = state
-        .plugin_manager
-        .create_provider(&req.provider, &config)
-        .map_err(|e| FsError::internal(e.to_string()))?;
+    // Build provider config from request
+    let provider_config = {
+        let mut pc = ProviderConfig::new();
+        if let Some(obj) = req.config.as_object() {
+            for (k, v) in obj {
+                pc.options.insert(k.clone(), v.clone());
+            }
+        }
+        pc
+    };
+
+    // Try built-in registry first, then plugins
+    let provider: Arc<dyn fs9_sdk::FsProvider> = if state.provider_registry.has(&req.provider) {
+        state
+            .provider_registry
+            .create(&req.provider, provider_config)
+            .map_err(|e| FsError::internal(e.to_string()))?
+    } else {
+        let config_json = serde_json::to_string(&req.config).unwrap_or_default();
+        Arc::new(
+            state
+                .plugin_manager
+                .create_provider(&req.provider, &config_json)
+                .map_err(|e| FsError::internal(e.to_string()))?,
+        )
+    };
 
     ns.mount_table
-        .mount(&req.path, &req.provider, std::sync::Arc::new(provider))
+        .mount(&req.path, &req.provider, provider)
         .await
         .map_err(|e| FsError::internal(e.to_string()))?;
 
