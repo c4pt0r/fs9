@@ -195,10 +195,10 @@ impl FsProvider for LocalFs {
 
             let stat = unsafe { stat.assume_init() };
             Ok(FsStats {
-                total_bytes: stat.f_blocks * stat.f_frsize,
-                free_bytes: stat.f_bavail * stat.f_frsize,
-                total_inodes: stat.f_files,
-                free_inodes: stat.f_favail,
+                total_bytes: (stat.f_blocks as u64) * (stat.f_frsize as u64),
+                free_bytes: (stat.f_bavail as u64) * (stat.f_frsize as u64),
+                total_inodes: stat.f_files as u64,
+                free_inodes: stat.f_favail as u64,
                 block_size: stat.f_bsize as u32,
                 max_name_len: stat.f_namemax as u32,
             })
