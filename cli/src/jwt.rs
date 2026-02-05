@@ -11,7 +11,7 @@ struct Claims {
     exp: u64,
 }
 
-pub fn generate(secret: &str, user: &str, namespace: &str, role: &str, ttl_secs: u64) -> Result<String, String> {
+pub fn generate(secret: &str, user: &str, namespace: &str, roles: &[String], ttl_secs: u64) -> Result<String, String> {
     if secret.is_empty() {
         return Err("JWT secret not configured. Run 'fs9-admin init' or use --secret.".to_string());
     }
@@ -24,7 +24,7 @@ pub fn generate(secret: &str, user: &str, namespace: &str, role: &str, ttl_secs:
     let claims = Claims {
         sub: user.to_string(),
         ns: namespace.to_string(),
-        roles: vec![role.to_string()],
+        roles: roles.to_vec(),
         iat: now,
         exp: now + ttl_secs,
     };

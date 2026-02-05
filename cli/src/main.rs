@@ -89,9 +89,9 @@ enum TokenCommands {
         /// Namespace
         #[arg(short, long)]
         namespace: String,
-        /// Role (admin, operator, reader)
-        #[arg(short, long, default_value = "reader")]
-        role: String,
+        /// Roles: read-only, read-write, admin (can specify multiple times)
+        #[arg(short, long = "role", default_value = "read-only")]
+        roles: Vec<String>,
         /// Token TTL in seconds
         #[arg(short, long, default_value = "86400")]
         ttl: u64,
@@ -147,8 +147,8 @@ fn main() {
             NsCommands::Delete { name, force } => cmd_ns_delete(&config, &cli.admin_ns, &name, force),
         },
         Commands::Token(token_cmd) => match token_cmd {
-            TokenCommands::Generate { user, namespace, role, ttl } => {
-                cmd_token_generate(&config, &user, &namespace, &role, ttl)
+            TokenCommands::Generate { user, namespace, roles, ttl } => {
+                cmd_token_generate(&config, &user, &namespace, roles, ttl)
             }
             TokenCommands::Decode { token } => cmd_token_decode(&token),
         },
@@ -194,7 +194,7 @@ fn cmd_health(config: &Config) -> Result<(), String> {
 }
 
 fn cmd_ns_create(config: &Config, admin_ns: &str, name: &str) -> Result<(), String> {
-    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, "admin", 3600)?;
+    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, &["admin".to_string()], 3600)?;
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/api/v1/namespaces", config.server);
 
@@ -232,7 +232,7 @@ fn cmd_ns_create(config: &Config, admin_ns: &str, name: &str) -> Result<(), Stri
 }
 
 fn cmd_ns_list(config: &Config, admin_ns: &str) -> Result<(), String> {
-    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, "admin", 3600)?;
+    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, &["admin".to_string()], 3600)?;
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/api/v1/namespaces", config.server);
 
@@ -275,7 +275,7 @@ fn cmd_ns_list(config: &Config, admin_ns: &str) -> Result<(), String> {
 }
 
 fn cmd_ns_get(config: &Config, admin_ns: &str, name: &str) -> Result<(), String> {
-    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, "admin", 3600)?;
+    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, &["admin".to_string()], 3600)?;
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/api/v1/namespaces/{}", config.server, name);
 
@@ -311,7 +311,7 @@ fn cmd_ns_delete(config: &Config, admin_ns: &str, name: &str, force: bool) -> Re
         return Ok(());
     }
 
-    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, "admin", 3600)?;
+    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, &["admin".to_string()], 3600)?;
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/api/v1/namespaces/{}", config.server, name);
 
@@ -335,8 +335,20 @@ fn cmd_ns_delete(config: &Config, admin_ns: &str, name: &str, force: bool) -> Re
     }
 }
 
-fn cmd_token_generate(config: &Config, user: &str, namespace: &str, role: &str, ttl: u64) -> Result<(), String> {
-    let token = jwt::generate(&config.jwt_secret, user, namespace, role, ttl)?;
+fn cmd_token_generate(config: &Config, user: &str, namespace: &str, roles: Vec<String>, ttl: u64) -> Result<(), String> {
+    // Validate roles
+    let valid_roles = ["read-only", "read-write", "admin"];
+    for role in &roles {
+        if !valid_roles.contains(&role.as_str()) {
+            return Err(format!(
+                "Invalid role '{}'. Valid roles: {}",
+                role,
+                valid_roles.join(", ")
+            ));
+        }
+    }
+
+    let token = jwt::generate(&config.jwt_secret, user, namespace, &roles, ttl)?;
 
     println!("{}", "Generated Token:".bold());
     println!();
@@ -345,7 +357,7 @@ fn cmd_token_generate(config: &Config, user: &str, namespace: &str, role: &str, 
     println!("{}", "Token Details:".bold());
     println!("  User:      {}", user);
     println!("  Namespace: {}", namespace);
-    println!("  Role:      {}", role);
+    println!("  Roles:     {}", roles.join(", "));
     println!("  TTL:       {} seconds", ttl);
     println!();
     println!("{}", "Usage:".bold());
