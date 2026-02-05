@@ -90,7 +90,7 @@ enum TokenCommands {
         #[arg(short, long)]
         namespace: String,
         /// Roles: read-only, read-write, admin (can specify multiple times)
-        #[arg(short, long = "role", default_value = "read-only")]
+        #[arg(short, long = "role", default_value = "read-write")]
         roles: Vec<String>,
         /// Token TTL in seconds
         #[arg(short, long, default_value = "86400")]
