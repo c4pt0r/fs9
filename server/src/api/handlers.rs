@@ -17,6 +17,7 @@ pub type AppResult<T> = Result<T, AppError>;
 
 pub enum AppError {
     Fs(FsError),
+    Unauthorized(String),
     Forbidden(String),
     BadRequest(String),
     Conflict(String),
@@ -45,6 +46,13 @@ impl IntoResponse for AppError {
                     code: e.http_status(),
                 });
                 (status, body).into_response()
+            }
+            Self::Unauthorized(msg) => {
+                let body = Json(ErrorResponse {
+                    error: msg,
+                    code: 401,
+                });
+                (StatusCode::UNAUTHORIZED, body).into_response()
             }
             Self::Forbidden(msg) => {
                 let body = Json(ErrorResponse {
@@ -269,35 +277,65 @@ pub async fn health() -> &'static str {
 
 /// POST /api/v1/auth/refresh — refresh a JWT token
 /// Accepts an expired token (within grace period) and returns a new token.
+/// When meta service is configured, delegates to meta for refresh.
 pub async fn refresh_token(
     State(state): State<Arc<AppState>>,
-    Extension(ctx): Extension<RequestContext>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<RefreshTokenResponse>> {
     use crate::auth::{Claims, JwtConfig};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let jwt_secret = state.jwt_secret.read().await;
-    if jwt_secret.is_empty() {
-        return Err(AppError::BadRequest("Token refresh not configured".to_string()));
-    }
-
-    // Generate new token with same claims but new exp
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
 
     let ttl_secs: u64 = 86400; // 24 hours default
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .ok_or_else(|| AppError::Unauthorized("Missing Authorization header".to_string()))?;
 
-    let new_claims = Claims::with_namespace(
-        &ctx.user_id,
-        &ctx.ns,
-        ctx.roles.clone(),
-        ttl_secs,
-    );
+    // If meta_client is configured, try to use it for refresh
+    if let Some(meta_client) = &state.meta_client {
+        match meta_client.refresh_token(token, Some(ttl_secs)).await {
+            Ok(resp) => {
+                // Invalidate the old token from cache
+                state.token_cache.remove(token).await;
+
+                // Parse expires_at to calculate expires_in
+                // The meta service returns ISO8601 timestamp
+                let expires_in = ttl_secs; // Use requested TTL as fallback
+
+                return Ok(Json(RefreshTokenResponse {
+                    token: resp.token,
+                    expires_in,
+                }));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Meta service refresh failed, falling back to local refresh"
+                );
+                // Fall through to local refresh
+            }
+        }
+    }
+
+    // Fallback: local JWT refresh
+    let jwt_secret = state.jwt_secret.read().await;
+    if jwt_secret.is_empty() {
+        return Err(AppError::BadRequest(
+            "Token refresh not configured".to_string(),
+        ));
+    }
 
     let config = JwtConfig::new(jwt_secret.clone());
-    let new_token = config.encode(&new_claims)
+    let old_claims = config
+        .decode_allow_expired(token)
+        .map_err(|e| AppError::Unauthorized(format!("Invalid token: {e}")))?;
+    let ns = old_claims
+        .ns
+        .clone()
+        .ok_or_else(|| AppError::Unauthorized("Token missing required 'ns' claim".to_string()))?;
+    let new_claims = Claims::with_namespace(&old_claims.sub, &ns, old_claims.roles.clone(), ttl_secs);
+    let new_token = config
+        .encode(&new_claims)
         .map_err(|e| AppError::BadRequest(format!("Failed to generate token: {}", e)))?;
 
     Ok(Json(RefreshTokenResponse {

@@ -4,13 +4,19 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+use crate::meta_client::MetaClient;
 use crate::namespace::{Namespace, NamespaceManager, DEFAULT_NAMESPACE};
+use crate::token_cache::TokenCache;
 
 pub struct AppState {
     pub namespace_manager: Arc<NamespaceManager>,
     pub plugin_manager: Arc<PluginManager>,
     pub provider_registry: Arc<ProviderRegistry>,
     pub jwt_secret: RwLock<String>,
+    /// Optional client for fs9-meta service integration.
+    pub meta_client: Option<MetaClient>,
+    /// Cache for validated tokens to reduce meta service load.
+    pub token_cache: TokenCache,
 }
 
 pub struct HandleMap {
@@ -57,23 +63,41 @@ impl HandleMap {
     }
 }
 
+/// Default token cache TTL: 5 minutes.
+const DEFAULT_TOKEN_CACHE_TTL: Duration = Duration::from_secs(300);
+
 impl AppState {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_handle_ttl(Duration::from_secs(300))
+        Self::with_options(Duration::from_secs(300), None)
     }
 
     #[must_use]
     pub fn with_handle_ttl(ttl: Duration) -> Self {
-        let namespace_manager = Arc::new(NamespaceManager::new(ttl));
+        Self::with_options(ttl, None)
+    }
+
+    /// Create AppState with meta client integration.
+    #[must_use]
+    pub fn with_meta(meta_client: Option<MetaClient>) -> Self {
+        Self::with_options(Duration::from_secs(300), meta_client)
+    }
+
+    /// Create AppState with all options.
+    #[must_use]
+    pub fn with_options(handle_ttl: Duration, meta_client: Option<MetaClient>) -> Self {
+        let namespace_manager = Arc::new(NamespaceManager::new(handle_ttl));
         let plugin_manager = Arc::new(PluginManager::new());
         let provider_registry = Arc::new(fs9_core::default_registry());
+        let token_cache = TokenCache::new(DEFAULT_TOKEN_CACHE_TTL);
 
         Self {
             namespace_manager,
             plugin_manager,
             provider_registry,
             jwt_secret: RwLock::new(String::new()),
+            meta_client,
+            token_cache,
         }
     }
 

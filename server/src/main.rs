@@ -3,10 +3,12 @@
 mod api;
 
 use fs9_server::auth;
+use fs9_server::meta_client::MetaClient;
 use fs9_server::namespace;
 use fs9_server::state;
 
 use axum::middleware;
+use clap::Parser;
 use fs9_config::Fs9Config;
 use fs9_core::{default_registry, ProviderConfig};
 use std::path::Path;
@@ -14,19 +16,43 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use auth::{AuthState, JwtConfig};
+use auth::{AuthMiddlewareState, AuthState, JwtConfig};
 use namespace::DEFAULT_NAMESPACE;
+
+/// FS9 Server - Plan 9-inspired distributed filesystem server.
+#[derive(Parser)]
+#[command(name = "fs9-server")]
+#[command(about = "FS9 distributed filesystem server")]
+struct Args {
+    /// Path to configuration file
+    #[arg(short = 'c', long = "config", env = "FS9_CONFIG")]
+    config: Option<String>,
+}
 
 #[tokio::main]
 async fn main() {
-    let config = fs9_config::load().unwrap_or_else(|e| {
-        eprintln!("Warning: Failed to load config: {e}, using defaults");
-        Fs9Config::default()
-    });
+    let args = Args::parse();
+
+    let config = match &args.config {
+        Some(path) => fs9_config::load_from_file(path).unwrap_or_else(|e| {
+            eprintln!("Error: Failed to load config from {path}: {e}");
+            std::process::exit(1);
+        }),
+        None => fs9_config::load().unwrap_or_else(|e| {
+            eprintln!("Warning: Failed to load config: {e}, using defaults");
+            Fs9Config::default()
+        }),
+    };
 
     init_logging(&config);
 
-    let state = Arc::new(state::AppState::new());
+    // Create MetaClient if meta_url is configured
+    let meta_client = config.server.meta_url.as_ref().map(|url| {
+        tracing::info!(meta_url = %url, "Meta service integration enabled");
+        MetaClient::new(url, config.server.meta_key.clone())
+    });
+
+    let state = Arc::new(state::AppState::with_meta(meta_client));
     let registry = default_registry();
 
     load_plugins(&state, &config);
@@ -43,10 +69,15 @@ async fn main() {
     // Store jwt_secret in app state for refresh endpoint
     state.set_jwt_secret(jwt_secret.clone()).await;
 
-    let auth_state = AuthState::new(JwtConfig::new(jwt_secret));
+    let auth_enabled = config.server.auth.enabled || config.server.meta_url.is_some();
+    let auth_state = AuthState::new(auth_enabled, JwtConfig::new(jwt_secret));
+    let auth_middleware_state = AuthMiddlewareState::new(auth_state, Arc::clone(&state));
 
     let app = api::create_router(state)
-        .layer(middleware::from_fn_with_state(auth_state, auth::auth_middleware))
+        .layer(middleware::from_fn_with_state(
+            auth_middleware_state,
+            auth::auth_middleware,
+        ))
         .layer(TraceLayer::new_for_http());
 
     let addr = format!("{}:{}", config.server.host, config.server.port);

@@ -8,7 +8,10 @@ use axum::{
 };
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::state::AppState;
 
 /// Inline error response for auth failures (avoids coupling to api module).
 #[derive(Debug, serde::Serialize)]
@@ -155,6 +158,28 @@ impl JwtConfig {
         Ok(token_data.claims)
     }
 
+    /// Decode a token while ignoring `exp` validation (signature still verified).
+    pub fn decode_ignore_exp(&self, token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+        let mut validation = Validation::default();
+        validation.validate_exp = false;
+
+        if let Some(issuer) = &self.issuer {
+            validation.set_issuer(&[issuer]);
+        }
+
+        if let Some(audience) = &self.audience {
+            validation.set_audience(&[audience]);
+        }
+
+        let token_data = decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(self.secret.as_bytes()),
+            &validation,
+        )?;
+
+        Ok(token_data.claims)
+    }
+
     /// Decode a token, allowing expired tokens (for refresh endpoint).
     /// Still validates the signature, just ignores expiration.
     pub fn decode_allow_expired(&self, token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
@@ -193,22 +218,36 @@ impl JwtConfig {
 
 #[derive(Clone)]
 pub struct AuthState {
+    pub enabled: bool,
     pub config: JwtConfig,
 }
 
 impl AuthState {
-    pub fn new(config: JwtConfig) -> Self {
-        Self { config }
+    pub fn new(enabled: bool, config: JwtConfig) -> Self {
+        Self { enabled, config }
+    }
+}
+
+/// Combined auth state for middleware that includes both JWT config and app state.
+#[derive(Clone)]
+pub struct AuthMiddlewareState {
+    pub auth: AuthState,
+    pub app_state: Arc<AppState>,
+}
+
+impl AuthMiddlewareState {
+    pub fn new(auth: AuthState, app_state: Arc<AppState>) -> Self {
+        Self { auth, app_state }
     }
 }
 
 pub async fn auth_middleware(
-    axum::extract::State(auth): axum::extract::State<AuthState>,
+    axum::extract::State(state): axum::extract::State<AuthMiddlewareState>,
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
     let path = request.uri().path();
-    
+
     // Health endpoint needs no auth
     if path == "/health" {
         request.extensions_mut().insert(RequestContext {
@@ -216,6 +255,22 @@ pub async fn auth_middleware(
             user_id: "anonymous".to_string(),
             roles: Vec::new(),
         });
+        return next.run(request).await;
+    }
+
+    // Auth is disabled: allow all requests and run as anonymous in the default namespace.
+    if !state.auth.enabled {
+        request.extensions_mut().insert(RequestContext {
+            ns: crate::namespace::DEFAULT_NAMESPACE.to_string(),
+            user_id: "anonymous".to_string(),
+            roles: vec!["admin".to_string()],
+        });
+        return next.run(request).await;
+    }
+
+    // Refresh endpoint handles its own token parsing/validation so it can accept expired tokens
+    // without being blocked by meta validation.
+    if path == "/api/v1/auth/refresh" {
         return next.run(request).await;
     }
 
@@ -237,14 +292,105 @@ pub async fn auth_middleware(
         None => return unauthorized("Missing Authorization header"),
     };
 
-    // For refresh endpoint, allow expired tokens (within grace period)
-    let is_refresh = path == "/api/v1/auth/refresh";
-    
-    let decode_result = if is_refresh {
-        auth.config.decode_allow_expired(token)
-    } else {
-        auth.config.decode(token)
-    };
+    // 1. Check local token cache first (skip for refresh endpoint)
+    if let Some(cached) = state.app_state.token_cache.get(token).await {
+        let ctx = RequestContext {
+            ns: cached.namespace.clone(),
+            user_id: cached.user_id.clone(),
+            roles: cached.roles.clone(),
+        };
+        request.extensions_mut().insert(ctx);
+        // Insert a Claims-like view without extending the token lifetime.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let claims = Claims {
+            sub: cached.user_id.clone(),
+            exp: cached.expires_at,
+            iat: now,
+            ns: Some(cached.namespace.clone()),
+            roles: cached.roles.clone(),
+            permissions: Vec::new(),
+            mounts: Vec::new(),
+        };
+        request.extensions_mut().insert(claims);
+        return next.run(request).await;
+    }
+
+    // 2. If meta_client is configured, use it for validation
+    if let Some(meta_client) = &state.app_state.meta_client {
+        match meta_client.validate_token(token).await {
+            Ok(resp) if resp.valid => {
+                let namespace = resp.namespace.clone().unwrap_or_else(|| {
+                    crate::namespace::DEFAULT_NAMESPACE.to_string()
+                });
+                let user_id = resp.user_id.clone().unwrap_or_else(|| "unknown".to_string());
+                let roles = resp.roles.clone();
+
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let token_claims = state.auth.config.decode_ignore_exp(token).ok();
+
+                // Cache the validated token, but never beyond the JWT's own `exp`.
+                if let Some(claims) = &token_claims {
+                    if now >= claims.exp {
+                        return unauthorized("Invalid token: expired");
+                    }
+                    state
+                        .app_state
+                        .token_cache
+                        .set(
+                            token,
+                            user_id.clone(),
+                            namespace.clone(),
+                            roles.clone(),
+                            claims.exp,
+                        )
+                        .await;
+                }
+
+                let ctx = RequestContext {
+                    ns: namespace.clone(),
+                    user_id: user_id.clone(),
+                    roles: roles.clone(),
+                };
+                request.extensions_mut().insert(ctx);
+                // Insert a Claims-like view without extending the token lifetime.
+                let exp = token_claims.as_ref().map_or(now, |c| c.exp);
+                let claims = Claims {
+                    sub: user_id,
+                    exp,
+                    iat: now,
+                    ns: Some(namespace),
+                    roles,
+                    permissions: Vec::new(),
+                    mounts: Vec::new(),
+                };
+                request.extensions_mut().insert(claims);
+                return next.run(request).await;
+            }
+            Ok(resp) => {
+                // Meta service says token is invalid
+                return unauthorized(&format!(
+                    "Invalid token: {}",
+                    resp.error.unwrap_or_else(|| "validation failed".to_string())
+                ));
+            }
+            Err(e) => {
+                // Meta service unavailable - fall through to local JWT validation
+                tracing::warn!(
+                    error = %e,
+                    "Meta service unavailable, falling back to local JWT validation"
+                );
+            }
+        }
+    }
+
+    // 3. Fallback: local JWT decode (when meta unavailable or not configured)
+    let decode_result = state.auth.config.decode(token);
 
     match decode_result {
         Ok(claims) => {
@@ -252,6 +398,20 @@ pub async fn auth_middleware(
                 Some(ns) => ns.clone(),
                 None => return unauthorized("Token missing required 'ns' claim"),
             };
+
+            // Cache the locally validated token. (Refresh requests are handled earlier.)
+            state
+                .app_state
+                .token_cache
+                .set(
+                    token,
+                    claims.sub.clone(),
+                    ns.clone(),
+                    claims.roles.clone(),
+                    claims.exp,
+                )
+                .await;
+
             let ctx = RequestContext {
                 ns,
                 user_id: claims.sub.clone(),

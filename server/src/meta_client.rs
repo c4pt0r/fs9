@@ -1,0 +1,146 @@
+//! Client for communicating with fs9-meta service.
+
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// Client for fs9-meta service API.
+#[derive(Clone)]
+pub struct MetaClient {
+    client: Client,
+    base_url: String,
+    admin_key: Option<String>,
+}
+
+/// Request to validate a token.
+#[derive(Serialize)]
+struct ValidateRequest {
+    token: String,
+}
+
+/// Response from token validation.
+#[derive(Debug, Deserialize)]
+pub struct ValidateResponse {
+    pub valid: bool,
+    pub user_id: Option<String>,
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<String>,
+    pub expires_at: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Request to refresh a token.
+#[derive(Serialize)]
+struct RefreshRequest {
+    token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl_seconds: Option<u64>,
+}
+
+/// Response from token refresh.
+#[derive(Debug, Deserialize)]
+pub struct RefreshResponse {
+    pub token: String,
+    pub expires_at: String,
+}
+
+/// Error type for meta client operations.
+#[derive(Debug, thiserror::Error)]
+pub enum MetaClientError {
+    #[error("HTTP request failed: {0}")]
+    Request(#[from] reqwest::Error),
+
+    #[error("Meta service returned error: {0}")]
+    ServiceError(String),
+}
+
+impl MetaClient {
+    /// Create a new meta client.
+    ///
+    /// # Arguments
+    /// * `base_url` - Base URL of the fs9-meta service (e.g., "http://localhost:9998")
+    #[must_use]
+    pub fn new(base_url: &str, admin_key: Option<String>) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        Self {
+            client,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            admin_key,
+        }
+    }
+
+    /// Validate a JWT token with the meta service.
+    ///
+    /// Returns `ValidateResponse` which indicates if the token is valid
+    /// and contains the decoded claims if valid.
+    pub async fn validate_token(&self, token: &str) -> Result<ValidateResponse, MetaClientError> {
+        let url = format!("{}/api/v1/tokens/validate", self.base_url);
+
+        let mut req = self.client.post(&url).json(&ValidateRequest {
+            token: token.to_string(),
+        });
+        if let Some(key) = &self.admin_key {
+            req = req.header("x-fs9-meta-key", key);
+        }
+        let response = req.send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(MetaClientError::ServiceError(format!(
+                "HTTP {status}: {body}"
+            )));
+        }
+
+        Ok(response.json().await?)
+    }
+
+    /// Refresh a JWT token with the meta service.
+    ///
+    /// Returns a new token with extended expiration.
+    pub async fn refresh_token(
+        &self,
+        token: &str,
+        ttl_seconds: Option<u64>,
+    ) -> Result<RefreshResponse, MetaClientError> {
+        let url = format!("{}/api/v1/tokens/refresh", self.base_url);
+
+        let mut req = self.client.post(&url).json(&RefreshRequest {
+            token: token.to_string(),
+            ttl_seconds,
+        });
+        if let Some(key) = &self.admin_key {
+            req = req.header("x-fs9-meta-key", key);
+        }
+        let response = req.send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(MetaClientError::ServiceError(format!(
+                "HTTP {status}: {body}"
+            )));
+        }
+
+        Ok(response.json().await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn meta_client_url_normalization() {
+        let client = MetaClient::new("http://localhost:9998/", None);
+        assert_eq!(client.base_url, "http://localhost:9998");
+
+        let client2 = MetaClient::new("http://localhost:9998", None);
+        assert_eq!(client2.base_url, "http://localhost:9998");
+    }
+}

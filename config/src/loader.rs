@@ -92,6 +92,9 @@ impl ConfigLoader {
         if !overlay.server.plugins.directories.is_empty() {
             result.server.plugins = overlay.server.plugins.clone();
         }
+        if overlay.server.meta_url.is_some() {
+            result.server.meta_url = overlay.server.meta_url.clone();
+        }
         if !overlay.mounts.is_empty() && overlay.mounts != Fs9Config::default().mounts {
             result.mounts = overlay.mounts.clone();
         }
@@ -146,6 +149,16 @@ impl ConfigLoader {
         if let Ok(level) = std::env::var("FS9_LOG_LEVEL") {
             if let Ok(l) = serde_yaml::from_str(&level) {
                 config.logging.level = l;
+            }
+        }
+        if let Ok(meta_url) = std::env::var("FS9_META_URL") {
+            if !meta_url.is_empty() {
+                config.server.meta_url = Some(meta_url);
+            }
+        }
+        if let Ok(meta_key) = std::env::var("FS9_META_KEY") {
+            if !meta_key.is_empty() {
+                config.server.meta_key = Some(meta_key);
             }
         }
     }

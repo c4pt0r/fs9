@@ -33,6 +33,12 @@ pub struct ServerConfig {
     pub port: u16,
     pub auth: AuthConfig,
     pub plugins: PluginsConfig,
+    /// URL of the fs9-meta service for token validation (e.g., "http://localhost:9998")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_url: Option<String>,
+    /// Optional admin key for fs9-meta (sent as `x-fs9-meta-key`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_key: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -42,6 +48,8 @@ impl Default for ServerConfig {
             port: 9999,
             auth: AuthConfig::default(),
             plugins: PluginsConfig::default(),
+            meta_url: None,
+            meta_key: None,
         }
     }
 }
