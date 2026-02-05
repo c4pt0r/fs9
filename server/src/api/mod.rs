@@ -12,6 +12,8 @@ use crate::state::AppState;
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(handlers::health))
+        // Auth API
+        .route("/api/v1/auth/refresh", post(handlers::refresh_token))
         // Namespace management API
         .route(
             "/api/v1/namespaces",

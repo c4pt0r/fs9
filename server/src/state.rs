@@ -10,6 +10,7 @@ pub struct AppState {
     pub namespace_manager: Arc<NamespaceManager>,
     pub plugin_manager: Arc<PluginManager>,
     pub provider_registry: Arc<ProviderRegistry>,
+    pub jwt_secret: RwLock<String>,
 }
 
 pub struct HandleMap {
@@ -72,7 +73,13 @@ impl AppState {
             namespace_manager,
             plugin_manager,
             provider_registry,
+            jwt_secret: RwLock::new(String::new()),
         }
+    }
+
+    /// Set the JWT secret for token refresh
+    pub async fn set_jwt_secret(&self, secret: String) {
+        *self.jwt_secret.write().await = secret;
     }
 
     /// Get the default namespace, creating it if needed.

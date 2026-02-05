@@ -40,6 +40,9 @@ async fn main() {
         config.server.auth.jwt_secret.clone()
     };
 
+    // Store jwt_secret in app state for refresh endpoint
+    state.set_jwt_secret(jwt_secret.clone()).await;
+
     let auth_state = AuthState::new(JwtConfig::new(jwt_secret));
 
     let app = api::create_router(state)

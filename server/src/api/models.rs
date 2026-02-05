@@ -278,3 +278,13 @@ pub struct NamespaceInfoResponse {
     pub created_by: String,
     pub status: String,
 }
+
+// ============================================================================
+// Auth models
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RefreshTokenResponse {
+    pub token: String,
+    pub expires_in: u64,
+}

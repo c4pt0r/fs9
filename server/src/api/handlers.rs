@@ -267,6 +267,45 @@ pub async fn health() -> &'static str {
     "OK"
 }
 
+/// POST /api/v1/auth/refresh — refresh a JWT token
+/// Accepts an expired token (within grace period) and returns a new token.
+pub async fn refresh_token(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
+) -> AppResult<Json<RefreshTokenResponse>> {
+    use crate::auth::{Claims, JwtConfig};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let jwt_secret = state.jwt_secret.read().await;
+    if jwt_secret.is_empty() {
+        return Err(AppError::BadRequest("Token refresh not configured".to_string()));
+    }
+
+    // Generate new token with same claims but new exp
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let ttl_secs: u64 = 86400; // 24 hours default
+
+    let new_claims = Claims::with_namespace(
+        &ctx.user_id,
+        &ctx.ns,
+        ctx.roles.clone(),
+        ttl_secs,
+    );
+
+    let config = JwtConfig::new(jwt_secret.clone());
+    let new_token = config.encode(&new_claims)
+        .map_err(|e| AppError::BadRequest(format!("Failed to generate token: {}", e)))?;
+
+    Ok(Json(RefreshTokenResponse {
+        token: new_token,
+        expires_in: ttl_secs,
+    }))
+}
+
 /// POST /api/v1/plugin/load — load a plugin (admin only).
 pub async fn load_plugin(
     State(state): State<Arc<AppState>>,

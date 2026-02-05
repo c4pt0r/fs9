@@ -154,6 +154,41 @@ impl JwtConfig {
 
         Ok(token_data.claims)
     }
+
+    /// Decode a token, allowing expired tokens (for refresh endpoint).
+    /// Still validates the signature, just ignores expiration.
+    pub fn decode_allow_expired(&self, token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+        let mut validation = Validation::default();
+        validation.validate_exp = false; // Allow expired tokens
+
+        if let Some(issuer) = &self.issuer {
+            validation.set_issuer(&[issuer]);
+        }
+
+        if let Some(audience) = &self.audience {
+            validation.set_audience(&[audience]);
+        }
+
+        let token_data = decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(self.secret.as_bytes()),
+            &validation,
+        )?;
+
+        // Optional: Add a grace period check (e.g., only allow refresh within 7 days of expiry)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let grace_period = 7 * 24 * 60 * 60; // 7 days
+        if token_data.claims.exp + grace_period < now {
+            return Err(jsonwebtoken::errors::Error::from(
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature,
+            ));
+        }
+
+        Ok(token_data.claims)
+    }
 }
 
 #[derive(Clone)]
@@ -173,8 +208,9 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Response {
     let path = request.uri().path();
-    if path == "/health" || path.starts_with("/api/v1/auth") {
-        // Always inject a default RequestContext even for health checks
+    
+    // Health endpoint needs no auth
+    if path == "/health" {
         request.extensions_mut().insert(RequestContext {
             ns: crate::namespace::DEFAULT_NAMESPACE.to_string(),
             user_id: "anonymous".to_string(),
@@ -201,7 +237,16 @@ pub async fn auth_middleware(
         None => return unauthorized("Missing Authorization header"),
     };
 
-    match auth.config.decode(token) {
+    // For refresh endpoint, allow expired tokens (within grace period)
+    let is_refresh = path == "/api/v1/auth/refresh";
+    
+    let decode_result = if is_refresh {
+        auth.config.decode_allow_expired(token)
+    } else {
+        auth.config.decode(token)
+    };
+
+    match decode_result {
         Ok(claims) => {
             let ns = match &claims.ns {
                 Some(ns) => ns.clone(),
