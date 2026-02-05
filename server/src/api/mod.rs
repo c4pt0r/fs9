@@ -12,6 +12,13 @@ use crate::state::AppState;
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(handlers::health))
+        // Namespace management API
+        .route(
+            "/api/v1/namespaces",
+            post(handlers::create_namespace).get(handlers::list_namespaces),
+        )
+        .route("/api/v1/namespaces/{ns}", get(handlers::get_namespace))
+        // Filesystem API
         .route("/api/v1/stat", get(handlers::stat))
         .route("/api/v1/wstat", post(handlers::wstat))
         .route("/api/v1/statfs", get(handlers::statfs))

@@ -248,7 +248,7 @@ impl MultiTenantTestServer {
         let ns_manager = Arc::new(NamespaceManager::new(Duration::from_secs(300)));
 
         // Create default namespace with a root memfs mount
-        let default_ns = ns_manager.get_or_create(DEFAULT_NAMESPACE).await;
+        let default_ns = ns_manager.create(DEFAULT_NAMESPACE, "system").await.unwrap();
         default_ns
             .mount_table
             .mount("/", "memfs", Arc::new(MemoryFs::new()))
@@ -257,7 +257,7 @@ impl MultiTenantTestServer {
 
         // Pre-create tenant namespaces used in tests
         for ns_name in &["acme", "beta"] {
-            let ns = ns_manager.get_or_create(ns_name).await;
+            let ns = ns_manager.create(ns_name, "system").await.unwrap();
             ns.mount_table
                 .mount("/", "memfs", Arc::new(MemoryFs::new()))
                 .await
@@ -340,6 +340,13 @@ fn build_multitenant_router(
 
     Router::new()
         .route("/health", get(mt_health))
+        // Namespace management API
+        .route(
+            "/api/v1/namespaces",
+            post(mt_create_namespace).get(mt_list_namespaces),
+        )
+        .route("/api/v1/namespaces/{ns}", get(mt_get_namespace))
+        // Filesystem API
         .route("/api/v1/stat", get(mt_stat))
         .route("/api/v1/open", post(mt_open))
         .route("/api/v1/read", post(mt_read))
@@ -572,6 +579,88 @@ async fn mt_list_mounts(
     let ns = mt_resolve_ns(&state, &ctx).await?;
     let mounts = ns.mount_table.list_mounts().await;
     Ok(Json(mounts.into_iter().map(|m| MountInfoResp { path: m.path, name: m.provider_name }).collect()))
+}
+
+// ============================================================================
+// Multi-tenant namespace management handlers
+// ============================================================================
+
+#[derive(Deserialize)]
+struct CreateNsReq { name: String }
+
+#[derive(Serialize)]
+struct NsInfoResp {
+    name: String,
+    created_at: String,
+    created_by: String,
+    status: String,
+}
+
+fn mt_require_role(ctx: &RequestContext, allowed: &[&str]) -> Result<(), (StatusCode, String)> {
+    if ctx.roles.iter().any(|r| allowed.contains(&r.as_str())) {
+        Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, r#"{"error":"Insufficient permissions","code":403}"#.to_string()))
+    }
+}
+
+async fn mt_create_namespace(
+    State(state): State<Arc<MultiTenantAppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<CreateNsReq>,
+) -> Result<(StatusCode, Json<NsInfoResp>), (StatusCode, String)> {
+    mt_require_role(&ctx, &["admin"])?;
+
+    match state.namespace_manager.create(&req.name, &ctx.user_id).await {
+        Ok(_ns) => {
+            let info = state.namespace_manager.get_info(&req.name).await.unwrap();
+            Ok((StatusCode::CREATED, Json(NsInfoResp {
+                name: info.name,
+                created_at: info.created_at,
+                created_by: info.created_by,
+                status: info.status,
+            })))
+        }
+        Err(e) if e.contains("already exists") => {
+            Err((StatusCode::CONFLICT, format!(r#"{{"error":"{}","code":409}}"#, e)))
+        }
+        Err(e) => {
+            Err((StatusCode::BAD_REQUEST, format!(r#"{{"error":"{}","code":400}}"#, e)))
+        }
+    }
+}
+
+async fn mt_list_namespaces(
+    State(state): State<Arc<MultiTenantAppState>>,
+    Extension(ctx): Extension<RequestContext>,
+) -> MtResult<Json<Vec<NsInfoResp>>> {
+    mt_require_role(&ctx, &["admin", "operator"])?;
+
+    let infos = state.namespace_manager.list_info().await;
+    Ok(Json(infos.into_iter().map(|info| NsInfoResp {
+        name: info.name,
+        created_at: info.created_at,
+        created_by: info.created_by,
+        status: info.status,
+    }).collect()))
+}
+
+async fn mt_get_namespace(
+    State(state): State<Arc<MultiTenantAppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    axum::extract::Path(ns_name): axum::extract::Path<String>,
+) -> MtResult<Json<NsInfoResp>> {
+    mt_require_role(&ctx, &["admin", "operator"])?;
+
+    match state.namespace_manager.get_info(&ns_name).await {
+        Some(info) => Ok(Json(NsInfoResp {
+            name: info.name,
+            created_at: info.created_at,
+            created_by: info.created_by,
+            status: info.status,
+        })),
+        None => Err((StatusCode::NOT_FOUND, format!(r#"{{"error":"Namespace '{}' not found","code":404}}"#, ns_name)))
+    }
 }
 
 // ============================================================================

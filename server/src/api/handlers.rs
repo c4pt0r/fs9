@@ -18,6 +18,9 @@ pub type AppResult<T> = Result<T, AppError>;
 pub enum AppError {
     Fs(FsError),
     Forbidden(String),
+    BadRequest(String),
+    Conflict(String),
+    NotFound(String),
 }
 
 impl From<FsError> for AppError {
@@ -49,6 +52,27 @@ impl IntoResponse for AppError {
                     code: 403,
                 });
                 (StatusCode::FORBIDDEN, body).into_response()
+            }
+            Self::BadRequest(msg) => {
+                let body = Json(ErrorResponse {
+                    error: msg,
+                    code: 400,
+                });
+                (StatusCode::BAD_REQUEST, body).into_response()
+            }
+            Self::Conflict(msg) => {
+                let body = Json(ErrorResponse {
+                    error: msg,
+                    code: 409,
+                });
+                (StatusCode::CONFLICT, body).into_response()
+            }
+            Self::NotFound(msg) => {
+                let body = Json(ErrorResponse {
+                    error: msg,
+                    code: 404,
+                });
+                (StatusCode::NOT_FOUND, body).into_response()
             }
         }
     }
@@ -300,4 +324,86 @@ pub async fn mount_plugin(
         path: req.path,
         provider_name: req.provider,
     }))
+}
+
+// ============================================================================
+// Namespace management API
+// ============================================================================
+
+/// Check that the request context has one of the allowed roles.
+fn require_role(ctx: &RequestContext, allowed: &[&str]) -> Result<(), AppError> {
+    if ctx.roles.iter().any(|r| allowed.contains(&r.as_str())) {
+        Ok(())
+    } else {
+        Err(AppError::forbidden("Insufficient permissions"))
+    }
+}
+
+/// POST /api/v1/namespaces — create a new namespace (admin only).
+pub async fn create_namespace(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<CreateNamespaceRequest>,
+) -> AppResult<impl IntoResponse> {
+    require_role(&ctx, &["admin"])?;
+
+    match state.namespace_manager.create(&req.name, &ctx.user_id).await {
+        Ok(_ns) => {
+            let info = state.namespace_manager.get_info(&req.name).await.unwrap();
+            Ok((
+                StatusCode::CREATED,
+                Json(NamespaceInfoResponse {
+                    name: info.name,
+                    created_at: info.created_at,
+                    created_by: info.created_by,
+                    status: info.status,
+                }),
+            ))
+        }
+        Err(e) if e.contains("already exists") => Err(AppError::Conflict(e)),
+        Err(e) => Err(AppError::BadRequest(e)),
+    }
+}
+
+/// GET /api/v1/namespaces — list all namespaces (admin or operator).
+pub async fn list_namespaces(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
+) -> AppResult<Json<Vec<NamespaceInfoResponse>>> {
+    require_role(&ctx, &["admin", "operator"])?;
+
+    let infos = state.namespace_manager.list_info().await;
+    Ok(Json(
+        infos
+            .into_iter()
+            .map(|info| NamespaceInfoResponse {
+                name: info.name,
+                created_at: info.created_at,
+                created_by: info.created_by,
+                status: info.status,
+            })
+            .collect(),
+    ))
+}
+
+/// GET /api/v1/namespaces/:ns — get a single namespace's info (admin or operator).
+pub async fn get_namespace(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    axum::extract::Path(ns_name): axum::extract::Path<String>,
+) -> AppResult<Json<NamespaceInfoResponse>> {
+    require_role(&ctx, &["admin", "operator"])?;
+
+    match state.namespace_manager.get_info(&ns_name).await {
+        Some(info) => Ok(Json(NamespaceInfoResponse {
+            name: info.name,
+            created_at: info.created_at,
+            created_by: info.created_by,
+            status: info.status,
+        })),
+        None => Err(AppError::NotFound(format!(
+            "Namespace '{}' not found",
+            ns_name
+        ))),
+    }
 }

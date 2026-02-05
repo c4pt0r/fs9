@@ -261,3 +261,20 @@ pub struct MountPluginRequest {
     #[serde(default)]
     pub config: serde_json::Value,
 }
+
+// ============================================================================
+// Namespace management models
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateNamespaceRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NamespaceInfoResponse {
+    pub name: String,
+    pub created_at: String,
+    pub created_by: String,
+    pub status: String,
+}

@@ -107,7 +107,10 @@ async fn setup_mounts(
     config: &Fs9Config,
 ) {
     // All config-defined mounts go into the default namespace.
-    let default_ns = state.namespace_manager.get_or_create(DEFAULT_NAMESPACE).await;
+    let default_ns = match state.namespace_manager.create(DEFAULT_NAMESPACE, "system").await {
+        Ok(ns) => ns,
+        Err(_) => state.namespace_manager.get(DEFAULT_NAMESPACE).await.unwrap(),
+    };
 
     for mount in &config.mounts {
         let config_json = mount

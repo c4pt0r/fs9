@@ -377,6 +377,14 @@ async fn unknown_namespace_rejected() {
 // Test 9: Token missing 'ns' claim → 401
 // ============================================================================
 
+#[derive(Debug, Deserialize)]
+struct NamespaceInfoResp {
+    name: String,
+    created_at: String,
+    created_by: String,
+    status: String,
+}
+
 #[tokio::test]
 async fn token_missing_ns_rejected() {
     let server = MultiTenantTestServer::start(JWT_SECRET).await;
@@ -412,5 +420,233 @@ async fn token_missing_ns_rejected() {
         resp.status().as_u16(),
         401,
         "Token without 'ns' claim should be rejected with 401"
+    );
+}
+
+// ============================================================================
+// Namespace Management API Tests
+// ============================================================================
+
+// Test 10: Admin can create a namespace → 201
+#[tokio::test]
+async fn admin_can_create_namespace() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("admin-user", "acme", &["admin"]);
+
+    let resp = client
+        .post(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "new-tenant" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 201, "Admin should be able to create namespace");
+
+    let info: NamespaceInfoResp = resp.json().await.unwrap();
+    assert_eq!(info.name, "new-tenant");
+    assert_eq!(info.created_by, "admin-user");
+    assert_eq!(info.status, "active");
+    assert!(!info.created_at.is_empty(), "created_at should be set");
+}
+
+// Test 11: Operator cannot create a namespace → 403
+#[tokio::test]
+async fn operator_cannot_create_namespace() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("op-user", "acme", &["operator"]);
+
+    let resp = client
+        .post(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "sneaky-ns" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Operator should not be able to create namespace"
+    );
+}
+
+// Test 12: Duplicate namespace creation → 409
+#[tokio::test]
+async fn duplicate_namespace_rejected() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("admin-user", "acme", &["admin"]);
+
+    // "acme" already exists (pre-created)
+    let resp = client
+        .post(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "acme" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        409,
+        "Duplicate namespace should return 409 Conflict"
+    );
+}
+
+// Test 13: Invalid namespace name → 400
+#[tokio::test]
+async fn invalid_namespace_name_rejected() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("admin-user", "acme", &["admin"]);
+
+    // Uppercase characters
+    let resp = client
+        .post(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "BadName" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400, "Uppercase name should be rejected");
+
+    // Special characters
+    let resp = client
+        .post(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "bad@name!" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400, "Special chars should be rejected");
+
+    // Empty name
+    let resp = client
+        .post(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400, "Empty name should be rejected");
+
+    // Starts with hyphen
+    let resp = client
+        .post(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "-invalid" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400, "Name starting with hyphen should be rejected");
+}
+
+// Test 14: Admin can list namespaces → 200
+#[tokio::test]
+async fn admin_can_list_namespaces() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("admin-user", "acme", &["admin"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200, "Admin should be able to list namespaces");
+
+    let namespaces: Vec<NamespaceInfoResp> = resp.json().await.unwrap();
+    let names: Vec<&str> = namespaces.iter().map(|n| n.name.as_str()).collect();
+    assert!(names.contains(&"acme"), "Should see acme namespace");
+    assert!(names.contains(&"beta"), "Should see beta namespace");
+    assert!(names.contains(&"default"), "Should see default namespace");
+}
+
+// Test 15: Operator can list namespaces → 200
+#[tokio::test]
+async fn operator_can_list_namespaces() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("op-user", "acme", &["operator"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200, "Operator should be able to list namespaces");
+
+    let namespaces: Vec<NamespaceInfoResp> = resp.json().await.unwrap();
+    assert!(namespaces.len() >= 3, "Should see at least default, acme, beta");
+}
+
+// Test 16: Reader cannot list namespaces → 403
+#[tokio::test]
+async fn reader_cannot_list_namespaces() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("reader-user", "acme", &["reader"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/namespaces", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Reader should not be able to list namespaces"
+    );
+}
+
+// Test 17: Get single namespace → 200
+#[tokio::test]
+async fn get_single_namespace() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("admin-user", "acme", &["admin"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/namespaces/acme", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200, "Should be able to get single namespace");
+
+    let info: NamespaceInfoResp = resp.json().await.unwrap();
+    assert_eq!(info.name, "acme");
+    assert_eq!(info.status, "active");
+}
+
+// Test 18: Get nonexistent namespace → 404
+#[tokio::test]
+async fn get_nonexistent_namespace() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("admin-user", "acme", &["admin"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/namespaces/ghost", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "Nonexistent namespace should return 404"
     );
 }
