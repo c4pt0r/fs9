@@ -237,6 +237,7 @@ pub struct MultiTenantTestServer {
 
 pub struct MultiTenantAppState {
     pub namespace_manager: Arc<NamespaceManager>,
+    pub plugin_manager: Arc<PluginManager>,
 }
 
 impl MultiTenantTestServer {
@@ -264,8 +265,11 @@ impl MultiTenantTestServer {
                 .unwrap();
         }
 
+        let plugin_manager = Arc::new(PluginManager::new());
+
         let state = Arc::new(MultiTenantAppState {
             namespace_manager: ns_manager,
+            plugin_manager,
         });
 
         let secret = jwt_secret.to_string();
@@ -355,6 +359,10 @@ fn build_multitenant_router(
         .route("/api/v1/readdir", get(mt_readdir))
         .route("/api/v1/remove", delete(mt_remove))
         .route("/api/v1/mounts", get(mt_list_mounts))
+        .route("/api/v1/mount", post(mt_mount_plugin))
+        .route("/api/v1/plugin/load", post(mt_load_plugin))
+        .route("/api/v1/plugin/unload", post(mt_unload_plugin))
+        .route("/api/v1/plugin/list", get(mt_list_plugins))
         .layer(middleware::from_fn(move |mut req: axum::extract::Request, next: axum::middleware::Next| {
             let secret = secret.clone();
             async move {
@@ -579,6 +587,90 @@ async fn mt_list_mounts(
     let ns = mt_resolve_ns(&state, &ctx).await?;
     let mounts = ns.mount_table.list_mounts().await;
     Ok(Json(mounts.into_iter().map(|m| MountInfoResp { path: m.path, name: m.provider_name }).collect()))
+}
+
+// ============================================================================
+// Multi-tenant mount & plugin handlers (Phase 3: role gates)
+// ============================================================================
+
+#[derive(Deserialize)]
+struct MountPluginReq {
+    path: String,
+    provider: String,
+    #[serde(default)]
+    config: serde_json::Value,
+}
+
+/// POST /api/v1/mount — mount a plugin (operator or admin).
+async fn mt_mount_plugin(
+    State(state): State<Arc<MultiTenantAppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<MountPluginReq>,
+) -> MtResult<Json<MountInfoResp>> {
+    mt_require_role(&ctx, &["operator", "admin"])?;
+
+    let ns = mt_resolve_ns(&state, &ctx).await?;
+    let config = serde_json::to_string(&req.config).unwrap_or_default();
+
+    let provider = state.plugin_manager
+        .create_provider(&req.provider, &config)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    ns.mount_table
+        .mount(&req.path, &req.provider, Arc::new(provider))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(MountInfoResp { path: req.path, name: req.provider }))
+}
+
+#[derive(Deserialize)]
+struct LoadPluginReq { name: String, path: String }
+
+#[derive(Serialize)]
+struct LoadPluginResp { name: String, status: String }
+
+/// POST /api/v1/plugin/load — load a plugin (admin only).
+async fn mt_load_plugin(
+    State(_state): State<Arc<MultiTenantAppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<LoadPluginReq>,
+) -> MtResult<Json<LoadPluginResp>> {
+    mt_require_role(&ctx, &["admin"])?;
+
+    _state.plugin_manager
+        .load(&req.name, std::path::Path::new(&req.path))
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    Ok(Json(LoadPluginResp { name: req.name, status: "loaded".to_string() }))
+}
+
+#[derive(Deserialize)]
+struct UnloadPluginReq { name: String }
+
+/// POST /api/v1/plugin/unload — unload a plugin (admin only).
+async fn mt_unload_plugin(
+    State(_state): State<Arc<MultiTenantAppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<UnloadPluginReq>,
+) -> MtResult<StatusCode> {
+    mt_require_role(&ctx, &["admin"])?;
+
+    _state.plugin_manager
+        .unload(&req.name)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /api/v1/plugin/list — list loaded plugins (operator or admin).
+async fn mt_list_plugins(
+    State(state): State<Arc<MultiTenantAppState>>,
+    Extension(ctx): Extension<RequestContext>,
+) -> MtResult<Json<Vec<String>>> {
+    mt_require_role(&ctx, &["operator", "admin"])?;
+
+    Ok(Json(state.plugin_manager.loaded_plugins()))
 }
 
 // ============================================================================

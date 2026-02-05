@@ -267,10 +267,14 @@ pub async fn health() -> &'static str {
     "OK"
 }
 
+/// POST /api/v1/plugin/load — load a plugin (admin only).
 pub async fn load_plugin(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<LoadPluginRequest>,
 ) -> AppResult<Json<LoadPluginResponse>> {
+    require_role(&ctx, &["admin"])?;
+
     use std::path::Path;
 
     state
@@ -284,10 +288,14 @@ pub async fn load_plugin(
     }))
 }
 
+/// POST /api/v1/plugin/unload — unload a plugin (admin only).
 pub async fn unload_plugin(
     State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<UnloadPluginRequest>,
 ) -> AppResult<StatusCode> {
+    require_role(&ctx, &["admin"])?;
+
     state
         .plugin_manager
         .unload(&req.name)
@@ -296,17 +304,24 @@ pub async fn unload_plugin(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// GET /api/v1/plugin/list — list loaded plugins (operator or admin).
 pub async fn list_plugins(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<String>> {
-    Json(state.plugin_manager.loaded_plugins())
+    Extension(ctx): Extension<RequestContext>,
+) -> AppResult<Json<Vec<String>>> {
+    require_role(&ctx, &["operator", "admin"])?;
+
+    Ok(Json(state.plugin_manager.loaded_plugins()))
 }
 
+/// POST /api/v1/mount — mount a plugin into a namespace (operator or admin).
 pub async fn mount_plugin(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<MountPluginRequest>,
 ) -> AppResult<Json<MountResponse>> {
+    require_role(&ctx, &["operator", "admin"])?;
+
     let ns = resolve_ns(&state, &ctx).await?;
     let config = serde_json::to_string(&req.config).unwrap_or_default();
 

@@ -650,3 +650,207 @@ async fn get_nonexistent_namespace() {
         "Nonexistent namespace should return 404"
     );
 }
+
+// ============================================================================
+// Phase 3: Role Gate Tests — mount & plugin operations
+// ============================================================================
+
+// Test 19: Reader cannot mount → 403
+#[tokio::test]
+async fn reader_cannot_mount() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("reader-user", "acme", &["reader"]);
+
+    let resp = client
+        .post(format!("{}/api/v1/mount", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "path": "/mnt/test", "provider": "memfs", "config": {} }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Reader should not be able to mount"
+    );
+}
+
+// Test 20: Operator can mount (will fail on provider lookup, but role check passes → not 403)
+#[tokio::test]
+async fn operator_can_mount() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("op-user", "acme", &["operator"]);
+
+    let resp = client
+        .post(format!("{}/api/v1/mount", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "path": "/mnt/test", "provider": "nonexistent", "config": {} }))
+        .send()
+        .await
+        .unwrap();
+    // Should NOT be 403 — role check passed. Will be 400 because plugin doesn't exist.
+    assert_ne!(
+        resp.status().as_u16(),
+        403,
+        "Operator should pass the role gate for mount"
+    );
+}
+
+// Test 21: Reader cannot load plugin → 403
+#[tokio::test]
+async fn reader_cannot_load_plugin() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("reader-user", "acme", &["reader"]);
+
+    let resp = client
+        .post(format!("{}/api/v1/plugin/load", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "test", "path": "/nonexistent.so" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Reader should not be able to load plugins"
+    );
+}
+
+// Test 22: Operator cannot load plugin → 403
+#[tokio::test]
+async fn operator_cannot_load_plugin() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("op-user", "acme", &["operator"]);
+
+    let resp = client
+        .post(format!("{}/api/v1/plugin/load", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "test", "path": "/nonexistent.so" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Operator should not be able to load plugins"
+    );
+}
+
+// Test 23: Admin can list plugins → 200
+#[tokio::test]
+async fn admin_can_list_plugins() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("admin-user", "acme", &["admin"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/plugin/list", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "Admin should be able to list plugins"
+    );
+
+    let plugins: Vec<String> = resp.json().await.unwrap();
+    // No plugins loaded by default — just verify it's an empty list
+    assert!(plugins.is_empty(), "No plugins loaded by default");
+}
+
+// Test 24: Reader cannot list plugins → 403
+#[tokio::test]
+async fn reader_cannot_list_plugins() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("reader-user", "acme", &["reader"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/plugin/list", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Reader should not be able to list plugins"
+    );
+}
+
+// Test 25: Operator can list plugins → 200
+#[tokio::test]
+async fn operator_can_list_plugins() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("op-user", "acme", &["operator"]);
+
+    let resp = client
+        .get(format!("{}/api/v1/plugin/list", server.url))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "Operator should be able to list plugins"
+    );
+}
+
+// Test 26: Reader cannot unload plugin → 403
+#[tokio::test]
+async fn reader_cannot_unload_plugin() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("reader-user", "acme", &["reader"]);
+
+    let resp = client
+        .post(format!("{}/api/v1/plugin/unload", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "test" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Reader should not be able to unload plugins"
+    );
+}
+
+// Test 27: Operator cannot unload plugin → 403
+#[tokio::test]
+async fn operator_cannot_unload_plugin() {
+    let server = MultiTenantTestServer::start(JWT_SECRET).await;
+    let client = Client::new();
+
+    let token = server.token("op-user", "acme", &["operator"]);
+
+    let resp = client
+        .post(format!("{}/api/v1/plugin/unload", server.url))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "test" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "Operator should not be able to unload plugins"
+    );
+}
