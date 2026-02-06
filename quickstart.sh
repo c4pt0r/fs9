@@ -21,12 +21,12 @@
 #   ./target/release/fs9-meta -c /path/to/meta.yaml
 #
 # Environment variables:
-#   FS9_JWT_SECRET  - JWT secret (default: my-secret-key-change-me)
-#   FS9_PORT        - Server port (default: 9999)
-#   FS9_META_PORT   - Meta service port (default: 9998)
-#   NAMESPACE       - Namespace name (default: demo)
-#   FS9_USER        - Username for token (default: demo)
-#   FUSE_MOUNT      - FUSE mount point (default: /tmp/fs9-mount, use with --fuse)
+#   FS9_JWT_SECRET       - JWT secret (default: my-secret-key-change-me)
+#   FS9_SERVER_ENDPOINTS - Server URL (default: http://localhost:9999)
+#   FS9_META_ENDPOINTS   - Meta service URL (default: http://localhost:9998)
+#   NAMESPACE            - Namespace name (default: demo)
+#   FS9_USER             - Username for token (default: demo)
+#   FUSE_MOUNT           - FUSE mount point (default: /tmp/fs9-mount, use with --fuse)
 
 set -e
 
@@ -42,10 +42,8 @@ NC='\033[0m'
 
 # Configuration
 export FS9_JWT_SECRET="${FS9_JWT_SECRET:-my-secret-key-change-me}"
-FS9_PORT="${FS9_PORT:-9999}"
-FS9_META_PORT="${FS9_META_PORT:-9998}"
-FS9_SERVER="http://localhost:${FS9_PORT}"
-FS9_META_ENDPOINTS="http://localhost:${FS9_META_PORT}"
+export FS9_SERVER_ENDPOINTS="${FS9_SERVER_ENDPOINTS:-http://localhost:9999}"
+export FS9_META_ENDPOINTS="${FS9_META_ENDPOINTS:-http://localhost:9998}"
 NAMESPACE="${NAMESPACE:-demo}"
 FS9_USER="${FS9_USER:-demo}"
 
@@ -106,6 +104,7 @@ pkill -f "fs9-server" 2>/dev/null || true
 pkill -f "fs9-meta" 2>/dev/null || true
 sleep 1
 
+FS9_META_PORT=$(echo "$FS9_META_ENDPOINTS" | sed 's|.*:||')
 ./target/release/fs9-meta --port "$FS9_META_PORT" --jwt-secret "$FS9_JWT_SECRET" &
 META_PID=$!
 sleep 2
@@ -116,6 +115,7 @@ if ! kill -0 $META_PID 2>/dev/null; then
 fi
 echo -e "${GREEN}✓ Meta service running (PID: $META_PID)${NC}"
 
+FS9_PORT=$(echo "$FS9_SERVER_ENDPOINTS" | sed 's|.*:||')
 FS9_META_ENDPOINTS="$FS9_META_ENDPOINTS" FS9_PORT="$FS9_PORT" ./target/release/fs9-server &
 SERVER_PID=$!
 sleep 2
@@ -132,13 +132,10 @@ STEP=$((STEP + 1))
 # Step 3: Create namespace with mount
 echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Creating namespace '${NAMESPACE}' with pagefs...${NC}"
 ./target/release/fs9-admin \
-    -s "$FS9_SERVER" \
     --secret "$FS9_JWT_SECRET" \
     ns create "$NAMESPACE" --mount pagefs --set uid=1000 --set gid=1000 2>/dev/null || {
-    # Namespace might already exist, try to mount
     echo "  Namespace exists, mounting pagefs..."
     ./target/release/fs9-admin \
-        -s "$FS9_SERVER" \
         --secret "$FS9_JWT_SECRET" \
         mount add pagefs -n "$NAMESPACE" --set uid=1000 --set gid=1000 2>/dev/null || true
 }
@@ -148,7 +145,6 @@ STEP=$((STEP + 1))
 # Step 4: Generate token
 echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Generating token...${NC}"
 TOKEN=$(./target/release/fs9-admin \
-    -s "$FS9_SERVER" \
     --secret "$FS9_JWT_SECRET" \
     token generate -u "$FS9_USER" -n "$NAMESPACE" -q)
 
@@ -179,7 +175,7 @@ if [ "$ENABLE_FUSE" = true ]; then
     fi
 
     ./target/release/fs9-fuse "$FUSE_MOUNTPOINT" \
-        --server "$FS9_SERVER" \
+        --server "$FS9_SERVER_ENDPOINTS" \
         --token "$TOKEN" \
         --foreground --auto-unmount &
     FUSE_PID=$!
@@ -199,7 +195,7 @@ fi
 # Final step: Show info and start shell
 echo -e "${CYAN}${BOLD}=== Ready ===${NC}"
 echo ""
-echo -e "  Server:    ${CYAN}${FS9_SERVER}${NC}"
+echo -e "  Server:    ${CYAN}${FS9_SERVER_ENDPOINTS}${NC}"
 echo -e "  Namespace: ${CYAN}${NAMESPACE}${NC}"
 echo -e "  User:      ${CYAN}${FS9_USER}${NC}"
 echo -e "  Server PID: ${SERVER_PID}"
@@ -233,7 +229,7 @@ echo ""
 echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Starting sh9 shell...${NC}"
 echo ""
 
-./target/release/sh9 -s "$FS9_SERVER" -t "$TOKEN"
+./target/release/sh9 -t "$TOKEN"
 
 # Cleanup
 echo ""
