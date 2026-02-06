@@ -85,7 +85,7 @@ STEP=1
 # Step 1: Build
 if [ "$SKIP_BUILD" = false ]; then
     echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Building...${NC}"
-    cargo build --release 2>&1 | tail -1
+    cargo build --release -p fs9-meta -p fs9-server -p fs9-cli -p sh9 2>&1 | tail -1
     make plugins 2>/dev/null || true
     if [ "$ENABLE_FUSE" = true ]; then
         cargo build -p fs9-fuse --release 2>&1 | tail -1
