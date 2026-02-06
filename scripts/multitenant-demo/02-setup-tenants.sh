@@ -5,10 +5,24 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/jwt.sh"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 SERVER="http://127.0.0.1:9999"
 JWT_SECRET=$(cat "$SCRIPT_DIR/.jwt-secret" 2>/dev/null || echo "demo-secret-key-for-testing-only-12345")
+
+FS9_ADMIN="$PROJECT_ROOT/target/debug/fs9-admin"
+if [ ! -f "$FS9_ADMIN" ]; then
+    FS9_ADMIN="$PROJECT_ROOT/target/release/fs9-admin"
+fi
+if [ ! -f "$FS9_ADMIN" ]; then
+    echo "❌ fs9-admin not found. Run: cargo build -p fs9-cli"
+    exit 1
+fi
+
+# Helper: run fs9-admin with server and secret
+admin() {
+    "$FS9_ADMIN" -s "$SERVER" --secret "$JWT_SECRET" "$@"
+}
 
 echo "=========================================="
 echo "  FS9 Multi-tenant Demo: Setup Tenants"
@@ -16,25 +30,11 @@ echo "=========================================="
 echo ""
 
 # First create a bootstrap namespace for management operations
-# (JWT must have ns field, we use "admin" namespace)
 echo "[1/4] Creating admin namespace for management..."
-
-# Generate admin token (ns=admin, role=admin)
-ADMIN_TOKEN=$(generate_jwt "$JWT_SECRET" "superadmin" "admin" "admin" 3600)
-
-# Try to create admin namespace (may already exist)
-RESP=$(curl -s -w "\n%{http_code}" -X POST "$SERVER/api/v1/namespaces" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"name": "admin"}')
-
-HTTP_CODE=$(echo "$RESP" | tail -1)
-BODY=$(echo "$RESP" | sed '$d')
-
-if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "409" ]; then
+if admin ns create admin 2>/dev/null; then
     echo "  ✅ admin namespace ready"
 else
-    echo "  ⚠️  Response ($HTTP_CODE): $BODY"
+    echo "  ⏭️  admin namespace already exists"
 fi
 
 # Create three tenants
@@ -44,28 +44,17 @@ echo "[2/4] Creating tenant namespaces..."
 TENANTS=("acme-corp" "beta-startup" "gamma-labs")
 
 for tenant in "${TENANTS[@]}"; do
-    RESP=$(curl -s -w "\n%{http_code}" -X POST "$SERVER/api/v1/namespaces" \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"name\": \"$tenant\"}")
-    
-    HTTP_CODE=$(echo "$RESP" | tail -1)
-    BODY=$(echo "$RESP" | sed '$d')
-    
-    if [ "$HTTP_CODE" = "201" ]; then
+    if admin ns create "$tenant" 2>/dev/null; then
         echo "  ✅ Created: $tenant"
-    elif [ "$HTTP_CODE" = "409" ]; then
-        echo "  ⏭️  Already exists: $tenant"
     else
-        echo "  ❌ Failed ($HTTP_CODE): $tenant - $BODY"
+        echo "  ⏭️  Already exists: $tenant"
     fi
 done
 
 # List all namespaces
 echo ""
 echo "[3/4] Listing all namespaces..."
-curl -s "$SERVER/api/v1/namespaces" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" | python3 -m json.tool
+admin ns list
 
 # Generate sample user tokens for each tenant
 echo ""
@@ -76,26 +65,26 @@ mkdir -p "$SCRIPT_DIR/tokens"
 
 # ACME Corp
 echo "=== ACME Corp ===" | tee "$SCRIPT_DIR/tokens/acme-corp.env"
-ACME_ADMIN=$(generate_jwt "$JWT_SECRET" "alice" "acme-corp" "admin" 86400)
-ACME_OPERATOR=$(generate_jwt "$JWT_SECRET" "bob" "acme-corp" "operator" 86400)
-ACME_USER=$(generate_jwt "$JWT_SECRET" "charlie" "acme-corp" "reader" 86400)
+ACME_ADMIN=$(admin token generate -u alice -n acme-corp -r admin -T 86400 -q)
+ACME_OPERATOR=$(admin token generate -u bob -n acme-corp -r operator -T 86400 -q)
+ACME_USER=$(admin token generate -u charlie -n acme-corp -r read-only -T 86400 -q)
 echo "ACME_ADMIN_TOKEN=$ACME_ADMIN" >> "$SCRIPT_DIR/tokens/acme-corp.env"
 echo "ACME_OPERATOR_TOKEN=$ACME_OPERATOR" >> "$SCRIPT_DIR/tokens/acme-corp.env"
 echo "ACME_USER_TOKEN=$ACME_USER" >> "$SCRIPT_DIR/tokens/acme-corp.env"
-echo "  alice (admin), bob (operator), charlie (reader)"
+echo "  alice (admin), bob (operator), charlie (read-only)"
 
 # Beta Startup
 echo "=== Beta Startup ===" | tee "$SCRIPT_DIR/tokens/beta-startup.env"
-BETA_ADMIN=$(generate_jwt "$JWT_SECRET" "dave" "beta-startup" "admin" 86400)
-BETA_USER=$(generate_jwt "$JWT_SECRET" "eve" "beta-startup" "reader" 86400)
+BETA_ADMIN=$(admin token generate -u dave -n beta-startup -r admin -T 86400 -q)
+BETA_USER=$(admin token generate -u eve -n beta-startup -r read-only -T 86400 -q)
 echo "BETA_ADMIN_TOKEN=$BETA_ADMIN" >> "$SCRIPT_DIR/tokens/beta-startup.env"
 echo "BETA_USER_TOKEN=$BETA_USER" >> "$SCRIPT_DIR/tokens/beta-startup.env"
-echo "  dave (admin), eve (reader)"
+echo "  dave (admin), eve (read-only)"
 
 # Gamma Labs
 echo "=== Gamma Labs ===" | tee "$SCRIPT_DIR/tokens/gamma-labs.env"
-GAMMA_ADMIN=$(generate_jwt "$JWT_SECRET" "frank" "gamma-labs" "admin" 86400)
-GAMMA_OPERATOR=$(generate_jwt "$JWT_SECRET" "grace" "gamma-labs" "operator" 86400)
+GAMMA_ADMIN=$(admin token generate -u frank -n gamma-labs -r admin -T 86400 -q)
+GAMMA_OPERATOR=$(admin token generate -u grace -n gamma-labs -r operator -T 86400 -q)
 echo "GAMMA_ADMIN_TOKEN=$GAMMA_ADMIN" >> "$SCRIPT_DIR/tokens/gamma-labs.env"
 echo "GAMMA_OPERATOR_TOKEN=$GAMMA_OPERATOR" >> "$SCRIPT_DIR/tokens/gamma-labs.env"
 echo "  frank (admin), grace (operator)"

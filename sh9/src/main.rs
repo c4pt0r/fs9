@@ -11,7 +11,7 @@ mod completer;
 #[command(name = "sh9", version, about)]
 struct Args {
     /// FS9 server URL
-    #[arg(short, long, env = "FS9_SERVER")]
+    #[arg(short, long, env = "FS9_SERVER_ENDPOINTS")]
     server: Option<String>,
 
     /// Authentication token for multi-tenant access

@@ -62,7 +62,7 @@ async fn main() {
             None
         }
         None => {
-            eprintln!("Error: meta_url is required. Set FS9_META_URL or configure server.meta_url in fs9.yaml");
+            eprintln!("Error: meta_url is required. Set FS9_META_ENDPOINTS or configure server.meta_url in fs9.yaml");
             std::process::exit(1);
         }
     };

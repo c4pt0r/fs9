@@ -45,7 +45,7 @@ export FS9_JWT_SECRET="${FS9_JWT_SECRET:-my-secret-key-change-me}"
 FS9_PORT="${FS9_PORT:-9999}"
 FS9_META_PORT="${FS9_META_PORT:-9998}"
 FS9_SERVER="http://localhost:${FS9_PORT}"
-FS9_META_URL="http://localhost:${FS9_META_PORT}"
+FS9_META_ENDPOINTS="http://localhost:${FS9_META_PORT}"
 NAMESPACE="${NAMESPACE:-demo}"
 FS9_USER="${FS9_USER:-demo}"
 
@@ -116,7 +116,7 @@ if ! kill -0 $META_PID 2>/dev/null; then
 fi
 echo -e "${GREEN}✓ Meta service running (PID: $META_PID)${NC}"
 
-FS9_META_URL="$FS9_META_URL" FS9_PORT="$FS9_PORT" ./target/release/fs9-server &
+FS9_META_ENDPOINTS="$FS9_META_ENDPOINTS" FS9_PORT="$FS9_PORT" ./target/release/fs9-server &
 SERVER_PID=$!
 sleep 2
 

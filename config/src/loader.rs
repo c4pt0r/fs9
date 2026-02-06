@@ -138,7 +138,7 @@ impl ConfigLoader {
         if let Ok(dir) = std::env::var("FS9_PLUGIN_DIR") {
             config.server.plugins.directories.insert(0, dir);
         }
-        if let Ok(server) = std::env::var("FS9_SERVER_URL") {
+        if let Ok(server) = std::env::var("FS9_SERVER_ENDPOINTS") {
             config.fuse.server = server.clone();
             config.shell.server = server;
         }
@@ -151,7 +151,7 @@ impl ConfigLoader {
                 config.logging.level = l;
             }
         }
-        if let Ok(meta_url) = std::env::var("FS9_META_URL") {
+        if let Ok(meta_url) = std::env::var("FS9_META_ENDPOINTS") {
             if !meta_url.is_empty() {
                 config.server.meta_url = Some(meta_url);
             }

@@ -8,7 +8,7 @@ To start the server:
     cargo run -p fs9-server
 
 Or use the test harness (starts server automatically):
-    FS9_SERVER_URL=http://localhost:3000 pytest tests/test_e2e.py -v
+    FS9_SERVER_ENDPOINTS=http://localhost:3000 pytest tests/test_e2e.py -v
 """
 
 import os
@@ -53,7 +53,7 @@ def find_server_binary() -> str:
 def start_server():
     """Start a test server and return its URL."""
     # Check if server URL is provided externally
-    external_url = os.environ.get("FS9_SERVER_URL")
+    external_url = os.environ.get("FS9_SERVER_ENDPOINTS")
     if external_url:
         yield external_url
         return

@@ -70,7 +70,7 @@ fn find_fuse_binary() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> 
 }
 
 fn get_server_url() -> String {
-    std::env::var("FS9_SERVER_URL").unwrap_or_else(|_| "http://localhost:9999".to_string())
+    std::env::var("FS9_SERVER_ENDPOINTS").unwrap_or_else(|_| "http://localhost:9999".to_string())
 }
 
 #[test]

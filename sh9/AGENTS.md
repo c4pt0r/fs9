@@ -49,5 +49,5 @@ sh9/src/
 
 - `eval.rs` (3152 lines) is the largest file in the project. Built-in command dispatch is a large match block
 - 68 integration test scripts test end-to-end shell behavior including pipelines, variables, control flow
-- Shell connects to `FS9_SERVER_URL` (default `http://localhost:9999`)
+- Shell connects to `FS9_SERVER_ENDPOINTS` (default `http://localhost:9999`)
 - `completer.rs` provides readline tab-completion for paths and built-in command names

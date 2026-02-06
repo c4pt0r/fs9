@@ -13,7 +13,7 @@ use config::Config;
 #[command(version)]
 struct Cli {
     /// Server URL (overrides config)
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, env = "FS9_SERVER_ENDPOINTS")]
     server: Option<String>,
 
     /// JWT secret (overrides config)
@@ -185,23 +185,36 @@ fn main() {
         Commands::Config => cmd_config(&config),
         Commands::Health => cmd_health(&config),
         Commands::Mount(mount_cmd) => match mount_cmd {
-            MountCommands::Add { provider, namespace, path, config: cfg, sets } => {
-                cmd_mount_add(&config, &namespace, &path, &provider, cfg, sets)
-            }
+            MountCommands::Add {
+                provider,
+                namespace,
+                path,
+                config: cfg,
+                sets,
+            } => cmd_mount_add(&config, &namespace, &path, &provider, cfg, sets),
             MountCommands::List { namespace } => cmd_mount_list(&config, &namespace),
         },
         Commands::Ns(ns_cmd) => match ns_cmd {
-            NsCommands::Create { name, mount, mount_config, sets } => {
-                cmd_ns_create(&config, &cli.admin_ns, &name, mount, mount_config, sets)
-            }
+            NsCommands::Create {
+                name,
+                mount,
+                mount_config,
+                sets,
+            } => cmd_ns_create(&config, &cli.admin_ns, &name, mount, mount_config, sets),
             NsCommands::List => cmd_ns_list(&config, &cli.admin_ns),
             NsCommands::Get { name } => cmd_ns_get(&config, &cli.admin_ns, &name),
-            NsCommands::Delete { name, force } => cmd_ns_delete(&config, &cli.admin_ns, &name, force),
+            NsCommands::Delete { name, force } => {
+                cmd_ns_delete(&config, &cli.admin_ns, &name, force)
+            }
         },
         Commands::Token(token_cmd) => match token_cmd {
-            TokenCommands::Generate { user, namespace, roles, ttl, quiet } => {
-                cmd_token_generate(&config, &user, &namespace, roles, ttl, quiet)
-            }
+            TokenCommands::Generate {
+                user,
+                namespace,
+                roles,
+                ttl,
+                quiet,
+            } => cmd_token_generate(&config, &user, &namespace, roles, ttl, quiet),
             TokenCommands::Decode { token } => cmd_token_decode(&token),
         },
     };
@@ -218,14 +231,25 @@ fn cmd_init(server: String, secret: String) -> Result<(), String> {
         jwt_secret: secret,
     };
     config.save()?;
-    println!("{} Configuration saved to {}", "✓".green(), Config::path().display());
+    println!(
+        "{} Configuration saved to {}",
+        "✓".green(),
+        Config::path().display()
+    );
     Ok(())
 }
 
 fn cmd_config(config: &Config) -> Result<(), String> {
     println!("{}", "Current Configuration:".bold());
     println!("  Server:     {}", config.server.cyan());
-    println!("  JWT Secret: {}", if config.jwt_secret.is_empty() { "(not set)".red().to_string() } else { "(set)".green().to_string() });
+    println!(
+        "  JWT Secret: {}",
+        if config.jwt_secret.is_empty() {
+            "(not set)".red().to_string()
+        } else {
+            "(set)".green().to_string()
+        }
+    );
     println!("  Config:     {}", Config::path().display());
     Ok(())
 }
@@ -253,14 +277,22 @@ fn cmd_ns_create(
     mount_config: Option<String>,
     sets: Vec<String>,
 ) -> Result<(), String> {
-    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, &["admin".to_string()], 3600)?;
+    let token = jwt::generate(
+        &config.jwt_secret,
+        "admin",
+        admin_ns,
+        &["admin".to_string()],
+        3600,
+    )?;
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/api/v1/namespaces", config.server);
 
     let resp = client
         .post(&url)
         .header("Authorization", format!("Bearer {}", token))
-        .json(&CreateNamespaceRequest { name: name.to_string() })
+        .json(&CreateNamespaceRequest {
+            name: name.to_string(),
+        })
         .send()
         .map_err(|e| format!("Request failed: {}", e))?;
 
@@ -371,15 +403,15 @@ fn set_nested_value(
 
     match nested {
         serde_json::Value::Object(ref mut map) => set_nested_value(map, &rest, value),
-        _ => Err(format!("Cannot set nested key '{}': parent is not an object", key)),
+        _ => Err(format!(
+            "Cannot set nested key '{}': parent is not an object",
+            key
+        )),
     }
 }
 
 /// Merge --set values into existing config (--set takes precedence)
-fn merge_config(
-    config_json: Option<String>,
-    sets: &[String],
-) -> Result<serde_json::Value, String> {
+fn merge_config(config_json: Option<String>, sets: &[String]) -> Result<serde_json::Value, String> {
     let mut base: serde_json::Value = config_json
         .map(|s| serde_json::from_str(&s))
         .transpose()
@@ -503,7 +535,13 @@ fn cmd_mount_list(config: &Config, namespace: &str) -> Result<(), String> {
 }
 
 fn cmd_ns_list(config: &Config, admin_ns: &str) -> Result<(), String> {
-    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, &["admin".to_string()], 3600)?;
+    let token = jwt::generate(
+        &config.jwt_secret,
+        "admin",
+        admin_ns,
+        &["admin".to_string()],
+        3600,
+    )?;
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/api/v1/namespaces", config.server);
 
@@ -520,8 +558,8 @@ fn cmd_ns_list(config: &Config, admin_ns: &str) -> Result<(), String> {
         return Err(format!("Request failed ({}): {}", status, body));
     }
 
-    let namespaces: Vec<NamespaceInfo> = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let namespaces: Vec<NamespaceInfo> =
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse response: {}", e))?;
 
     println!("{}", "Namespaces:".bold());
     if namespaces.is_empty() {
@@ -533,12 +571,7 @@ fn cmd_ns_list(config: &Config, admin_ns: &str) -> Result<(), String> {
             } else {
                 ns.status.yellow()
             };
-            println!(
-                "  {} {} ({})",
-                "•".cyan(),
-                ns.name.bold(),
-                status_color
-            );
+            println!("  {} {} ({})", "•".cyan(), ns.name.bold(), status_color);
             println!("      Created: {} by {}", ns.created_at, ns.created_by);
         }
     }
@@ -546,7 +579,13 @@ fn cmd_ns_list(config: &Config, admin_ns: &str) -> Result<(), String> {
 }
 
 fn cmd_ns_get(config: &Config, admin_ns: &str, name: &str) -> Result<(), String> {
-    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, &["admin".to_string()], 3600)?;
+    let token = jwt::generate(
+        &config.jwt_secret,
+        "admin",
+        admin_ns,
+        &["admin".to_string()],
+        3600,
+    )?;
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/api/v1/namespaces/{}", config.server, name);
 
@@ -565,7 +604,14 @@ fn cmd_ns_get(config: &Config, admin_ns: &str, name: &str) -> Result<(), String>
                 .map_err(|e| format!("Failed to parse response: {}", e))?;
             println!("{}", "Namespace Details:".bold());
             println!("  Name:       {}", ns.name.cyan());
-            println!("  Status:     {}", if ns.status == "active" { ns.status.green() } else { ns.status.yellow() });
+            println!(
+                "  Status:     {}",
+                if ns.status == "active" {
+                    ns.status.green()
+                } else {
+                    ns.status.yellow()
+                }
+            );
             println!("  Created at: {}", ns.created_at);
             println!("  Created by: {}", ns.created_by);
             Ok(())
@@ -577,12 +623,22 @@ fn cmd_ns_get(config: &Config, admin_ns: &str, name: &str) -> Result<(), String>
 
 fn cmd_ns_delete(config: &Config, admin_ns: &str, name: &str, force: bool) -> Result<(), String> {
     if !force {
-        println!("{} Delete namespace '{}'? This cannot be undone.", "Warning:".yellow().bold(), name);
+        println!(
+            "{} Delete namespace '{}'? This cannot be undone.",
+            "Warning:".yellow().bold(),
+            name
+        );
         println!("Use --force to confirm deletion.");
         return Ok(());
     }
 
-    let token = jwt::generate(&config.jwt_secret, "admin", admin_ns, &["admin".to_string()], 3600)?;
+    let token = jwt::generate(
+        &config.jwt_secret,
+        "admin",
+        admin_ns,
+        &["admin".to_string()],
+        3600,
+    )?;
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/api/v1/namespaces/{}", config.server, name);
 
@@ -606,7 +662,14 @@ fn cmd_ns_delete(config: &Config, admin_ns: &str, name: &str, force: bool) -> Re
     }
 }
 
-fn cmd_token_generate(config: &Config, user: &str, namespace: &str, roles: Vec<String>, ttl: u64, quiet: bool) -> Result<(), String> {
+fn cmd_token_generate(
+    config: &Config,
+    user: &str,
+    namespace: &str,
+    roles: Vec<String>,
+    ttl: u64,
+    quiet: bool,
+) -> Result<(), String> {
     // Validate roles
     let valid_roles = ["read-only", "read-write", "admin", "operator"];
     for role in &roles {
@@ -635,7 +698,11 @@ fn cmd_token_generate(config: &Config, user: &str, namespace: &str, roles: Vec<S
         println!("  TTL:       {} seconds", ttl);
         println!();
         println!("{}", "Usage:".bold());
-        println!("  curl -H \"Authorization: Bearer {}\" {}/api/v1/stat?path=/", &token[..20], config.server);
+        println!(
+            "  curl -H \"Authorization: Bearer {}\" {}/api/v1/stat?path=/",
+            &token[..20],
+            config.server
+        );
     }
 
     Ok(())
@@ -649,8 +716,8 @@ fn cmd_token_decode(token: &str) -> Result<(), String> {
 
     // Decode payload (second part)
     let payload = base64_decode(parts[1])?;
-    let claims: serde_json::Value = serde_json::from_slice(&payload)
-        .map_err(|e| format!("Failed to parse payload: {}", e))?;
+    let claims: serde_json::Value =
+        serde_json::from_slice(&payload).map_err(|e| format!("Failed to parse payload: {}", e))?;
 
     println!("{}", "Token Payload:".bold());
     println!("{}", serde_json::to_string_pretty(&claims).unwrap());

@@ -36,7 +36,7 @@ impl TestServer {
             .env("FS9_PLUGIN_DIR", plugins_dir)
             // Keep sh9 integration tests hermetic (don't inherit auth/meta settings from the parent env).
             .env("FS9_JWT_SECRET", "")
-            .env("FS9_META_URL", "")
+            .env("FS9_META_ENDPOINTS", "")
             .env("FS9_META_KEY", "")
             .env("FS9_SKIP_META_CHECK", "1")
             .env("RUST_LOG", "warn")
@@ -158,7 +158,7 @@ fn run_test_script(
     // Run sh9 with the script
     let output = Command::new(sh9_bin)
         .arg(script_path)
-        .env("FS9_SERVER_URL", server_url)
+        .env("FS9_SERVER_ENDPOINTS", server_url)
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -302,12 +302,12 @@ fn matches_pattern(expected: &str, actual: &str) -> bool {
 fn line_matches(pattern: &str, actual: &str) -> bool {
     // Simple wildcard matching for timestamps
     let parts: Vec<&str> = pattern.split("____-__-__ __:__:__").collect();
-    
+
     if parts.len() == 1 {
         // No wildcards, exact match
         return pattern == actual;
     }
-    
+
     // Check prefix and suffix match
     let mut pos = 0;
     for (i, part) in parts.iter().enumerate() {
@@ -331,6 +331,6 @@ fn line_matches(pattern: &str, actual: &str) -> bool {
             }
         }
     }
-    
+
     true
 }

@@ -595,7 +595,7 @@ server {
 
 | Symptom | Cause | Solution |
 |---------|-------|----------|
-| `meta_url is required` | fs9-meta not configured | Set `FS9_META_URL` or `server.meta_url` in config |
+| `meta_url is required` | fs9-meta not configured | Set `FS9_META_ENDPOINTS` or `server.meta_url` in config |
 | `connection refused to :9998` | fs9-meta not running | Start fs9-meta: `sudo systemctl start fs9-meta` |
 | `401 Unauthorized` | Invalid/expired token | Generate new token with `fs9-admin token generate` |
 | `403 Forbidden` | Namespace not found | Create namespace: `fs9-admin ns create <name>` |

@@ -40,9 +40,9 @@ echo "  Config:     $CONFIG_FILE"
 echo ""
 
 # Build if needed
-echo "[1/2] Building server..."
+echo "[1/2] Building server and fs9-admin..."
 cd "$PROJECT_ROOT"
-cargo build -p fs9-server --release 2>&1 | tail -3
+cargo build -p fs9-server -p fs9-cli --release 2>&1 | tail -3
 
 # Start server
 echo ""

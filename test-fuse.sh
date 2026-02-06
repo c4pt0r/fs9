@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-SERVER="${FS9_SERVER_URL:-http://fs9-server:9999}"
+SERVER="${FS9_SERVER_ENDPOINTS:-http://fs9-server:9999}"
 TOKEN="$FS9_TOKEN"
 MOUNT="/mnt/fs9"
 

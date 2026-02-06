@@ -35,31 +35,31 @@ docker compose ps
 docker compose logs -f  # Watch logs
 
 # 4. Create your first tenant
-./scripts/fs9-tenant.sh create-tenant myproject
+fs9-admin -s http://localhost:9999 --secret "$FS9_JWT_SECRET" \
+  ns create myproject --mount memfs
 
-# 5. Connect with sh9
-export FS9_SERVER_URL=http://localhost:9999
-export FS9_TOKEN=<token from step 4>
-cargo run -p sh9
+# 5. Generate a token and connect with sh9
+TOKEN=$(fs9-admin -s http://localhost:9999 --secret "$FS9_JWT_SECRET" \
+  token generate -u admin -n myproject -q)
+sh9 -s http://localhost:9999 -t "$TOKEN"
 ```
 
 ## Tenant Management
 
+All tenant management is done via `fs9-admin`:
+
 ```bash
-# Create a new tenant (namespace + admin user + token)
-./scripts/fs9-tenant.sh create-tenant myproject
+# Create a new namespace with a filesystem mount
+fs9-admin ns create myproject --mount pagefs --set uid=1000 --set gid=1000
 
 # List namespaces
-./scripts/fs9-tenant.sh list-namespaces
+fs9-admin ns list
 
-# Create additional user
-./scripts/fs9-tenant.sh create-user myproject alice read-write
+# Generate a token for a user
+TOKEN=$(fs9-admin token generate -u alice -n myproject -r read-write -q)
 
-# Generate new token for user
-./scripts/fs9-tenant.sh generate-token <user_id>
-
-# Delete namespace (and all users)
-./scripts/fs9-tenant.sh delete-namespace myproject
+# Delete namespace
+fs9-admin ns delete myproject --force
 ```
 
 ## Services
@@ -100,7 +100,7 @@ The main filesystem server:
 ### sh9 (Interactive Shell)
 
 ```bash
-export FS9_SERVER_URL=http://localhost:9999
+export FS9_SERVER_ENDPOINTS=http://localhost:9999
 export FS9_TOKEN=<your-token>
 cargo run -p sh9
 

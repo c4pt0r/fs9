@@ -7,11 +7,11 @@
 #
 # After starting:
 #   1. Create a namespace:
-#      ./scripts/fs9-tenant.sh create-tenant myproject
+#      fs9-admin -s http://localhost:9999 --secret "$FS9_JWT_SECRET" ns create myproject --mount memfs
 #
-#   2. Connect with sh9:
-#      export FS9_TOKEN=<token from step 1>
-#      sh9
+#   2. Generate token and connect with sh9:
+#      TOKEN=$(fs9-admin -s http://localhost:9999 --secret "$FS9_JWT_SECRET" token generate -u admin -n myproject -q)
+#      sh9 -s http://localhost:9999 -t "$TOKEN"
 
 version: "3.8"
 
@@ -49,7 +49,7 @@ services:
       - FS9_HOST=0.0.0.0
       - FS9_PORT=9999
       - FS9_JWT_SECRET=${FS9_JWT_SECRET:-change-me-in-production}
-      - FS9_META_URL=http://meta:9998
+      - FS9_META_ENDPOINTS=http://meta:9998
       - FS9_META_KEY=${FS9_META_KEY:-admin-key-change-me}
       - FS9_PLUGIN_DIR=/app/plugins
       - RUST_LOG=${RUST_LOG:-info}
@@ -72,7 +72,7 @@ services:
       dockerfile: docker/Dockerfile.meta
     container_name: fs9-admin
     environment:
-      - FS9_META_URL=http://meta:9998
+      - FS9_META_ENDPOINTS=http://meta:9998
       - FS9_META_KEY=${FS9_META_KEY:-admin-key-change-me}
       - FS9_JWT_SECRET=${FS9_JWT_SECRET:-change-me-in-production}
     depends_on:

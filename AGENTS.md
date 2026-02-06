@@ -75,7 +75,7 @@ fs9/
 - **Handle two-layer**: VFS assigns global handle IDs, provider manages its own. Never leak provider handles to clients
 - **Path rewriting**: VfsRouter always converts provider-relative paths back to absolute VFS paths in responses
 - **Config loading**: Defaults → `/etc/fs9/` → `~/.config/fs9/` → `./fs9.yaml` → `FS9_CONFIG=` → env vars (highest priority)
-- **Meta service required**: `FS9_META_URL` must be set for production. Use `FS9_SKIP_META_CHECK=1` only for testing
+- **Meta service required**: `FS9_META_ENDPOINTS` must be set for production. Use `FS9_SKIP_META_CHECK=1` only for testing
 - **`#[allow(dead_code)]`** used on struct fields in 8 files — acceptable for WIP fields
 
 ## ANTI-PATTERNS
@@ -98,7 +98,7 @@ make test-e2e           # E2E (builds server first)
 make lint               # clippy --workspace -D warnings
 make fmt                # cargo fmt + ruff format
 make check              # fmt + lint + test
-make server             # RUST_LOG=info cargo run -p fs9-server (requires FS9_META_URL)
+make server             # RUST_LOG=info cargo run -p fs9-server (requires FS9_META_ENDPOINTS)
 FS9_SKIP_META_CHECK=1 make server  # Dev mode without meta service
 cargo test -p sh9       # sh9 tests (includes 68 integration scripts)
 cargo test -p fs9-fuse --test integration -- --ignored  # FUSE tests (needs server)
@@ -123,8 +123,8 @@ All crates depend on `sdk`. Plugins depend on `sdk-ffi` (C ABI). Server and fuse
 - **pubsubfs is not in CLAUDE.md's plugin list** but IS in Cargo.toml and Makefile — it's a valid plugin
 - **ProxyFs enables cross-server mounting** — has hop limit protection (`TooManyHops` error)
 - **Plugin .so naming**: `libfs9_plugin_{name}.so` (Linux) / `.dylib` (macOS)
-- **fs9-meta is required** — server exits on startup if `FS9_META_URL` is not set (unless `FS9_SKIP_META_CHECK=1`)
-- **Key env vars**: `FS9_META_URL` (meta service URL), `FS9_META_KEY` (admin key), `FS9_SKIP_META_CHECK` (testing only)
+- **fs9-meta is required** — server exits on startup if `FS9_META_ENDPOINTS` is not set (unless `FS9_SKIP_META_CHECK=1`)
+- **Key env vars**: `FS9_META_ENDPOINTS` (meta service URL), `FS9_META_KEY` (admin key), `FS9_SKIP_META_CHECK` (testing only)
 
 ## PERFORMANCE OPTIMIZATIONS (2026-02-05)
 
