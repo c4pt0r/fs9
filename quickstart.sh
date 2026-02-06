@@ -2,15 +2,18 @@
 # FS9 Quickstart - Complete quick start example
 #
 # This script demonstrates a complete FS9 workflow:
-# 1. Build the project (fs9-server, fs9-meta, sh9, fs9-admin, plugins)
+# 1. Build the project (fs9-server, fs9-meta, sh9, fs9-admin, plugins, optionally fs9-fuse)
 # 2. Start fs9-meta (metadata service) and fs9-server
 # 3. Create a namespace with pagefs mount
 # 4. Generate a user token
-# 5. Start the sh9 interactive shell
+# 5. Optionally mount FS9 via FUSE
+# 6. Start the sh9 interactive shell
 #
 # Usage:
 #   ./quickstart.sh              # Run with default settings
 #   ./quickstart.sh --no-build   # Skip build step
+#   ./quickstart.sh --fuse       # Also mount FS9 via FUSE at /tmp/fs9-mount
+#   ./quickstart.sh --fuse /mnt  # Mount via FUSE at custom path
 #
 # Configuration file:
 #   You can also use a config file instead of environment variables:
@@ -23,6 +26,7 @@
 #   FS9_META_PORT   - Meta service port (default: 9998)
 #   NAMESPACE       - Namespace name (default: demo)
 #   FS9_USER        - Username for token (default: demo)
+#   FUSE_MOUNT      - FUSE mount point (default: /tmp/fs9-mount, use with --fuse)
 
 set -e
 
@@ -45,32 +49,59 @@ FS9_META_URL="http://localhost:${FS9_META_PORT}"
 NAMESPACE="${NAMESPACE:-demo}"
 FS9_USER="${FS9_USER:-demo}"
 
-echo -e "${CYAN}${BOLD}=== FS9 Quickstart ===${NC}"
-echo ""
-
-# Parse arguments
 SKIP_BUILD=false
-for arg in "$@"; do
-    case $arg in
+ENABLE_FUSE=false
+FUSE_MOUNTPOINT=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
         --no-build)
             SKIP_BUILD=true
+            shift
+            ;;
+        --fuse)
+            ENABLE_FUSE=true
+            shift
+            if [[ $# -gt 0 && ! "$1" == --* ]]; then
+                FUSE_MOUNTPOINT="$1"
+                shift
+            fi
+            ;;
+        *)
+            shift
             ;;
     esac
 done
+FUSE_MOUNTPOINT="${FUSE_MOUNTPOINT:-${FUSE_MOUNT:-/tmp/fs9-mount}}"
+
+if [ "$ENABLE_FUSE" = true ]; then
+    TOTAL_STEPS=6
+else
+    TOTAL_STEPS=5
+fi
+
+echo -e "${CYAN}${BOLD}=== FS9 Quickstart ===${NC}"
+echo ""
+
+STEP=1
 
 # Step 1: Build
 if [ "$SKIP_BUILD" = false ]; then
-    echo -e "${YELLOW}[1/5] Building...${NC}"
+    echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Building...${NC}"
     cargo build --release 2>&1 | tail -1
     make plugins 2>/dev/null || true
+    if [ "$ENABLE_FUSE" = true ]; then
+        cargo build -p fs9-fuse --release 2>&1 | tail -1
+    fi
     echo -e "${GREEN}✓ Build complete${NC}"
 else
-    echo -e "${YELLOW}[1/5] Skipping build${NC}"
+    echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Skipping build${NC}"
 fi
 echo ""
+STEP=$((STEP + 1))
 
 # Step 2: Stop old processes and start services
-echo -e "${YELLOW}[2/5] Starting services...${NC}"
+echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Starting services...${NC}"
+pkill -f "fs9-fuse" 2>/dev/null || true
 pkill -f "fs9-server" 2>/dev/null || true
 pkill -f "fs9-meta" 2>/dev/null || true
 sleep 1
@@ -96,9 +127,10 @@ if ! kill -0 $SERVER_PID 2>/dev/null; then
 fi
 echo -e "${GREEN}✓ Server running (PID: $SERVER_PID)${NC}"
 echo ""
+STEP=$((STEP + 1))
 
 # Step 3: Create namespace with mount
-echo -e "${YELLOW}[3/5] Creating namespace '${NAMESPACE}' with pagefs...${NC}"
+echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Creating namespace '${NAMESPACE}' with pagefs...${NC}"
 ./target/release/fs9-admin \
     -s "$FS9_SERVER" \
     --secret "$FS9_JWT_SECRET" \
@@ -111,9 +143,10 @@ echo -e "${YELLOW}[3/5] Creating namespace '${NAMESPACE}' with pagefs...${NC}"
         mount add pagefs -n "$NAMESPACE" --set uid=1000 --set gid=1000 2>/dev/null || true
 }
 echo ""
+STEP=$((STEP + 1))
 
 # Step 4: Generate token
-echo -e "${YELLOW}[4/5] Generating token...${NC}"
+echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Generating token...${NC}"
 TOKEN=$(./target/release/fs9-admin \
     -s "$FS9_SERVER" \
     --secret "$FS9_JWT_SECRET" \
@@ -126,8 +159,44 @@ if [ -z "$TOKEN" ]; then
 fi
 echo -e "${GREEN}✓ Token generated${NC}"
 echo ""
+STEP=$((STEP + 1))
 
-# Step 5: Show info and start shell
+# Step 5 (optional): Mount FUSE
+FUSE_PID=""
+if [ "$ENABLE_FUSE" = true ]; then
+    echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Mounting FUSE at ${FUSE_MOUNTPOINT}...${NC}"
+
+    mkdir -p "$FUSE_MOUNTPOINT"
+
+    # Unmount if already mounted
+    if mount | grep -q "$FUSE_MOUNTPOINT"; then
+        if [[ "$OSTYPE" == darwin* ]]; then
+            umount "$FUSE_MOUNTPOINT" 2>/dev/null || true
+        else
+            fusermount -u "$FUSE_MOUNTPOINT" 2>/dev/null || true
+        fi
+        sleep 1
+    fi
+
+    ./target/release/fs9-fuse "$FUSE_MOUNTPOINT" \
+        --server "$FS9_SERVER" \
+        --token "$TOKEN" \
+        --foreground --auto-unmount &
+    FUSE_PID=$!
+    sleep 2
+
+    if ! kill -0 $FUSE_PID 2>/dev/null; then
+        echo -e "${RED}✗ FUSE mount failed${NC}"
+        echo -e "${YELLOW}  Continuing without FUSE...${NC}"
+        FUSE_PID=""
+    else
+        echo -e "${GREEN}✓ FUSE mounted at ${FUSE_MOUNTPOINT} (PID: $FUSE_PID)${NC}"
+    fi
+    echo ""
+    STEP=$((STEP + 1))
+fi
+
+# Final step: Show info and start shell
 echo -e "${CYAN}${BOLD}=== Ready ===${NC}"
 echo ""
 echo -e "  Server:    ${CYAN}${FS9_SERVER}${NC}"
@@ -135,6 +204,10 @@ echo -e "  Namespace: ${CYAN}${NAMESPACE}${NC}"
 echo -e "  User:      ${CYAN}${FS9_USER}${NC}"
 echo -e "  Server PID: ${SERVER_PID}"
 echo -e "  Meta PID:   ${META_PID}"
+if [ -n "$FUSE_PID" ]; then
+echo -e "  FUSE PID:   ${FUSE_PID}"
+echo -e "  FUSE mount: ${CYAN}${FUSE_MOUNTPOINT}${NC}"
+fi
 echo ""
 echo -e "${YELLOW}Example commands in sh9:${NC}"
 echo "  ls                       # List files"
@@ -142,11 +215,22 @@ echo "  echo 'hello' > test.txt  # Create file"
 echo "  cat test.txt             # Read file"
 echo "  mkdir mydir              # Create directory"
 echo "  exit                     # Exit shell"
+if [ -n "$FUSE_PID" ]; then
 echo ""
-echo -e "${YELLOW}To stop services later: ${NC}kill $SERVER_PID $META_PID"
+echo -e "${YELLOW}FUSE mount at ${FUSE_MOUNTPOINT} — use standard tools:${NC}"
+echo "  ls ${FUSE_MOUNTPOINT}"
+echo "  cat ${FUSE_MOUNTPOINT}/test.txt"
+echo "  cd ${FUSE_MOUNTPOINT} && git init"
+fi
+echo ""
+CLEANUP_PIDS="$SERVER_PID $META_PID"
+if [ -n "$FUSE_PID" ]; then
+    CLEANUP_PIDS="$FUSE_PID $CLEANUP_PIDS"
+fi
+echo -e "${YELLOW}To stop services later: ${NC}kill $CLEANUP_PIDS"
 echo ""
 
-echo -e "${YELLOW}[5/5] Starting sh9 shell...${NC}"
+echo -e "${YELLOW}[${STEP}/${TOTAL_STEPS}] Starting sh9 shell...${NC}"
 echo ""
 
 ./target/release/sh9 -s "$FS9_SERVER" -t "$TOKEN"
@@ -154,6 +238,15 @@ echo ""
 # Cleanup
 echo ""
 echo -e "${YELLOW}Stopping services...${NC}"
+if [ -n "$FUSE_PID" ]; then
+    kill $FUSE_PID 2>/dev/null || true
+    sleep 1
+    if [[ "$OSTYPE" == darwin* ]]; then
+        umount "$FUSE_MOUNTPOINT" 2>/dev/null || true
+    else
+        fusermount -u "$FUSE_MOUNTPOINT" 2>/dev/null || true
+    fi
+fi
 kill $SERVER_PID 2>/dev/null || true
 kill $META_PID 2>/dev/null || true
 echo -e "${GREEN}✓ Done${NC}"
