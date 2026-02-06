@@ -160,7 +160,19 @@ fn main() {
         options.push(MountOption::AllowRoot);
     }
     if auto_unmount {
-        options.push(MountOption::AutoUnmount);
+        // fuser adds allow_other implicitly when auto_unmount is set without
+        // allow_other or allow_root.  That requires "user_allow_other" in
+        // /etc/fuse.conf, which is not enabled on most systems by default.
+        // Detect this early and fall back gracefully instead of failing with a
+        // cryptic "Operation now in progress (os error 115)".
+        if !allow_other && !allow_root && !fuse_conf_allows_other() {
+            tracing::warn!(
+                "auto_unmount requires allow_other, but user_allow_other is not set in \
+                 /etc/fuse.conf — skipping auto_unmount"
+            );
+        } else {
+            options.push(MountOption::AutoUnmount);
+        }
     }
     if read_only {
         options.push(MountOption::RO);
@@ -223,6 +235,16 @@ fn main() {
     }
 
     info!("FS9 FUSE stopped");
+}
+
+fn fuse_conf_allows_other() -> bool {
+    std::fs::read_to_string("/etc/fuse.conf")
+        .map(|contents| {
+            contents
+                .lines()
+                .any(|line| line.trim().eq_ignore_ascii_case("user_allow_other"))
+        })
+        .unwrap_or(false)
 }
 
 fn parse_duration(s: &str) -> u64 {

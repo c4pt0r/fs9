@@ -177,7 +177,7 @@ if [ "$ENABLE_FUSE" = true ]; then
     ./target/release/fs9-fuse "$FUSE_MOUNTPOINT" \
         --server "$FS9_SERVER_ENDPOINTS" \
         --token "$TOKEN" \
-        --foreground --auto-unmount &
+        --foreground &
     FUSE_PID=$!
     sleep 2
 
