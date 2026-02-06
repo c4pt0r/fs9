@@ -125,3 +125,30 @@ All crates depend on `sdk`. Plugins depend on `sdk-ffi` (C ABI). Server and fuse
 - **Plugin .so naming**: `libfs9_plugin_{name}.so` (Linux) / `.dylib` (macOS)
 - **fs9-meta is required** — server exits on startup if `FS9_META_URL` is not set (unless `FS9_SKIP_META_CHECK=1`)
 - **Key env vars**: `FS9_META_URL` (meta service URL), `FS9_META_KEY` (admin key), `FS9_SKIP_META_CHECK` (testing only)
+
+## PERFORMANCE OPTIMIZATIONS (2026-02-05)
+
+### Implemented
+
+| Optimization | Location | Improvement |
+|--------------|----------|-------------|
+| HandleRegistry sharding | `core/src/handle.rs` | 64 shards reduce lock contention, ~5-10x read throughput |
+| FFI spawn_blocking | `core/src/plugin.rs` | All FFI calls offloaded to blocking threads, prevents async starvation |
+| MountTable O(log n) | `core/src/mount.rs` | BTreeMap range query replaces O(n) iteration |
+| TokenCache (moka) | `server/src/token_cache.rs` | Bounded LRU cache with automatic TTL, 100K default capacity |
+| Handle cleanup task | `server/src/namespace.rs` | Background task every 60s cleans stale handles per namespace |
+| Request backpressure | `server/src/main.rs` | TimeoutLayer (30s default), ConcurrencyLimitLayer (1000 default) |
+| Namespace lock opt | `server/src/namespace.rs` | Optimistic creation outside write lock |
+| HandleMap compact | `server/src/state.rs` | HashSet<u64> replaces bidirectional HashMap<UUID,u64> |
+
+### Deferred (Breaking Changes)
+
+- **VfsRouter::open double stat** — requires `FsProvider::open` to return `(Handle, FileInfo)`, affects trait + all impls + FFI
+
+### Config Options Added
+
+```yaml
+server:
+  request_timeout_secs: 30    # Request timeout (optional)
+  max_concurrent_requests: 1000  # Concurrent request limit (optional)
+```

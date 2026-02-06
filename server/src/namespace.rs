@@ -1,4 +1,4 @@
-use fs9_core::{HandleRegistry, MountTable, VfsRouter};
+use fs9_core::{start_cleanup_task, HandleRegistry, MountTable, VfsRouter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,6 +7,8 @@ use tokio::sync::RwLock;
 
 use crate::state::HandleMap;
 
+const HANDLE_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Per-namespace isolated state: each namespace gets its own VFS, mounts, handles.
 pub struct Namespace {
     pub name: String,
@@ -14,6 +16,8 @@ pub struct Namespace {
     pub mount_table: Arc<MountTable>,
     pub handle_registry: Arc<HandleRegistry>,
     pub handle_map: Arc<RwLock<HandleMap>>,
+    #[allow(dead_code)]
+    cleanup_task: tokio::task::JoinHandle<()>,
 }
 
 impl Namespace {
@@ -22,6 +26,7 @@ impl Namespace {
         let mount_table = Arc::new(MountTable::new());
         let handle_registry = Arc::new(HandleRegistry::new(handle_ttl));
         let vfs = Arc::new(VfsRouter::new(mount_table.clone(), handle_registry.clone()));
+        let cleanup_task = start_cleanup_task(handle_registry.clone(), HANDLE_CLEANUP_INTERVAL);
 
         Self {
             name: name.to_string(),
@@ -29,6 +34,7 @@ impl Namespace {
             mount_table,
             handle_registry,
             handle_map: Arc::new(RwLock::new(HandleMap::new())),
+            cleanup_task,
         }
     }
 }
@@ -107,13 +113,14 @@ impl NamespaceManager {
         }
     }
 
-    /// Create a new namespace with metadata. Returns error if name is invalid or duplicate.
     pub async fn create(&self, name: &str, created_by: &str) -> Result<Arc<Namespace>, String> {
         validate_namespace_name(name)?;
 
-        let mut namespaces = self.namespaces.write().await;
-        if namespaces.contains_key(name) {
-            return Err(format!("Namespace '{}' already exists", name));
+        {
+            let namespaces = self.namespaces.read().await;
+            if namespaces.contains_key(name) {
+                return Err(format!("Namespace '{}' already exists", name));
+            }
         }
 
         let ns = Arc::new(Namespace::new(name, self.handle_ttl));
@@ -123,27 +130,22 @@ impl NamespaceManager {
             created_by: created_by.to_string(),
             status: "active".to_string(),
         };
+
+        let mut namespaces = self.namespaces.write().await;
+        if namespaces.contains_key(name) {
+            return Err(format!("Namespace '{}' already exists", name));
+        }
         namespaces.insert(name.to_string(), (ns.clone(), info));
         tracing::info!(namespace = %name, created_by = %created_by, "Created namespace");
         Ok(ns)
     }
 
-    /// Get an existing namespace or create a new empty one.
-    /// Internal/test use only — production requests should use `get()` and reject unknown namespaces.
     pub async fn get_or_create(&self, name: &str) -> Arc<Namespace> {
-        // Fast path: read lock
         {
             let namespaces = self.namespaces.read().await;
             if let Some((ns, _)) = namespaces.get(name) {
                 return ns.clone();
             }
-        }
-
-        // Slow path: write lock + create
-        let mut namespaces = self.namespaces.write().await;
-        // Double-check after acquiring write lock
-        if let Some((ns, _)) = namespaces.get(name) {
-            return ns.clone();
         }
 
         let ns = Arc::new(Namespace::new(name, self.handle_ttl));
@@ -153,6 +155,11 @@ impl NamespaceManager {
             created_by: "system".to_string(),
             status: "active".to_string(),
         };
+
+        let mut namespaces = self.namespaces.write().await;
+        if let Some((existing_ns, _)) = namespaces.get(name) {
+            return existing_ns.clone();
+        }
         namespaces.insert(name.to_string(), (ns.clone(), info));
         tracing::info!(namespace = %name, "Created new namespace");
         ns

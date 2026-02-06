@@ -295,14 +295,14 @@ pub struct PluginProvider {
     provider: *mut c_void,
 }
 
-// Safety: The provider pointer is only accessed through synchronized FFI calls
+// Safety: The provider pointer is only accessed through synchronized FFI calls.
+// The underlying plugin library guarantees thread-safe access to provider instances.
 unsafe impl Send for PluginProvider {}
 unsafe impl Sync for PluginProvider {}
 
 impl Drop for PluginProvider {
     fn drop(&mut self) {
         if !self.provider.is_null() {
-            // Safety: We're calling the destroy function with the provider pointer
             unsafe {
                 (self.plugin.vtable.destroy)(self.provider);
             }
@@ -316,6 +316,24 @@ impl PluginProvider {
         &self.plugin.name
     }
 }
+
+/// Sendable wrapper for provider pointer.
+/// Safety: PluginProvider guarantees the pointer remains valid and thread-safe
+/// for the provider's lifetime. The underlying plugin must be thread-safe.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct SendablePtr(usize);
+
+impl SendablePtr {
+    fn new(ptr: *mut c_void) -> Self {
+        Self(ptr as usize)
+    }
+    fn as_ptr(self) -> *mut c_void {
+        self.0 as *mut c_void
+    }
+}
+
+unsafe impl Send for SendablePtr {}
 
 fn cresult_to_fserror(result: CResult) -> FsError {
     let msg = if !result.error_msg.is_null() && result.error_msg_len > 0 {
@@ -449,207 +467,213 @@ fn cfsstats_to_fsstats(stats: &CFsStats) -> FsStats {
 impl FsProvider for PluginProvider {
     async fn stat(&self, path: &str) -> FsResult<FileInfo> {
         let path_cstr = CString::new(path).map_err(|e| FsError::invalid_argument(e.to_string()))?;
-        let mut out_info = CFileInfo::default();
+        let path_len = path.len();
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        let result = unsafe {
-            (self.plugin.vtable.stat)(
-                self.provider,
-                path_cstr.as_ptr(),
-                path.len(),
-                &mut out_info,
-            )
-        };
-
-        if result.code == FS9_OK {
-            Ok(cfileinfo_to_fileinfo(&out_info))
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        tokio::task::spawn_blocking(move || {
+            let mut out_info = CFileInfo::default();
+            let result = unsafe {
+                (vtable.stat)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &mut out_info)
+            };
+            if result.code == FS9_OK {
+                Ok(cfileinfo_to_fileinfo(&out_info))
+            } else {
+                Err(cresult_to_fserror(result))
+            }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     async fn wstat(&self, path: &str, changes: StatChanges) -> FsResult<()> {
         let path_cstr = CString::new(path).map_err(|e| FsError::invalid_argument(e.to_string()))?;
-        let (c_changes, _name_cstr, _symlink_cstr) = statchanges_to_cstatchanges(&changes);
+        let path_len = path.len();
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        let result = unsafe {
-            (self.plugin.vtable.wstat)(
-                self.provider,
-                path_cstr.as_ptr(),
-                path.len(),
-                &c_changes,
-            )
-        };
-
-        if result.code == FS9_OK {
-            Ok(())
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        tokio::task::spawn_blocking(move || {
+            let (c_changes, _name_cstr, _symlink_cstr) = statchanges_to_cstatchanges(&changes);
+            let result = unsafe {
+                (vtable.wstat)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &c_changes)
+            };
+            if result.code == FS9_OK {
+                Ok(())
+            } else {
+                Err(cresult_to_fserror(result))
+            }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     async fn statfs(&self, path: &str) -> FsResult<FsStats> {
         let path_cstr = CString::new(path).map_err(|e| FsError::invalid_argument(e.to_string()))?;
-        let mut out_stats = CFsStats::default();
+        let path_len = path.len();
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        let result = unsafe {
-            (self.plugin.vtable.statfs)(
-                self.provider,
-                path_cstr.as_ptr(),
-                path.len(),
-                &mut out_stats,
-            )
-        };
-
-        if result.code == FS9_OK {
-            Ok(cfsstats_to_fsstats(&out_stats))
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        tokio::task::spawn_blocking(move || {
+            let mut out_stats = CFsStats::default();
+            let result = unsafe {
+                (vtable.statfs)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &mut out_stats)
+            };
+            if result.code == FS9_OK {
+                Ok(cfsstats_to_fsstats(&out_stats))
+            } else {
+                Err(cresult_to_fserror(result))
+            }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     async fn open(&self, path: &str, flags: OpenFlags) -> FsResult<Handle> {
         let path_cstr = CString::new(path).map_err(|e| FsError::invalid_argument(e.to_string()))?;
+        let path_len = path.len();
         let c_flags = openflags_to_copenflags(&flags);
-        let mut out_handle: u64 = 0;
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        let result = unsafe {
-            (self.plugin.vtable.open)(
-                self.provider,
-                path_cstr.as_ptr(),
-                path.len(),
-                &c_flags,
-                &mut out_handle,
-            )
-        };
-
-        if result.code == FS9_OK {
-            Ok(Handle::new(out_handle))
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        tokio::task::spawn_blocking(move || {
+            let mut out_handle: u64 = 0;
+            let result = unsafe {
+                (vtable.open)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &c_flags, &mut out_handle)
+            };
+            if result.code == FS9_OK {
+                Ok(Handle::new(out_handle))
+            } else {
+                Err(cresult_to_fserror(result))
+            }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     async fn read(&self, handle: &Handle, offset: u64, size: usize) -> FsResult<Bytes> {
-        let mut out_data = CBytes::default();
+        let handle_id = handle.id();
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        let result = unsafe {
-            (self.plugin.vtable.read)(
-                self.provider,
-                handle.id(),
-                offset,
-                size,
-                &mut out_data,
-            )
-        };
-
-        if result.code == FS9_OK {
-            if out_data.data.is_null() || out_data.len == 0 {
-                return Ok(Bytes::new());
-            }
-
-            let bytes = unsafe {
-                let data = slice::from_raw_parts(out_data.data, out_data.len);
-                Bytes::copy_from_slice(data)
+        tokio::task::spawn_blocking(move || {
+            let mut out_data = CBytes::default();
+            let result = unsafe {
+                (vtable.read)(provider.as_ptr(), handle_id, offset, size, &mut out_data)
             };
 
-            unsafe {
-                fs9_sdk_ffi::fs9_bytes_free(&mut out_data);
+            if result.code == FS9_OK {
+                if out_data.data.is_null() || out_data.len == 0 {
+                    return Ok(Bytes::new());
+                }
+                let bytes = unsafe {
+                    let data = slice::from_raw_parts(out_data.data, out_data.len);
+                    Bytes::copy_from_slice(data)
+                };
+                unsafe { fs9_sdk_ffi::fs9_bytes_free(&mut out_data) };
+                Ok(bytes)
+            } else {
+                Err(cresult_to_fserror(result))
             }
-
-            Ok(bytes)
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     async fn write(&self, handle: &Handle, offset: u64, data: Bytes) -> FsResult<usize> {
-        let mut out_written: usize = 0;
+        let handle_id = handle.id();
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        let result = unsafe {
-            (self.plugin.vtable.write)(
-                self.provider,
-                handle.id(),
-                offset,
-                data.as_ptr(),
-                data.len(),
-                &mut out_written,
-            )
-        };
-
-        if result.code == FS9_OK {
-            Ok(out_written)
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        tokio::task::spawn_blocking(move || {
+            let mut out_written: usize = 0;
+            let result = unsafe {
+                (vtable.write)(provider.as_ptr(), handle_id, offset, data.as_ptr(), data.len(), &mut out_written)
+            };
+            if result.code == FS9_OK {
+                Ok(out_written)
+            } else {
+                Err(cresult_to_fserror(result))
+            }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     async fn close(&self, handle: Handle, sync: bool) -> FsResult<()> {
-        let result = unsafe {
-            (self.plugin.vtable.close)(self.provider, handle.id(), u8::from(sync))
-        };
+        let handle_id = handle.id();
+        let sync_flag = u8::from(sync);
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        if result.code == FS9_OK {
-            Ok(())
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        tokio::task::spawn_blocking(move || {
+            let result = unsafe { (vtable.close)(provider.as_ptr(), handle_id, sync_flag) };
+            if result.code == FS9_OK {
+                Ok(())
+            } else {
+                Err(cresult_to_fserror(result))
+            }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     async fn readdir(&self, path: &str) -> FsResult<Vec<FileInfo>> {
         let path_cstr = CString::new(path).map_err(|e| FsError::invalid_argument(e.to_string()))?;
+        let path_len = path.len();
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        let entries: Arc<Mutex<Vec<FileInfo>>> = Arc::new(Mutex::new(Vec::new()));
-        let entries_ptr = Arc::into_raw(entries.clone()) as *mut c_void;
+        tokio::task::spawn_blocking(move || {
+            let entries: Arc<Mutex<Vec<FileInfo>>> = Arc::new(Mutex::new(Vec::new()));
+            let entries_ptr = Arc::into_raw(entries.clone()) as *mut c_void;
 
-        unsafe extern "C" fn collect_entry(info: *const CFileInfo, user_data: *mut c_void) -> i32 {
-            if info.is_null() || user_data.is_null() {
-                return -1;
+            unsafe extern "C" fn collect_entry(info: *const CFileInfo, user_data: *mut c_void) -> i32 {
+                if info.is_null() || user_data.is_null() {
+                    return -1;
+                }
+                let entries = &*(user_data as *const Mutex<Vec<FileInfo>>);
+                let file_info = cfileinfo_to_fileinfo(&*info);
+                if let Ok(mut guard) = entries.lock() {
+                    guard.push(file_info);
+                    0
+                } else {
+                    -1
+                }
             }
 
-            let entries = &*(user_data as *const Mutex<Vec<FileInfo>>);
-            let file_info = cfileinfo_to_fileinfo(&*info);
+            let result = unsafe {
+                (vtable.readdir)(provider.as_ptr(), path_cstr.as_ptr(), path_len, collect_entry, entries_ptr)
+            };
 
-            if let Ok(mut guard) = entries.lock() {
-                guard.push(file_info);
-                0
+            let entries = unsafe { Arc::from_raw(entries_ptr as *const Mutex<Vec<FileInfo>>) };
+
+            if result.code == FS9_OK {
+                let guard = entries.lock().unwrap();
+                Ok(guard.clone())
             } else {
-                -1
+                Err(cresult_to_fserror(result))
             }
-        }
-
-        let result = unsafe {
-            (self.plugin.vtable.readdir)(
-                self.provider,
-                path_cstr.as_ptr(),
-                path.len(),
-                collect_entry,
-                entries_ptr,
-            )
-        };
-
-        // Safety: Reclaims Arc that was leaked via into_raw above
-        let entries = unsafe { Arc::from_raw(entries_ptr as *const Mutex<Vec<FileInfo>>) };
-
-        if result.code == FS9_OK {
-            let guard = entries.lock().unwrap();
-            Ok(guard.clone())
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     async fn remove(&self, path: &str) -> FsResult<()> {
         let path_cstr = CString::new(path).map_err(|e| FsError::invalid_argument(e.to_string()))?;
+        let path_len = path.len();
+        let provider = SendablePtr::new(self.provider);
+        let vtable = self.plugin.vtable;
 
-        let result = unsafe {
-            (self.plugin.vtable.remove)(self.provider, path_cstr.as_ptr(), path.len())
-        };
-
-        if result.code == FS9_OK {
-            Ok(())
-        } else {
-            Err(cresult_to_fserror(result))
-        }
+        tokio::task::spawn_blocking(move || {
+            let result = unsafe { (vtable.remove)(provider.as_ptr(), path_cstr.as_ptr(), path_len) };
+            if result.code == FS9_OK {
+                Ok(())
+            } else {
+                Err(cresult_to_fserror(result))
+            }
+        })
+        .await
+        .map_err(|e| FsError::internal(e.to_string()))?
     }
 
     fn capabilities(&self) -> Capabilities {

@@ -7,7 +7,7 @@ pub mod providers;
 pub mod vfs;
 
 pub use fs9_sdk;
-pub use handle::{HandleId, HandleInfo, HandleRef, HandleRegistry, HandleState};
+pub use handle::{start_cleanup_task, HandleId, HandleInfo, HandleRef, HandleRegistry, HandleState};
 pub use mount::{MountEntry, MountPoint, MountTable};
 pub use plugin::{PluginError, PluginManager, PluginProvider};
 pub use providers::{

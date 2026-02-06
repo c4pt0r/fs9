@@ -47,6 +47,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Set token if provided
     if let Some(token) = args.token {
+        if token.trim().is_empty() {
+            eprintln!("Error: Token is empty.");
+            eprintln!();
+            eprintln!("Please provide a valid JWT token. To generate one:");
+            eprintln!("  fs9-admin token generate -u <user> -n <namespace> -q");
+            std::process::exit(1);
+        }
         shell.set_token(token);
     }
     

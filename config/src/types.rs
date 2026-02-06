@@ -33,12 +33,14 @@ pub struct ServerConfig {
     pub port: u16,
     pub auth: AuthConfig,
     pub plugins: PluginsConfig,
-    /// URL of the fs9-meta service for token validation (e.g., "http://localhost:9998")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta_url: Option<String>,
-    /// Optional admin key for fs9-meta (sent as `x-fs9-meta-key`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_timeout_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_requests: Option<usize>,
 }
 
 impl Default for ServerConfig {
@@ -50,6 +52,8 @@ impl Default for ServerConfig {
             plugins: PluginsConfig::default(),
             meta_url: None,
             meta_key: None,
+            request_timeout_secs: None,
+            max_concurrent_requests: None,
         }
     }
 }

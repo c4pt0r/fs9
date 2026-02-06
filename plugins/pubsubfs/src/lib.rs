@@ -423,8 +423,11 @@ impl PubSubFsProvider {
 
             // Determine mode based on flags
             // For PubSubFS: write = publish, read = subscribe
-            // If both read and write are set (e.g., from create_truncate),
-            // prioritize write (publish) mode
+            if flags.read && flags.write {
+                return Err(FsError::invalid_argument(
+                    "cannot open a topic for both read (subscribe) and write (publish)",
+                ));
+            }
             if flags.write {
                 // Write mode = Publish
                 let topic = self.create_topic_if_needed(topic_name);

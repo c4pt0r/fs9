@@ -96,33 +96,26 @@ impl MountTable {
         let path = Self::normalize_mount_path(path);
         let mounts = self.mounts.read().await;
 
-        let mut best_match: Option<(&str, &MountEntry)> = None;
-
-        for (mount_path, entry) in mounts.iter() {
-            if path == *mount_path || path.starts_with(&format!("{mount_path}/")) || mount_path == "/" {
-                match best_match {
-                    None => best_match = Some((mount_path, entry)),
-                    Some((current_path, _)) if mount_path.len() > current_path.len() => {
-                        best_match = Some((mount_path, entry));
-                    }
-                    _ => {}
-                }
+        // O(log n) resolution using BTreeMap ordering.
+        // Iterate keys <= path in reverse to find longest prefix match first.
+        for (mount_path, entry) in mounts.range(..=path.clone()).rev() {
+            if path == *mount_path {
+                return Ok((entry.provider.clone(), "/".to_string()));
+            }
+            if mount_path == "/" {
+                return Ok((entry.provider.clone(), path));
+            }
+            if path.starts_with(mount_path) && path.as_bytes().get(mount_path.len()) == Some(&b'/') {
+                let relative_path = path[mount_path.len()..].to_string();
+                return Ok((entry.provider.clone(), relative_path));
             }
         }
 
-        match best_match {
-            Some((mount_path, entry)) => {
-                let relative_path = if mount_path == "/" {
-                    path
-                } else if path == *mount_path {
-                    "/".to_string()
-                } else {
-                    path[mount_path.len()..].to_string()
-                };
-                Ok((entry.provider.clone(), relative_path))
-            }
-            None => Err(FsError::not_found(&path)),
+        if let Some(entry) = mounts.get("/") {
+            return Ok((entry.provider.clone(), path));
         }
+
+        Err(FsError::not_found(&path))
     }
 
     pub async fn list_mounts(&self) -> Vec<MountPoint> {

@@ -13,6 +13,9 @@ use fs9_config::Fs9Config;
 use fs9_core::{default_registry, ProviderConfig};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
+use tower::limit::ConcurrencyLimitLayer;
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -85,11 +88,16 @@ async fn main() {
     let auth_state = AuthState::new(auth_enabled, JwtConfig::new(jwt_secret));
     let auth_middleware_state = AuthMiddlewareState::new(auth_state, Arc::clone(&state));
 
+    let request_timeout = Duration::from_secs(config.server.request_timeout_secs.unwrap_or(30));
+    let max_concurrent = config.server.max_concurrent_requests.unwrap_or(1000);
+
     let app = api::create_router(state)
         .layer(middleware::from_fn_with_state(
             auth_middleware_state,
             auth::auth_middleware,
         ))
+        .layer(TimeoutLayer::new(request_timeout))
+        .layer(ConcurrencyLimitLayer::new(max_concurrent))
         .layer(TraceLayer::new_for_http());
 
     let addr = format!("{}:{}", config.server.host, config.server.port);

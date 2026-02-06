@@ -31,7 +31,8 @@ impl TestServer {
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let workspace_root = manifest_dir.parent().unwrap();
 
-        let plugin_path = workspace_root.join("target/debug/libfs9_plugin_pagefs.so");
+        let plugin_filename = format!("libfs9_plugin_pagefs{}", std::env::consts::DLL_SUFFIX);
+        let plugin_path = workspace_root.join("target/debug").join(plugin_filename);
         if !plugin_path.exists() {
             panic!(
                 "PageFS plugin not found at {:?}. Run `cargo build -p fs9-plugin-pagefs` first.",
@@ -501,9 +502,9 @@ async fn mt_open(
     let ns = mt_resolve_ns(&state, &ctx).await?;
     let flags = parse_flags(req.flags);
     let handle = ns.vfs.open(&req.path, flags).await.map_err(mt_err)?;
-    let uuid = uuid::Uuid::new_v4().to_string();
-    ns.handle_map.write().await.insert(uuid.clone(), handle.id());
-    Ok(Json(OpenResp { handle_id: uuid }))
+    let handle_id = handle.id();
+    ns.handle_map.write().await.insert(handle_id);
+    Ok(Json(OpenResp { handle_id: handle_id.to_string() }))
 }
 
 #[derive(Deserialize)]
@@ -548,7 +549,7 @@ async fn mt_close(
     Json(req): Json<CloseReq>,
 ) -> MtResult<StatusCode> {
     let ns = mt_resolve_ns(&state, &ctx).await?;
-    let hid = ns.handle_map.write().await.remove_by_uuid(&req.handle_id)
+    let hid = ns.handle_map.write().await.remove(&req.handle_id)
         .ok_or((StatusCode::BAD_REQUEST, "Invalid handle".into()))?;
     ns.vfs.close(Handle::new(hid), req.sync).await.map_err(mt_err)?;
     Ok(StatusCode::NO_CONTENT)

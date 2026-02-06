@@ -136,11 +136,11 @@ pub async fn open(
     let handle = ns.vfs.open(&req.path, req.flags.into()).await?;
     let metadata = ns.vfs.stat(&req.path).await?;
 
-    let uuid = uuid::Uuid::new_v4().to_string();
-    ns.handle_map.write().await.insert(uuid.clone(), handle.id());
+    let handle_id = handle.id();
+    ns.handle_map.write().await.insert(handle_id);
 
     Ok(Json(OpenResponse {
-        handle_id: uuid,
+        handle_id: handle_id.to_string(),
         metadata: metadata.into(),
     }))
 }
@@ -196,7 +196,7 @@ pub async fn close(
         .handle_map
         .write()
         .await
-        .remove_by_uuid(&req.handle_id)
+        .remove(&req.handle_id)
         .ok_or_else(|| FsError::invalid_argument("invalid handle_id"))?;
 
     ns.vfs.close(Handle::new(handle_id), req.sync).await?;

@@ -113,7 +113,7 @@ pub struct COpenFlags {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct CStatChanges {
     pub has_mode: u8,
     pub mode: u32,
@@ -133,6 +133,32 @@ pub struct CStatChanges {
     pub has_symlink_target: u8,
     pub symlink_target: *const c_char,
     pub symlink_target_len: size_t,
+}
+
+impl Default for CStatChanges {
+    fn default() -> Self {
+        // Raw pointers don't implement Default on Rust 1.85, so we default them explicitly.
+        Self {
+            has_mode: 0,
+            mode: 0,
+            has_uid: 0,
+            uid: 0,
+            has_gid: 0,
+            gid: 0,
+            has_size: 0,
+            size: 0,
+            has_atime: 0,
+            atime: 0,
+            has_mtime: 0,
+            mtime: 0,
+            has_name: 0,
+            name: ptr::null(),
+            name_len: 0,
+            has_symlink_target: 0,
+            symlink_target: ptr::null(),
+            symlink_target_len: 0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -214,6 +240,7 @@ pub type ReaddirCallback =
 pub type RemoveFn =
     unsafe extern "C" fn(provider: *mut c_void, path: *const c_char, path_len: size_t) -> CResult;
 
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct PluginVTable {
     pub sdk_version: u32,

@@ -1,5 +1,5 @@
 use fs9_core::{PluginManager, ProviderRegistry};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -20,8 +20,7 @@ pub struct AppState {
 }
 
 pub struct HandleMap {
-    uuid_to_id: HashMap<String, u64>,
-    id_to_uuid: HashMap<u64, String>,
+    active_handles: HashSet<u64>,
 }
 
 impl Default for HandleMap {
@@ -34,28 +33,26 @@ impl HandleMap {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            uuid_to_id: HashMap::new(),
-            id_to_uuid: HashMap::new(),
+            active_handles: HashSet::new(),
         }
     }
 
-    pub fn insert(&mut self, uuid: String, id: u64) {
-        self.uuid_to_id.insert(uuid.clone(), id);
-        self.id_to_uuid.insert(id, uuid);
+    pub fn insert(&mut self, id: u64) {
+        self.active_handles.insert(id);
     }
 
-    pub fn get_id(&self, uuid: &str) -> Option<u64> {
-        self.uuid_to_id.get(uuid).copied()
+    pub fn get_id(&self, handle_str: &str) -> Option<u64> {
+        let id: u64 = handle_str.parse().ok()?;
+        if self.active_handles.contains(&id) {
+            Some(id)
+        } else {
+            None
+        }
     }
 
-    #[allow(dead_code)]
-    pub fn get_uuid(&self, id: u64) -> Option<&String> {
-        self.id_to_uuid.get(&id)
-    }
-
-    pub fn remove_by_uuid(&mut self, uuid: &str) -> Option<u64> {
-        if let Some(id) = self.uuid_to_id.remove(uuid) {
-            self.id_to_uuid.remove(&id);
+    pub fn remove(&mut self, handle_str: &str) -> Option<u64> {
+        let id: u64 = handle_str.parse().ok()?;
+        if self.active_handles.remove(&id) {
             Some(id)
         } else {
             None

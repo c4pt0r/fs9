@@ -2,7 +2,7 @@
 # Multi-stage build for smaller final image
 
 # --- Build Stage ---
-FROM rust:1.83-bookworm AS builder
+FROM rust:1.85-bookworm AS builder
 
 WORKDIR /build
 
@@ -25,6 +25,7 @@ COPY tests/ tests/
 COPY sh9/ sh9/
 COPY cli/ cli/
 COPY fuse/ fuse/
+COPY meta/ meta/
 
 # Build server and plugins in release mode
 RUN cargo build --release -p fs9-server
@@ -43,6 +44,7 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    curl \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 

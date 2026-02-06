@@ -36,6 +36,11 @@ impl LocalFs {
             return Err(FsError::not_directory(root.display().to_string()));
         }
 
+        // Normalize symlinks to make `starts_with` comparisons reliable (e.g., /var vs /private/var on macOS).
+        let root = root
+            .canonicalize()
+            .map_err(|e| FsError::internal(format!("Failed to canonicalize root: {e}")))?;
+
         Ok(Self {
             root,
             handles: RwLock::new(HashMap::new()),
