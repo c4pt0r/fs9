@@ -19,7 +19,7 @@ server:
 
 mounts:
   - path: "/"
-    provider: memfs
+    provider: pagefs
 
   # Uncomment to add S3-backed storage:
   # - path: "/data"
