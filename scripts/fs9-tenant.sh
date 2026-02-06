@@ -17,6 +17,7 @@
 set -e
 
 META_URL="${FS9_META_URL:-http://localhost:9998}"
+SERVER_URL="${FS9_SERVER_URL:-http://localhost:9999}"
 META_KEY="${FS9_META_KEY:-admin-key-change-me}"
 
 # Colors
@@ -43,15 +44,15 @@ api() {
     local data="$3"
     
     if [ -n "$data" ]; then
-        curl -s -X "$method" \
+        curl -sf -X "$method" \
             -H "Content-Type: application/json" \
             -H "x-fs9-meta-key: $META_KEY" \
             -d "$data" \
-            "${META_URL}${endpoint}"
+            "${META_URL}${endpoint}" 2>/dev/null || echo '{"error": "connection failed"}'
     else
-        curl -s -X "$method" \
+        curl -sf -X "$method" \
             -H "x-fs9-meta-key: $META_KEY" \
-            "${META_URL}${endpoint}"
+            "${META_URL}${endpoint}" 2>/dev/null || echo '{"error": "connection failed"}'
     fi
 }
 
@@ -60,6 +61,11 @@ api() {
 cmd_create_tenant() {
     local name="$1"
     [ -z "$name" ] && error "Usage: create-tenant <name>"
+    
+    # Check meta service is reachable
+    if ! curl -sf "${META_URL}/health" > /dev/null 2>&1; then
+        error "Cannot connect to meta service at ${META_URL}. Is it running?"
+    fi
     
     info "Creating namespace: $name"
     
@@ -98,14 +104,13 @@ cmd_create_tenant() {
     fi
     
     # Create namespace on fs9-server (if reachable)
-    local server_url="${FS9_SERVER_URL:-http://localhost:9999}"
-    info "Creating namespace on fs9-server ($server_url)..."
+    info "Creating namespace on fs9-server ($SERVER_URL)..."
     
     local ns_result
-    ns_result=$(curl -s -X POST -H "Authorization: Bearer $token" \
+    ns_result=$(curl -sf -X POST -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -d "{\"name\": \"$name\"}" \
-        "${server_url}/api/v1/namespaces" 2>/dev/null)
+        "${SERVER_URL}/api/v1/namespaces" 2>/dev/null || echo '{"error": "connection failed"}')
     
     if echo "$ns_result" | jq -e '.name' > /dev/null 2>&1; then
         success "Namespace created on server"
@@ -128,7 +133,7 @@ cmd_create_tenant() {
     echo -e "${YELLOW}$token${NC}"
     echo ""
     echo "To connect with sh9:"
-    echo "  export FS9_SERVER_URL=http://localhost:9999"
+    echo "  export FS9_SERVER_URL=$SERVER_URL"
     echo "  export FS9_TOKEN=$token"
     echo "  cargo run -p sh9"
     echo ""
