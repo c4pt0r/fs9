@@ -44,7 +44,7 @@ impl FsProvider for VfsRouter {
         Ok(info)
     }
 
-    async fn wstat(&self, path: &str, changes: StatChanges) -> FsResult<()> {
+    async fn wstat(&self, path: &str, mut changes: StatChanges) -> FsResult<()> {
         let (provider, relative_path) = self.resolve(path).await?;
         let caps = provider.capabilities();
 
@@ -65,6 +65,15 @@ impl FsProvider for VfsRouter {
         }
         if changes.symlink_target.is_some() && !caps.contains(Capabilities::SYMLINK) {
             return Err(FsError::not_implemented("symlink"));
+        }
+
+        // Translate absolute VFS rename target to mount-relative path
+        if let Some(ref new_name) = changes.name {
+            let (target_provider, target_relative) = self.resolve(new_name).await?;
+            if !Arc::ptr_eq(&provider, &target_provider) {
+                return Err(FsError::invalid_argument("cannot rename across mount points"));
+            }
+            changes.name = Some(target_relative);
         }
 
         provider.wstat(&relative_path, changes).await

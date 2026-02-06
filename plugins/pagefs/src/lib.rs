@@ -1012,7 +1012,7 @@ unsafe extern "C" fn destroy_provider(provider: *mut c_void) {
 }
 
 unsafe extern "C" fn get_capabilities(_provider: *mut c_void) -> u64 {
-    (Capabilities::BASIC_RW | Capabilities::TRUNCATE | Capabilities::RENAME).bits()
+    (Capabilities::BASIC_RW | Capabilities::TRUNCATE | Capabilities::RENAME | Capabilities::CHMOD | Capabilities::UTIME).bits()
 }
 
 unsafe extern "C" fn stat_fn(
