@@ -1,0 +1,21 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY meta/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source
+COPY meta/main.py .
+
+# Create data directory
+RUN mkdir -p /app/data
+
+# Environment
+ENV FS9_META_PORT=9998
+ENV FS9_META_DB=sqlite:///./data/fs9_meta.db
+
+EXPOSE 9998
+
+CMD ["python", "main.py"]

@@ -1,0 +1,86 @@
+# FS9 Docker Compose
+#
+# Usage:
+#   docker compose up -d                    # Start all services
+#   docker compose logs -f                  # View logs
+#   docker compose exec admin fs9-admin    # Run admin commands
+#
+# After starting:
+#   1. Create a namespace:
+#      ./scripts/fs9-tenant.sh create-tenant myproject
+#
+#   2. Connect with sh9:
+#      export FS9_TOKEN=<token from step 1>
+#      sh9
+
+version: "3.8"
+
+services:
+  # FS9 Meta Service - Authentication & Namespace Management
+  meta:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.meta
+    container_name: fs9-meta
+    ports:
+      - "9998:9998"
+    environment:
+      - FS9_META_PORT=9998
+      - FS9_JWT_SECRET=${FS9_JWT_SECRET:-change-me-in-production}
+      - FS9_META_KEY=${FS9_META_KEY:-admin-key-change-me}
+    volumes:
+      - meta-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:9998/health').raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # FS9 Server - Distributed Filesystem
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: fs9-server
+    ports:
+      - "9999:9999"
+    environment:
+      - FS9_HOST=0.0.0.0
+      - FS9_PORT=9999
+      - FS9_JWT_SECRET=${FS9_JWT_SECRET:-change-me-in-production}
+      - FS9_META_URL=http://meta:9998
+      - FS9_META_KEY=${FS9_META_KEY:-admin-key-change-me}
+      - FS9_PLUGIN_DIR=/app/plugins
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - server-data:/app/data
+    depends_on:
+      meta:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9999/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Admin CLI container (for management operations)
+  admin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.meta
+    container_name: fs9-admin
+    environment:
+      - FS9_META_URL=http://meta:9998
+      - FS9_META_KEY=${FS9_META_KEY:-admin-key-change-me}
+      - FS9_JWT_SECRET=${FS9_JWT_SECRET:-change-me-in-production}
+    depends_on:
+      - meta
+    entrypoint: ["sleep", "infinity"]
+    profiles:
+      - tools
+
+volumes:
+  meta-data:
+  server-data:
