@@ -55,6 +55,11 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
 # AI/Agent state
 .sisyphus/
 meta/data/
