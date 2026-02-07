@@ -77,13 +77,18 @@ impl TokenCache {
     /// Returns `None` if the token is not in the cache or has expired.
     pub async fn get(&self, token: &str) -> Option<CachedToken> {
         let now = now_unix_secs();
-        self.cache.get(token).await.and_then(|entry| {
+        let result = self.cache.get(token).await.and_then(|entry| {
             if now < entry.expires_at {
                 Some(entry)
             } else {
                 None
             }
-        })
+        });
+        match &result {
+            Some(_) => metrics::counter!("fs9_token_cache_hits_total").increment(1),
+            None => metrics::counter!("fs9_token_cache_misses_total").increment(1),
+        }
+        result
     }
 
     /// Store a validated token in the cache.

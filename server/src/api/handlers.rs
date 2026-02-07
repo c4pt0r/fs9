@@ -1,11 +1,13 @@
 use axum::{
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Extension, Query, State},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
-use fs9_sdk::{FsError, FsProvider, Handle};
+use fs9_sdk::{FsError, FsProvider, Handle, OpenFlags};
+use futures::stream;
+use futures::StreamExt;
 use std::sync::Arc;
 
 use crate::api::models::*;
@@ -144,11 +146,13 @@ pub async fn open(
     }))
 }
 
+const STREAM_CHUNK_SIZE: usize = 256 * 1024; // 256KB
+
 pub async fn read(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<ReadRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<Response> {
     let ns = resolve_ns(&state, &ctx).await?;
     let handle_id = ns
         .handle_map
@@ -157,15 +161,55 @@ pub async fn read(
         .get_id(&req.handle_id)
         .ok_or_else(|| FsError::invalid_argument("invalid handle_id"))?;
 
-    let data = ns.vfs.read(&Handle::new(handle_id), req.offset, req.size).await?;
-    Ok((StatusCode::OK, data))
+    let total_size = req.size;
+
+    if total_size <= 1024 * 1024 {
+        let data = ns
+            .vfs
+            .read(&Handle::new(handle_id), req.offset, total_size)
+            .await?;
+        return Ok((StatusCode::OK, data).into_response());
+    }
+
+    let vfs = ns.vfs.clone();
+    let handle = Handle::new(handle_id);
+    let offset = req.offset;
+    let end_offset = req.offset + total_size as u64;
+
+    let body_stream = stream::unfold(
+        (vfs, handle, offset, end_offset),
+        move |(vfs, handle, mut offset, end_offset)| async move {
+            if offset >= end_offset {
+                return None;
+            }
+            let remaining = (end_offset - offset) as usize;
+            let chunk_size = remaining.min(STREAM_CHUNK_SIZE);
+
+            match vfs.read(&handle, offset, chunk_size).await {
+                Ok(data) => {
+                    if data.is_empty() {
+                        return None;
+                    }
+                    offset += data.len() as u64;
+                    Some((Ok::<_, std::io::Error>(data), (vfs, handle, offset, end_offset)))
+                }
+                Err(_) => None,
+            }
+        },
+    );
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Transfer-Encoding", "chunked")
+        .body(Body::from_stream(body_stream))
+        .unwrap())
 }
 
 pub async fn write(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<RequestContext>,
     Query(query): Query<WriteQuery>,
-    body: Bytes,
+    body: Body,
 ) -> AppResult<Json<WriteResponse>> {
     let ns = resolve_ns(&state, &ctx).await?;
     let handle_id = ns
@@ -175,8 +219,24 @@ pub async fn write(
         .get_id(&query.handle_id)
         .ok_or_else(|| FsError::invalid_argument("invalid handle_id"))?;
 
-    let bytes_written = ns.vfs.write(&Handle::new(handle_id), query.offset, body).await?;
-    Ok(Json(WriteResponse { bytes_written }))
+    let handle = Handle::new(handle_id);
+    let mut offset = query.offset;
+    let mut total_written: usize = 0;
+    let mut stream = body.into_data_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| FsError::internal(e.to_string()))?;
+        if chunk.is_empty() {
+            continue;
+        }
+        let written = ns.vfs.write(&handle, offset, chunk).await?;
+        offset += written as u64;
+        total_written += written;
+    }
+
+    Ok(Json(WriteResponse {
+        bytes_written: total_written,
+    }))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -200,6 +260,199 @@ pub async fn close(
 
     ns.vfs.close(Handle::new(handle_id), req.sync).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// =============================================================================
+// Stateless streaming endpoints: download (GET) and upload (PUT)
+// =============================================================================
+
+/// Parse an HTTP Range header value.
+/// Supports: `bytes=start-end`, `bytes=start-`, `bytes=-suffix`.
+fn parse_range_header(range: &str, file_size: u64) -> Option<(u64, u64)> {
+    let range = range.strip_prefix("bytes=")?;
+    if let Some(suffix) = range.strip_prefix('-') {
+        // bytes=-500  →  last 500 bytes
+        let suffix_len: u64 = suffix.parse().ok()?;
+        if suffix_len == 0 || suffix_len > file_size {
+            return None;
+        }
+        Some((file_size - suffix_len, file_size - 1))
+    } else if let Some((start_s, end_s)) = range.split_once('-') {
+        let start: u64 = start_s.parse().ok()?;
+        if start >= file_size {
+            return None;
+        }
+        if end_s.is_empty() {
+            // bytes=100-  →  from 100 to end
+            Some((start, file_size - 1))
+        } else {
+            let end: u64 = end_s.parse().ok()?;
+            if end < start || end >= file_size {
+                return None;
+            }
+            Some((start, end))
+        }
+    } else {
+        None
+    }
+}
+
+/// GET /api/v1/download?path=/foo — stateless file download with Range support.
+///
+/// Opens the file, streams it in chunks, closes the handle when done.
+/// Supports `Range: bytes=start-end` for partial content (206).
+pub async fn download(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Query(query): Query<PathQuery>,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    let ns = resolve_ns(&state, &ctx).await?;
+
+    // Stat to get file size
+    let info = ns.vfs.stat(&query.path).await?;
+    let file_size = info.size;
+
+    // Open for reading
+    let (handle, _metadata) = ns.vfs.open(&query.path, OpenFlags {
+        read: true,
+        ..Default::default()
+    }).await?;
+    let handle_id = handle.id();
+    ns.handle_map.write().await.insert(handle_id);
+
+    // Parse Range header
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| parse_range_header(v, file_size));
+
+    let (start, end, status) = match range {
+        Some((s, e)) => (s, e, StatusCode::PARTIAL_CONTENT),
+        None => {
+            if file_size == 0 {
+                // Empty file — close handle and return empty body
+                ns.handle_map.write().await.remove(&handle_id.to_string());
+                let _ = ns.vfs.close(Handle::new(handle_id), false).await;
+                return Ok(Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_LENGTH, "0")
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .body(Body::empty())
+                    .unwrap());
+            }
+            (0, file_size - 1, StatusCode::OK)
+        }
+    };
+
+    let content_length = end - start + 1;
+
+    // Build streaming body
+    let vfs = ns.vfs.clone();
+    let vfs_close = ns.vfs.clone();
+    let handle_map = ns.handle_map.clone();
+    let fh = Handle::new(handle_id);
+    let end_offset = end + 1;
+
+    let body_stream = stream::unfold(
+        (vfs, fh, start, end_offset),
+        move |(vfs, handle, offset, end_off)| async move {
+            if offset >= end_off {
+                return None;
+            }
+            let remaining = (end_off - offset) as usize;
+            let chunk_size = remaining.min(STREAM_CHUNK_SIZE);
+
+            match vfs.read(&handle, offset, chunk_size).await {
+                Ok(data) => {
+                    if data.is_empty() {
+                        return None;
+                    }
+                    let new_offset = offset + data.len() as u64;
+                    Some((Ok::<_, std::io::Error>(data), (vfs, handle, new_offset, end_off)))
+                }
+                Err(_) => None,
+            }
+        },
+    );
+
+    // Wrap the stream to close handle when done
+    let cleanup_handle_id = handle_id;
+    let body_stream = body_stream.chain(stream::once(async move {
+        // Cleanup: close handle after streaming completes
+        handle_map.write().await.remove(&cleanup_handle_id.to_string());
+        let _ = vfs_close.close(Handle::new(cleanup_handle_id), false).await;
+        // Yield nothing — this is just cleanup
+        Ok::<Bytes, std::io::Error>(Bytes::new())
+    }).filter(|r| {
+        let is_empty = matches!(r, Ok(b) if b.is_empty());
+        async move { !is_empty }
+    }));
+
+    let mut builder = Response::builder()
+        .status(status)
+        .header(header::CONTENT_LENGTH, content_length.to_string())
+        .header(header::ACCEPT_RANGES, "bytes");
+
+    if status == StatusCode::PARTIAL_CONTENT {
+        builder = builder.header(
+            header::CONTENT_RANGE,
+            format!("bytes {}-{}/{}", start, end, file_size),
+        );
+    }
+
+    Ok(builder.body(Body::from_stream(body_stream)).unwrap())
+}
+
+/// PUT /api/v1/upload?path=/foo — stateless streaming file upload.
+///
+/// Creates/truncates the file, streams the request body in chunks, closes when done.
+pub async fn upload(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Query(query): Query<PathQuery>,
+    body: Body,
+) -> AppResult<Json<UploadResponse>> {
+    let ns = resolve_ns(&state, &ctx).await?;
+
+    // Open for create+truncate+write
+    let (handle, _metadata) = ns.vfs.open(&query.path, OpenFlags {
+        read: true,
+        write: true,
+        create: true,
+        truncate: true,
+        ..Default::default()
+    }).await?;
+    let handle_id = handle.id();
+    ns.handle_map.write().await.insert(handle_id);
+
+    // Stream body chunks into provider
+    let fh = Handle::new(handle_id);
+    let mut offset: u64 = 0;
+    let mut total_written: usize = 0;
+    let mut stream = body.into_data_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+            // On error, try to close the handle
+            FsError::internal(e.to_string())
+        })?;
+        if chunk.is_empty() {
+            continue;
+        }
+        let written = ns.vfs.write(&fh, offset, chunk).await?;
+        offset += written as u64;
+        total_written += written;
+    }
+
+    // Close handle
+    ns.handle_map.write().await.remove(&handle_id.to_string());
+    ns.vfs.close(Handle::new(handle_id), true).await?;
+
+    Ok(Json(UploadResponse {
+        path: query.path,
+        bytes_written: total_written,
+    }))
 }
 
 pub async fn readdir(
@@ -270,8 +523,16 @@ pub async fn list_mounts(
     ))
 }
 
-pub async fn health() -> &'static str {
-    "OK"
+pub async fn health() -> Json<HealthResponse> {
+    use std::sync::LazyLock;
+
+    static INSTANCE_ID: LazyLock<String> =
+        LazyLock::new(|| uuid::Uuid::new_v4().to_string()[..8].to_string());
+
+    Json(HealthResponse {
+        status: "ok".to_string(),
+        instance_id: INSTANCE_ID.clone(),
+    })
 }
 
 /// POST /api/v1/auth/refresh — refresh a JWT token
@@ -341,6 +602,21 @@ pub async fn refresh_token(
         token: new_token,
         expires_in: ttl_secs,
     }))
+}
+
+/// POST /api/v1/auth/revoke — revoke a token (admin only).
+pub async fn revoke_token(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Json(req): Json<RevokeTokenRequest>,
+) -> AppResult<StatusCode> {
+    require_role(&ctx, &["admin"])?;
+
+    state.revocation_set.revoke(&req.token).await;
+    state.token_cache.remove(&req.token).await;
+
+    tracing::info!(user = %ctx.user_id, "Token revoked");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// POST /api/v1/plugin/load — load a plugin (admin only).
@@ -519,5 +795,70 @@ pub async fn get_namespace(
             "Namespace '{}' not found",
             ns_name
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_range_full() {
+        assert_eq!(parse_range_header("bytes=0-499", 1000), Some((0, 499)));
+    }
+
+    #[test]
+    fn parse_range_open_end() {
+        assert_eq!(parse_range_header("bytes=500-", 1000), Some((500, 999)));
+    }
+
+    #[test]
+    fn parse_range_suffix() {
+        assert_eq!(parse_range_header("bytes=-200", 1000), Some((800, 999)));
+    }
+
+    #[test]
+    fn parse_range_entire_file() {
+        assert_eq!(parse_range_header("bytes=0-999", 1000), Some((0, 999)));
+    }
+
+    #[test]
+    fn parse_range_single_byte() {
+        assert_eq!(parse_range_header("bytes=0-0", 1000), Some((0, 0)));
+    }
+
+    #[test]
+    fn parse_range_invalid_start_past_end() {
+        assert_eq!(parse_range_header("bytes=1000-", 1000), None);
+    }
+
+    #[test]
+    fn parse_range_invalid_end_past_file() {
+        assert_eq!(parse_range_header("bytes=0-1000", 1000), None);
+    }
+
+    #[test]
+    fn parse_range_invalid_reversed() {
+        assert_eq!(parse_range_header("bytes=500-100", 1000), None);
+    }
+
+    #[test]
+    fn parse_range_invalid_format() {
+        assert_eq!(parse_range_header("chars=0-100", 1000), None);
+    }
+
+    #[test]
+    fn parse_range_suffix_zero() {
+        assert_eq!(parse_range_header("bytes=-0", 1000), None);
+    }
+
+    #[test]
+    fn parse_range_suffix_too_large() {
+        assert_eq!(parse_range_header("bytes=-2000", 1000), None);
+    }
+
+    #[test]
+    fn parse_range_empty_file() {
+        assert_eq!(parse_range_header("bytes=0-", 0), None);
     }
 }

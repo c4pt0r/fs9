@@ -7,8 +7,14 @@ pub mod models;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 
+#[cfg(feature = "postgres")]
+mod postgres;
+
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
+
+#[cfg(feature = "postgres")]
+pub use postgres::PostgresStore;
 
 use crate::error::MetaError;
 pub use models::*;
@@ -20,6 +26,8 @@ pub type Result<T> = std::result::Result<T, MetaError>;
 pub enum MetaStore {
     #[cfg(feature = "sqlite")]
     Sqlite(SqliteStore),
+    #[cfg(feature = "postgres")]
+    Postgres(PostgresStore),
 }
 
 impl MetaStore {
@@ -40,7 +48,8 @@ impl MetaStore {
         if dsn.starts_with("postgres://") || dsn.starts_with("postgresql://") {
             #[cfg(feature = "postgres")]
             {
-                todo!("PostgreSQL support not yet implemented");
+                let store = PostgresStore::connect(dsn).await?;
+                return Ok(Self::Postgres(store));
             }
             #[cfg(not(feature = "postgres"))]
             {
@@ -56,6 +65,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.migrate().await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.migrate().await,
         }
     }
 
@@ -67,6 +78,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.create_namespace(name, created_by).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.create_namespace(name, created_by).await,
         }
     }
 
@@ -74,6 +87,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.get_namespace(name).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.get_namespace(name).await,
         }
     }
 
@@ -81,6 +96,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.get_namespace_by_id(id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.get_namespace_by_id(id).await,
         }
     }
 
@@ -88,6 +105,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.list_namespaces().await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.list_namespaces().await,
         }
     }
 
@@ -95,6 +114,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.delete_namespace(name).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.delete_namespace(name).await,
         }
     }
 
@@ -117,6 +138,12 @@ impl MetaStore {
                     .create_mount(namespace_id, path, provider, config, created_by)
                     .await
             }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => {
+                store
+                    .create_mount(namespace_id, path, provider, config, created_by)
+                    .await
+            }
         }
     }
 
@@ -124,6 +151,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.get_mount(namespace_id, path).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.get_mount(namespace_id, path).await,
         }
     }
 
@@ -131,6 +160,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.list_mounts(namespace_id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.list_mounts(namespace_id).await,
         }
     }
 
@@ -138,6 +169,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.delete_mount(namespace_id, path).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.delete_mount(namespace_id, path).await,
         }
     }
 
@@ -154,6 +187,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.create_user(username, password_hash, email).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.create_user(username, password_hash, email).await,
         }
     }
 
@@ -161,6 +196,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.get_user(username).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.get_user(username).await,
         }
     }
 
@@ -168,6 +205,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.get_user_by_id(id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.get_user_by_id(id).await,
         }
     }
 
@@ -175,6 +214,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.list_users().await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.list_users().await,
         }
     }
 
@@ -182,6 +223,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.delete_user(id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.delete_user(id).await,
         }
     }
 
@@ -203,6 +246,12 @@ impl MetaStore {
                     .assign_role(user_id, namespace_id, role, assigned_by)
                     .await
             }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => {
+                store
+                    .assign_role(user_id, namespace_id, role, assigned_by)
+                    .await
+            }
         }
     }
 
@@ -210,6 +259,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.revoke_role(user_id, namespace_id, role).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.revoke_role(user_id, namespace_id, role).await,
         }
     }
 
@@ -217,6 +268,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.get_user_roles(user_id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.get_user_roles(user_id).await,
         }
     }
 
@@ -228,6 +281,12 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.get_user_roles_for_namespace(user_id, namespace_id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => {
+                store
+                    .get_user_roles_for_namespace(user_id, namespace_id)
+                    .await
+            }
         }
     }
 
@@ -250,6 +309,12 @@ impl MetaStore {
                     .create_api_key(user_id, namespace_id, name, roles, expires_at)
                     .await
             }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => {
+                store
+                    .create_api_key(user_id, namespace_id, name, roles, expires_at)
+                    .await
+            }
         }
     }
 
@@ -257,6 +322,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.validate_api_key(key).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.validate_api_key(key).await,
         }
     }
 
@@ -264,6 +331,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.list_api_keys(user_id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.list_api_keys(user_id).await,
         }
     }
 
@@ -271,6 +340,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.revoke_api_key(key_id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.revoke_api_key(key_id).await,
         }
     }
 
@@ -278,6 +349,8 @@ impl MetaStore {
         match self {
             #[cfg(feature = "sqlite")]
             Self::Sqlite(store) => store.touch_api_key(key_id).await,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => store.touch_api_key(key_id).await,
         }
     }
 }

@@ -2,7 +2,10 @@
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::circuit_breaker::CircuitBreaker;
 
 /// Client for fs9-meta service API.
 #[derive(Clone)]
@@ -98,6 +101,44 @@ impl MetaClient {
         }
 
         Ok(response.json().await?)
+    }
+
+    pub async fn validate_token_with_circuit_breaker(
+        &self,
+        token: &str,
+        circuit_breaker: &Arc<CircuitBreaker>,
+        max_retries: u32,
+        base_delay_ms: u64,
+    ) -> Result<ValidateResponse, MetaClientError> {
+        if !circuit_breaker.allow_request().await {
+            return Err(MetaClientError::ServiceError(
+                "Circuit breaker is open — meta service unavailable".to_string(),
+            ));
+        }
+
+        let mut last_err = None;
+        for attempt in 0..max_retries.max(1) {
+            if attempt > 0 {
+                let delay = Duration::from_millis(base_delay_ms * 2u64.pow(attempt - 1));
+                tokio::time::sleep(delay).await;
+            }
+
+            match self.validate_token(token).await {
+                Ok(resp) => {
+                    circuit_breaker.record_success().await;
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    tracing::warn!(attempt = attempt + 1, error = %e, "Meta validate_token failed");
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        circuit_breaker.record_failure().await;
+        Err(last_err.unwrap_or_else(|| {
+            MetaClientError::ServiceError("All retry attempts exhausted".to_string())
+        }))
     }
 
     /// Refresh a JWT token with the meta service.

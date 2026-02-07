@@ -2,7 +2,7 @@ mod types;
 mod error;
 mod client;
 
-pub use client::Fs9Client;
+pub use client::{ByteStream, Fs9Client};
 pub use error::{Fs9Error, Result};
 pub use types::*;
 

@@ -362,6 +362,13 @@ impl From<CapabilitiesResponse> for Capabilities {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct UploadResponse {
+    #[allow(dead_code)]
+    pub path: String,
+    pub bytes_written: usize,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct ErrorResponse {
     pub error: String,
     #[allow(dead_code)]

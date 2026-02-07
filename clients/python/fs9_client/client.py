@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -156,6 +157,51 @@ class Fs9Client:
             await self.write(handle, data, 0)
         finally:
             await self.close(handle)
+
+    async def download(self, path: str) -> bytes:
+        response = await self._client.get("/api/v1/download", params={"path": path})
+        await self._handle_response(response)
+        return response.content
+
+    async def download_range(self, path: str, start: int, end: int) -> bytes:
+        response = await self._client.get(
+            "/api/v1/download",
+            params={"path": path},
+            headers={"Range": f"bytes={start}-{end}"},
+        )
+        await self._handle_response(response)
+        return response.content
+
+    async def download_stream(self, path: str) -> AsyncIterator[bytes]:
+        async with self._client.stream("GET", "/api/v1/download", params={"path": path}) as response:
+            if not response.is_success:
+                await response.aread()
+                try:
+                    data = response.json()
+                    message = data.get("error", "unknown error")
+                except Exception:
+                    message = response.text or "unknown error"
+                raise errors.from_response(response.status_code, message)
+            async for chunk in response.aiter_bytes():
+                yield chunk
+
+    async def upload(self, path: str, data: bytes) -> int:
+        response = await self._client.put(
+            "/api/v1/upload",
+            params={"path": path},
+            content=data,
+        )
+        await self._handle_response(response)
+        return response.json()["bytes_written"]
+
+    async def upload_stream(self, path: str, stream: AsyncIterator[bytes]) -> int:
+        response = await self._client.put(
+            "/api/v1/upload",
+            params={"path": path},
+            content=stream,
+        )
+        await self._handle_response(response)
+        return response.json()["bytes_written"]
 
     async def mkdir(self, path: str) -> None:
         handle = await self.open(path, OpenFlags.mkdir())
@@ -322,6 +368,29 @@ class SyncFs9Client:
             self.write(handle, data, 0)
         finally:
             self.close(handle)
+
+    def download(self, path: str) -> bytes:
+        response = self._client.get("/api/v1/download", params={"path": path})
+        self._handle_response(response)
+        return response.content
+
+    def download_range(self, path: str, start: int, end: int) -> bytes:
+        response = self._client.get(
+            "/api/v1/download",
+            params={"path": path},
+            headers={"Range": f"bytes={start}-{end}"},
+        )
+        self._handle_response(response)
+        return response.content
+
+    def upload(self, path: str, data: bytes) -> int:
+        response = self._client.put(
+            "/api/v1/upload",
+            params={"path": path},
+            content=data,
+        )
+        self._handle_response(response)
+        return response.json()["bytes_written"]
 
     def mkdir(self, path: str) -> None:
         handle = self.open(path, OpenFlags.mkdir())

@@ -11,6 +11,35 @@ server:
     issuer: "fs9"
     audience: "fs9-clients"
 
+  # Meta service connection (required for production)
+  # meta_url: "http://localhost:9998"
+  # meta_key: "${FS9_META_KEY}"
+
+  # Request limits
+  request_timeout_secs: 30
+  max_concurrent_requests: 1000
+  shutdown_timeout_secs: 30
+  max_body_size_bytes: 2097152       # 2MB default for API requests
+  max_write_size_bytes: 268435456    # 256MB for file write endpoint
+
+  # Per-tenant rate limiting
+  rate_limit:
+    enabled: true
+    namespace_qps: 1000
+    user_qps: 100
+
+  # Prometheus metrics
+  metrics:
+    enabled: true
+    path: "/metrics"
+
+  # Meta client circuit breaker
+  meta_resilience:
+    failure_threshold: 5
+    recovery_timeout_secs: 30
+    max_retry_attempts: 3
+    base_delay_ms: 100
+
   plugins:
     directories:
       - "./plugins"

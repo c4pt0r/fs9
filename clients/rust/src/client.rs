@@ -1,11 +1,29 @@
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
+use futures_core::Stream;
 use reqwest::Client;
 use serde::Serialize;
 
 use crate::error::{Fs9Error, Result};
 use crate::types::*;
+
+/// A stream of byte chunks from a download response.
+pub struct ByteStream {
+    inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
+}
+
+impl Stream for ByteStream {
+    type Item = Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx).map(|opt| {
+            opt.map(|res| res.map_err(Fs9Error::from))
+        })
+    }
+}
 
 pub struct Fs9Client {
     client: Client,
@@ -222,6 +240,75 @@ impl Fs9Client {
         self.write(&handle, 0, data).await?;
         self.close(handle).await?;
         Ok(())
+    }
+
+    pub async fn download(&self, path: &str) -> Result<Bytes> {
+        let resp = self
+            .client
+            .get(format!("{}/api/v1/download", self.base_url))
+            .query(&[("path", path)])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(self.extract_error(resp).await);
+        }
+
+        Ok(resp.bytes().await?)
+    }
+
+    pub async fn download_range(&self, path: &str, start: u64, end: u64) -> Result<Bytes> {
+        let resp = self
+            .client
+            .get(format!("{}/api/v1/download", self.base_url))
+            .query(&[("path", path)])
+            .header("Range", format!("bytes={start}-{end}"))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(self.extract_error(resp).await);
+        }
+
+        Ok(resp.bytes().await?)
+    }
+
+    pub async fn download_stream(&self, path: &str) -> Result<ByteStream> {
+        let resp = self
+            .client
+            .get(format!("{}/api/v1/download", self.base_url))
+            .query(&[("path", path)])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            return Err(self.extract_error(resp).await);
+        }
+
+        Ok(ByteStream {
+            inner: Box::pin(resp.bytes_stream()),
+        })
+    }
+
+    pub async fn upload(&self, path: &str, data: impl Into<reqwest::Body>) -> Result<usize> {
+        let resp = self
+            .client
+            .put(format!("{}/api/v1/upload", self.base_url))
+            .query(&[("path", path)])
+            .body(data)
+            .send()
+            .await?;
+
+        let upload_resp: UploadResponse = self.handle_response(resp).await?;
+        Ok(upload_resp.bytes_written)
+    }
+
+    pub async fn upload_stream<S>(&self, path: &str, stream: S) -> Result<usize>
+    where
+        S: futures_core::Stream<Item = std::result::Result<Bytes, std::io::Error>> + Send + Sync + 'static,
+    {
+        let body = reqwest::Body::wrap_stream(stream);
+        self.upload(path, body).await
     }
 
     pub async fn mkdir(&self, path: &str) -> Result<()> {

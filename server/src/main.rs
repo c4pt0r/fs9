@@ -4,9 +4,14 @@ mod api;
 
 use fs9_server::auth;
 use fs9_server::meta_client::MetaClient;
+use fs9_server::metrics as fs9_metrics;
 use fs9_server::namespace;
+use fs9_server::rate_limit::{self, RateLimitState};
 use fs9_server::state;
+#[cfg(feature = "otel")]
+use fs9_server::tracing_otel;
 
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use clap::Parser;
 use fs9_config::Fs9Config;
@@ -47,6 +52,9 @@ async fn main() {
         }),
     };
 
+    #[cfg(feature = "otel")]
+    let otel_provider = init_logging_with_otel(&config);
+    #[cfg(not(feature = "otel"))]
     init_logging(&config);
 
     // meta_url is required unless FS9_SKIP_META_CHECK is set (for testing)
@@ -90,12 +98,40 @@ async fn main() {
 
     let request_timeout = Duration::from_secs(config.server.request_timeout_secs.unwrap_or(30));
     let max_concurrent = config.server.max_concurrent_requests.unwrap_or(1000);
+    let default_body_limit = config.server.max_body_size_bytes.unwrap_or(2 * 1024 * 1024);
+    let write_body_limit = config.server.max_write_size_bytes.unwrap_or(256 * 1024 * 1024);
 
-    let app = api::create_router(state)
+    let rate_limit_state = if config.server.rate_limit.enabled {
+        RateLimitState::new(
+            config.server.rate_limit.namespace_qps,
+            config.server.rate_limit.user_qps,
+        )
+    } else {
+        RateLimitState::disabled()
+    };
+
+    let prometheus_handle = if config.server.metrics.enabled {
+        Some(fs9_metrics::init_metrics())
+    } else {
+        None
+    };
+
+    let mut app = api::create_router(state.clone(), write_body_limit, prometheus_handle.clone());
+
+    if config.server.metrics.enabled {
+        app = app.layer(middleware::from_fn(fs9_metrics::metrics_middleware));
+    }
+
+    let app = app
+        .layer(middleware::from_fn_with_state(
+            rate_limit_state,
+            rate_limit::rate_limit_middleware,
+        ))
         .layer(middleware::from_fn_with_state(
             auth_middleware_state,
             auth::auth_middleware,
         ))
+        .layer(DefaultBodyLimit::max(default_body_limit))
         .layer(TimeoutLayer::new(request_timeout))
         .layer(ConcurrencyLimitLayer::new(max_concurrent))
         .layer(TraceLayer::new_for_http());
@@ -104,9 +140,47 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     tracing::info!("FS9 Server listening on http://{}", addr);
 
-    axum::serve(listener, app).await.unwrap();
+    let shutdown_state = state.clone();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(shutdown_state))
+        .await
+        .unwrap();
+
+    #[cfg(feature = "otel")]
+    if let Some(provider) = otel_provider {
+        tracing_otel::shutdown_tracer(provider).await;
+    }
 }
 
+async fn shutdown_signal(state: Arc<state::AppState>) {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => tracing::info!("Received Ctrl+C, shutting down"),
+        () = terminate => tracing::info!("Received SIGTERM, shutting down"),
+    }
+
+    tracing::info!("Draining open handles...");
+    state.namespace_manager.drain_all().await;
+    tracing::info!("Shutdown complete");
+}
+
+#[cfg(not(feature = "otel"))]
 fn init_logging(config: &Fs9Config) {
     let filter = if config.logging.filter.is_empty() {
         config.logging.level.as_str().to_string()
@@ -118,6 +192,42 @@ fn init_logging(config: &Fs9Config) {
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_subscriber::EnvFilter::new(filter))
         .init();
+}
+
+#[cfg(feature = "otel")]
+fn init_logging_with_otel(config: &Fs9Config) -> Option<opentelemetry_sdk::trace::TracerProvider> {
+    let filter = if config.logging.filter.is_empty() {
+        config.logging.level.as_str().to_string()
+    } else {
+        config.logging.filter.clone()
+    };
+
+    let otel_enabled = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok();
+
+    if otel_enabled {
+        match tracing_otel::init_tracer("fs9-server") {
+            Ok(provider) => {
+                let tracer = tracing_otel::otel_tracer(&provider);
+                tracing_subscriber::registry()
+                    .with(tracing_subscriber::EnvFilter::new(filter))
+                    .with(tracing_subscriber::fmt::layer())
+                    .with(tracing_opentelemetry::layer().with_tracer(tracer))
+                    .init();
+                tracing::info!("OpenTelemetry tracing enabled");
+                return Some(provider);
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize OpenTelemetry: {e}, falling back to stdout tracing");
+            }
+        }
+    }
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::EnvFilter::new(filter))
+        .init();
+
+    None
 }
 
 fn load_plugins(state: &state::AppState, config: &Fs9Config) {

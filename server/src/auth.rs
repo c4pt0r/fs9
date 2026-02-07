@@ -200,12 +200,11 @@ impl JwtConfig {
             &validation,
         )?;
 
-        // Optional: Add a grace period check (e.g., only allow refresh within 7 days of expiry)
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let grace_period = 7 * 24 * 60 * 60; // 7 days
+        let grace_period = 4 * 60 * 60; // 4 hours
         if token_data.claims.exp + grace_period < now {
             return Err(jsonwebtoken::errors::Error::from(
                 jsonwebtoken::errors::ErrorKind::ExpiredSignature,
@@ -292,7 +291,11 @@ pub async fn auth_middleware(
         None => return unauthorized("Missing Authorization header"),
     };
 
-    // 1. Check local token cache first (skip for refresh endpoint)
+    // Check if token has been revoked
+    if state.app_state.revocation_set.is_revoked(token).await {
+        return unauthorized("Token has been revoked");
+    }
+
     if let Some(cached) = state.app_state.token_cache.get(token).await {
         let ctx = RequestContext {
             ns: cached.namespace.clone(),
@@ -318,9 +321,17 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // 2. If meta_client is configured, use it for validation
+    // 2. If meta_client is configured, use it for validation (with circuit breaker + retry)
     if let Some(meta_client) = &state.app_state.meta_client {
-        match meta_client.validate_token(token).await {
+        match meta_client
+            .validate_token_with_circuit_breaker(
+                token,
+                &state.app_state.circuit_breaker,
+                3,
+                100,
+            )
+            .await
+        {
             Ok(resp) if resp.valid => {
                 let namespace = resp.namespace.clone().unwrap_or_else(|| {
                     crate::namespace::DEFAULT_NAMESPACE.to_string()

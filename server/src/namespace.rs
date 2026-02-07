@@ -1,6 +1,6 @@
+use dashmap::DashMap;
 use fs9_core::{start_cleanup_task, HandleRegistry, MountTable, VfsRouter};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -100,7 +100,7 @@ fn iso8601_now() -> String {
 
 /// Manages all namespaces. Provides get-or-create semantics for lazy initialization.
 pub struct NamespaceManager {
-    namespaces: RwLock<HashMap<String, (Arc<Namespace>, NamespaceInfo)>>,
+    namespaces: DashMap<String, (Arc<Namespace>, NamespaceInfo)>,
     handle_ttl: Duration,
 }
 
@@ -108,7 +108,7 @@ impl NamespaceManager {
     #[must_use]
     pub fn new(handle_ttl: Duration) -> Self {
         Self {
-            namespaces: RwLock::new(HashMap::new()),
+            namespaces: DashMap::new(),
             handle_ttl,
         }
     }
@@ -116,11 +116,8 @@ impl NamespaceManager {
     pub async fn create(&self, name: &str, created_by: &str) -> Result<Arc<Namespace>, String> {
         validate_namespace_name(name)?;
 
-        {
-            let namespaces = self.namespaces.read().await;
-            if namespaces.contains_key(name) {
-                return Err(format!("Namespace '{}' already exists", name));
-            }
+        if self.namespaces.contains_key(name) {
+            return Err(format!("Namespace '{}' already exists", name));
         }
 
         let ns = Arc::new(Namespace::new(name, self.handle_ttl));
@@ -131,21 +128,22 @@ impl NamespaceManager {
             status: "active".to_string(),
         };
 
-        let mut namespaces = self.namespaces.write().await;
-        if namespaces.contains_key(name) {
-            return Err(format!("Namespace '{}' already exists", name));
+        // Use entry API for atomicity
+        match self.namespaces.entry(name.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(_) => {
+                Err(format!("Namespace '{}' already exists", name))
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert((ns.clone(), info));
+                tracing::info!(namespace = %name, created_by = %created_by, "Created namespace");
+                Ok(ns)
+            }
         }
-        namespaces.insert(name.to_string(), (ns.clone(), info));
-        tracing::info!(namespace = %name, created_by = %created_by, "Created namespace");
-        Ok(ns)
     }
 
     pub async fn get_or_create(&self, name: &str) -> Arc<Namespace> {
-        {
-            let namespaces = self.namespaces.read().await;
-            if let Some((ns, _)) = namespaces.get(name) {
-                return ns.clone();
-            }
+        if let Some(entry) = self.namespaces.get(name) {
+            return entry.value().0.clone();
         }
 
         let ns = Arc::new(Namespace::new(name, self.handle_ttl));
@@ -156,30 +154,21 @@ impl NamespaceManager {
             status: "active".to_string(),
         };
 
-        let mut namespaces = self.namespaces.write().await;
-        if let Some((existing_ns, _)) = namespaces.get(name) {
-            return existing_ns.clone();
-        }
-        namespaces.insert(name.to_string(), (ns.clone(), info));
-        tracing::info!(namespace = %name, "Created new namespace");
-        ns
+        let entry = self
+            .namespaces
+            .entry(name.to_string())
+            .or_insert((ns, info));
+        entry.value().0.clone()
     }
 
-    /// Get a namespace if it exists (no creation).
     pub async fn get(&self, name: &str) -> Option<Arc<Namespace>> {
-        self.namespaces
-            .read()
-            .await
-            .get(name)
-            .map(|(ns, _)| ns.clone())
+        self.namespaces.get(name).map(|r| r.value().0.clone())
     }
 
-    /// Check if a namespace exists without returning it.
     pub async fn exists(&self, name: &str) -> bool {
-        self.namespaces.read().await.contains_key(name)
+        self.namespaces.contains_key(name)
     }
 
-    /// Insert a pre-built namespace (used during startup for config-defined namespaces).
     pub async fn insert(&self, ns: Arc<Namespace>) {
         let info = NamespaceInfo {
             name: ns.name.clone(),
@@ -187,33 +176,35 @@ impl NamespaceManager {
             created_by: "system".to_string(),
             status: "active".to_string(),
         };
-        self.namespaces
-            .write()
-            .await
-            .insert(ns.name.clone(), (ns, info));
+        self.namespaces.insert(ns.name.clone(), (ns, info));
     }
 
-    /// List all namespace names.
     pub async fn list(&self) -> Vec<String> {
-        self.namespaces.read().await.keys().cloned().collect()
+        self.namespaces.iter().map(|r| r.key().clone()).collect()
     }
 
-    /// List metadata for all namespaces.
     pub async fn list_info(&self) -> Vec<NamespaceInfo> {
         self.namespaces
-            .read()
-            .await
-            .values()
-            .map(|(_, info)| info.clone())
+            .iter()
+            .map(|r| r.value().1.clone())
             .collect()
     }
 
-    /// Get metadata for a single namespace.
     pub async fn get_info(&self, name: &str) -> Option<NamespaceInfo> {
-        self.namespaces
-            .read()
-            .await
-            .get(name)
-            .map(|(_, info)| info.clone())
+        self.namespaces.get(name).map(|r| r.value().1.clone())
+    }
+
+    pub async fn drain_all(&self) {
+        let namespaces: Vec<Arc<Namespace>> = self
+            .namespaces
+            .iter()
+            .map(|r| r.value().0.clone())
+            .collect();
+        for ns in namespaces {
+            let count = ns.handle_registry.close_all().await;
+            if count > 0 {
+                tracing::info!(namespace = %ns.name, closed = count, "Drained handles");
+            }
+        }
     }
 }

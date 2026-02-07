@@ -159,33 +159,55 @@ impl HandleRegistry {
         let mut all_closed = Vec::new();
 
         for shard in &self.shards {
-            let mut to_close = Vec::new();
-
-            // First pass: identify stale handles (read lock)
-            {
+            let stale_ids: Vec<HandleId> = {
                 let handles = shard.handles.read().await;
+                let mut ids = Vec::new();
                 for (id, state) in handles.iter() {
                     let last_access = *state.last_access.read().await;
                     if now.duration_since(last_access) > self.ttl {
-                        to_close.push(*id);
+                        ids.push(*id);
                     }
                 }
+                ids
+            };
+
+            if stale_ids.is_empty() {
+                continue;
             }
 
-            // Second pass: remove stale handles (write lock)
-            if !to_close.is_empty() {
+            let removed: Vec<(HandleId, HandleState)> = {
                 let mut handles = shard.handles.write().await;
-                for id in to_close {
-                    if let Some(state) = handles.remove(&id) {
-                        // Close the provider handle (ignore errors during cleanup)
-                        let _ = state.provider.close(state.provider_handle, false).await;
-                        all_closed.push(id);
-                    }
-                }
+                stale_ids
+                    .iter()
+                    .filter_map(|id| handles.remove(id).map(|s| (*id, s)))
+                    .collect()
+            };
+
+            for (id, state) in removed {
+                let _ = state.provider.close(state.provider_handle, false).await;
+                all_closed.push(id);
             }
         }
 
         all_closed
+    }
+
+    /// Close all handles in the registry. Used during graceful shutdown.
+    /// Returns count of handles closed.
+    pub async fn close_all(&self) -> usize {
+        let mut total = 0;
+        for shard in &self.shards {
+            let removed: Vec<(HandleId, HandleState)> = {
+                let mut handles = shard.handles.write().await;
+                handles.drain().collect()
+            };
+            for (id, state) in removed {
+                let _ = state.provider.close(state.provider_handle, true).await;
+                total += 1;
+                tracing::debug!(handle_id = id, path = %state.path, "Closed handle during shutdown");
+            }
+        }
+        total
     }
 
     /// Get the total count of handles across all shards.
@@ -468,6 +490,25 @@ mod tests {
             assert!(result.unwrap());
         }
 
+        assert_eq!(registry.count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn close_all_handles() {
+        let registry = HandleRegistry::new(Duration::from_secs(300));
+        let fs = Arc::new(MemoryFs::new());
+
+        for i in 0..5 {
+            let path = format!("/close_all_{i}.txt");
+            let (h, m) = fs.open(&path, OpenFlags::create_file()).await.unwrap();
+            registry
+                .register(fs.clone(), path, OpenFlags::create_file(), m, h)
+                .await;
+        }
+
+        assert_eq!(registry.count().await, 5);
+        let closed = registry.close_all().await;
+        assert_eq!(closed, 5);
         assert_eq!(registry.count().await, 0);
     }
 

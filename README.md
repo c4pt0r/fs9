@@ -22,12 +22,44 @@ FS9 is optimized for high-throughput scenarios:
 - **Async-Safe FFI**: Plugin calls offloaded to blocking thread pool
 - **Optimistic Locking**: Namespace creation outside write lock
 
+### Production Features
+
+- **Graceful Shutdown**: SIGTERM/Ctrl+C signal handling with handle draining before exit
+- **Per-Tenant Rate Limiting**: Governor-based token bucket with per-namespace (1000 QPS) and per-user (100 QPS) limits
+- **Prometheus Metrics**: `GET /metrics` endpoint with request counters, latency histograms, and cache hit/miss stats
+- **Token Revocation**: `POST /api/v1/auth/revoke` to immediately invalidate compromised tokens
+- **Circuit Breaker**: Meta service calls protected with automatic CLOSED→OPEN→HALF_OPEN state machine and exponential backoff retry
+- **Streaming File Transfer**: Full streaming I/O — writes consume body as stream (no OOM), reads use chunked transfer encoding
+- **Stateless Download/Upload**: `GET /api/v1/download` with HTTP Range support (206 Partial Content), `PUT /api/v1/upload` for streaming uploads
+- **Request Body Limits**: 2MB default for API requests, 256MB for file writes (configurable)
+- **PostgreSQL Backend**: fs9-meta supports PostgreSQL for high-availability metadata storage (`cargo build -p fs9-meta --features postgres`)
+- **OpenTelemetry Tracing**: Optional distributed tracing via OTLP exporter (`cargo build -p fs9-server --features otel`, set `OTEL_EXPORTER_OTLP_ENDPOINT`)
+- **DashMap Namespace Manager**: Lock-free concurrent reads for namespace lookups
+
 ### Server Configuration
 
 ```yaml
 server:
-  request_timeout_secs: 30      # Request timeout (optional)
-  max_concurrent_requests: 1000  # Max concurrent requests (optional)
+  request_timeout_secs: 30        # Request timeout (optional)
+  max_concurrent_requests: 1000   # Max concurrent requests (optional)
+  shutdown_timeout_secs: 30       # Graceful shutdown timeout (optional)
+  max_body_size_bytes: 2097152    # Default body limit: 2MB (optional)
+  max_write_size_bytes: 268435456 # Write endpoint limit: 256MB (optional)
+
+  rate_limit:
+    enabled: true
+    namespace_qps: 1000           # Per-namespace requests/sec
+    user_qps: 100                 # Per-user requests/sec
+
+  metrics:
+    enabled: true
+    path: "/metrics"              # Prometheus scrape endpoint
+
+  meta_resilience:
+    failure_threshold: 5          # Failures before circuit opens
+    recovery_timeout_secs: 30     # Time before half-open retry
+    max_retry_attempts: 3         # Retry count with exponential backoff
+    base_delay_ms: 100            # Base delay between retries
 ```
 
 ## Quick Start
@@ -1362,7 +1394,9 @@ FS9 exposes a 10-method REST API. All endpoints (except `/health`) require `Auth
 | `/api/v1/statfs` | GET | Get filesystem statistics |
 | `/api/v1/open` | POST | Open file or create file/directory |
 | `/api/v1/read` | POST | Read from file handle |
-| `/api/v1/write` | POST | Write to file handle |
+| `/api/v1/write` | POST | Write to file handle (streaming) |
+| `/api/v1/download` | GET | Stateless file download with Range support |
+| `/api/v1/upload` | PUT | Stateless streaming file upload |
 | `/api/v1/close` | POST | Close file handle |
 | `/api/v1/readdir` | GET | List directory contents |
 | `/api/v1/remove` | DELETE | Delete file or empty directory |

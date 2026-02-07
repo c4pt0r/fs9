@@ -4,19 +4,21 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+use crate::circuit_breaker::CircuitBreaker;
 use crate::meta_client::MetaClient;
 use crate::namespace::{Namespace, NamespaceManager, DEFAULT_NAMESPACE};
 use crate::token_cache::TokenCache;
+use crate::token_revocation::RevocationSet;
 
 pub struct AppState {
     pub namespace_manager: Arc<NamespaceManager>,
     pub plugin_manager: Arc<PluginManager>,
     pub provider_registry: Arc<ProviderRegistry>,
     pub jwt_secret: RwLock<String>,
-    /// Optional client for fs9-meta service integration.
     pub meta_client: Option<MetaClient>,
-    /// Cache for validated tokens to reduce meta service load.
     pub token_cache: TokenCache,
+    pub circuit_breaker: Arc<CircuitBreaker>,
+    pub revocation_set: Arc<RevocationSet>,
 }
 
 pub struct HandleMap {
@@ -80,13 +82,14 @@ impl AppState {
         Self::with_options(Duration::from_secs(300), meta_client)
     }
 
-    /// Create AppState with all options.
     #[must_use]
     pub fn with_options(handle_ttl: Duration, meta_client: Option<MetaClient>) -> Self {
         let namespace_manager = Arc::new(NamespaceManager::new(handle_ttl));
         let plugin_manager = Arc::new(PluginManager::new());
         let provider_registry = Arc::new(fs9_core::default_registry());
         let token_cache = TokenCache::new(DEFAULT_TOKEN_CACHE_TTL);
+        let circuit_breaker = Arc::new(CircuitBreaker::new(5, Duration::from_secs(30)));
+        let revocation_set = Arc::new(RevocationSet::new(500_000));
 
         Self {
             namespace_manager,
@@ -95,6 +98,8 @@ impl AppState {
             jwt_secret: RwLock::new(String::new()),
             meta_client,
             token_cache,
+            circuit_breaker,
+            revocation_set,
         }
     }
 

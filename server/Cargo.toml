@@ -18,7 +18,7 @@ bytes.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["registry"] }
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
@@ -28,6 +28,21 @@ clap.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 thiserror.workspace = true
 moka = { version = "0.12", features = ["future"] }
+governor = "0.8"
+dashmap = "6"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+futures = "0.3"
+sha2 = "0.10"
+tokio-stream = "0.1"
+opentelemetry = { version = "0.27", optional = true }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.27", features = ["tonic"], optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
+
+[features]
+default = []
+otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }

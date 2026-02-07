@@ -41,6 +41,27 @@ pub struct ServerConfig {
     pub request_timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_concurrent_requests: Option<usize>,
+    /// Graceful shutdown timeout in seconds. Default: 30.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutdown_timeout_secs: Option<u64>,
+    /// Per-tenant rate limiting configuration.
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+    /// Prometheus metrics configuration.
+    #[serde(default)]
+    pub metrics: MetricsConfig,
+    /// Default body size limit in bytes (for JSON API requests). Default: 2MB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_body_size_bytes: Option<usize>,
+    /// Write endpoint body size limit in bytes. Default: 256MB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_write_size_bytes: Option<usize>,
+    /// Meta client resilience configuration.
+    #[serde(default)]
+    pub meta_resilience: MetaResilienceConfig,
+    /// Token refresh grace period in hours. Default: 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_grace_period_hours: Option<u64>,
 }
 
 impl Default for ServerConfig {
@@ -54,6 +75,67 @@ impl Default for ServerConfig {
             meta_key: None,
             request_timeout_secs: None,
             max_concurrent_requests: None,
+            shutdown_timeout_secs: None,
+            rate_limit: RateLimitConfig::default(),
+            metrics: MetricsConfig::default(),
+            max_body_size_bytes: None,
+            max_write_size_bytes: None,
+            meta_resilience: MetaResilienceConfig::default(),
+            refresh_grace_period_hours: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RateLimitConfig {
+    pub enabled: bool,
+    pub namespace_qps: u32,
+    pub user_qps: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            namespace_qps: 1000,
+            user_qps: 100,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MetricsConfig {
+    pub enabled: bool,
+    pub path: String,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: "/metrics".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MetaResilienceConfig {
+    pub failure_threshold: u32,
+    pub recovery_timeout_secs: u64,
+    pub max_retry_attempts: u32,
+    pub base_delay_ms: u64,
+}
+
+impl Default for MetaResilienceConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: 5,
+            recovery_timeout_secs: 30,
+            max_retry_attempts: 3,
+            base_delay_ms: 100,
         }
     }
 }

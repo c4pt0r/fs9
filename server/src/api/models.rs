@@ -288,3 +288,20 @@ pub struct RefreshTokenResponse {
     pub token: String,
     pub expires_in: u64,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RevokeTokenRequest {
+    pub token: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub instance_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UploadResponse {
+    pub path: String,
+    pub bytes_written: usize,
+}
