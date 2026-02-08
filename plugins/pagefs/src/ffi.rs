@@ -8,6 +8,8 @@ use fs9_sdk_ffi::{
 use libc::{c_char, c_void, size_t};
 
 use crate::provider::PageFsProvider;
+#[cfg(feature = "tikv")]
+use crate::TikvKvBackend;
 use crate::{
     fserror_to_code, make_cresult_err, systemtime_to_timestamp, timestamp_to_system_time,
     BackendConfig, InMemoryKv, KvBackend, PageFsConfig,
@@ -25,6 +27,10 @@ unsafe extern "C" fn create_provider(config: *const c_char, config_len: size_t) 
         BackendConfig::Memory => Box::new(InMemoryKv::new()),
         #[cfg(feature = "s3")]
         BackendConfig::S3 { bucket, prefix } => Box::new(crate::S3KvBackend::new(bucket, prefix)),
+        #[cfg(feature = "tikv")]
+        BackendConfig::Tikv { pd_endpoints } => {
+            Box::new(TikvKvBackend::new(pd_endpoints, cfg.ns.clone()))
+        }
     };
 
     let provider = Box::new(PageFsProvider::with_config(backend, cfg.uid, cfg.gid));

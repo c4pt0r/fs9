@@ -18,7 +18,7 @@ pub mod provider;
 #[cfg(test)]
 mod tests;
 
-pub(crate) const PAGE_SIZE: usize = 16 * 1024;
+pub const PAGE_SIZE: usize = 16 * 1024;
 pub(crate) const ROOT_INODE: u64 = 1;
 
 /// Convert a signed Unix timestamp (seconds since epoch) to SystemTime.
@@ -78,6 +78,120 @@ impl KvBackend for InMemoryKv {
 
     fn delete(&self, key: &[u8]) {
         self.data.write().unwrap().remove(key);
+    }
+}
+
+#[cfg(feature = "tikv")]
+pub struct TikvKvBackend {
+    client: tikv_client::RawClient,
+    runtime: tokio::runtime::Runtime,
+}
+
+#[cfg(feature = "tikv")]
+impl TikvKvBackend {
+    pub fn new(pd_endpoints: Vec<String>, ns: Option<String>) -> Self {
+        let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        let client = runtime.block_on(async {
+            let keyspace = ns.map(|ns| {
+                let sanitized = ns.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+                format!("{sanitized}_fs")
+            });
+            if let Some(ks) = &keyspace {
+                Self::ensure_keyspace(&pd_endpoints[0], ks).await;
+            }
+            let config = match &keyspace {
+                Some(ks) => tikv_client::Config::default().with_keyspace(ks),
+                None => tikv_client::Config::default(),
+            };
+            tikv_client::RawClient::new_with_config(pd_endpoints, config)
+                .await
+                .expect("Failed to connect to TiKV")
+        });
+        Self { client, runtime }
+    }
+
+    async fn ensure_keyspace(pd_endpoint: &str, keyspace: &str) {
+        let url = format!("http://{pd_endpoint}/pd/api/v2/keyspaces");
+        let body = serde_json::json!({ "name": keyspace });
+        let resp = reqwest::Client::new().post(&url).json(&body).send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                tracing::info!(keyspace, "Created TiKV keyspace");
+            }
+            Ok(r) => {
+                let text = r.text().await.unwrap_or_default();
+                if text.contains("already exists") {
+                    tracing::debug!(keyspace, "TiKV keyspace already exists");
+                } else {
+                    tracing::warn!(keyspace, error = text, "Failed to create TiKV keyspace");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(keyspace, error = %e, "Failed to reach PD for keyspace creation");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "tikv")]
+impl KvBackend for TikvKvBackend {
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.runtime
+            .block_on(self.client.get(key.to_vec()))
+            .ok()
+            .flatten()
+    }
+
+    fn set(&self, key: &[u8], value: &[u8]) {
+        let _ = self
+            .runtime
+            .block_on(self.client.put(key.to_vec(), value.to_vec()));
+    }
+
+    fn scan(&self, prefix: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let mut end = prefix.to_vec();
+        if let Some(last) = end.last_mut() {
+            if *last < 0xFF {
+                *last += 1;
+            } else {
+                end.push(0x00);
+            }
+        }
+
+        const BATCH: u32 = 10240;
+        let mut result = Vec::new();
+        let mut cursor = prefix.to_vec();
+
+        self.runtime.block_on(async {
+            loop {
+                let batch = self
+                    .client
+                    .scan(cursor.clone()..end.clone(), BATCH)
+                    .await
+                    .unwrap_or_default();
+                let exhausted = (batch.len() as u32) < BATCH;
+                for kv in batch {
+                    let key_bytes: &[u8] = kv.key().into();
+                    if !key_bytes.starts_with(prefix) {
+                        return;
+                    }
+                    let next = key_bytes.to_vec();
+                    let (key, value) = kv.into();
+                    result.push((Vec::from(key), value));
+                    cursor = next;
+                    cursor.push(0x00);
+                }
+                if exhausted {
+                    return;
+                }
+            }
+        });
+
+        result
+    }
+
+    fn delete(&self, key: &[u8]) {
+        let _ = self.runtime.block_on(self.client.delete(key.to_vec()));
     }
 }
 
@@ -368,6 +482,9 @@ pub(crate) struct PageFsConfig {
     pub(crate) gid: u32,
     #[serde(default)]
     pub(crate) backend: BackendConfig,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub(crate) ns: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -381,6 +498,16 @@ pub(crate) enum BackendConfig {
         #[serde(default)]
         prefix: String,
     },
+    #[cfg(feature = "tikv")]
+    Tikv {
+        #[serde(default = "default_pd_endpoints")]
+        pd_endpoints: Vec<String>,
+    },
+}
+
+#[cfg(feature = "tikv")]
+fn default_pd_endpoints() -> Vec<String> {
+    vec!["127.0.0.1:2379".to_string()]
 }
 
 pub(crate) fn systemtime_to_timestamp(time: SystemTime) -> i64 {

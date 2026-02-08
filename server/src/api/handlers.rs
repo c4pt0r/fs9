@@ -696,7 +696,11 @@ pub async fn mount_plugin(
             .create(&req.provider, provider_config)
             .map_err(|e| FsError::internal(e.to_string()))?
     } else {
-        let config_json = serde_json::to_string(&req.config).unwrap_or_default();
+        let mut config_with_ns = req.config.clone();
+        if let Some(obj) = config_with_ns.as_object_mut() {
+            obj.insert("ns".to_string(), serde_json::Value::String(ctx.ns.clone()));
+        }
+        let config_json = serde_json::to_string(&config_with_ns).unwrap_or_default();
         Arc::new(
             state
                 .plugin_manager

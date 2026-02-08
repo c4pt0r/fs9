@@ -277,11 +277,13 @@ async fn setup_mounts(
     };
 
     for mount in &config.mounts {
-        let config_json = mount
-            .config
-            .as_ref()
-            .map(|v| serde_json::to_string(v).unwrap_or_default())
-            .unwrap_or_default();
+        let config_json = {
+            let mut cfg = mount.config.clone().unwrap_or(serde_json::Value::Object(Default::default()));
+            if let Some(obj) = cfg.as_object_mut() {
+                obj.insert("ns".to_string(), serde_json::Value::String(DEFAULT_NAMESPACE.to_string()));
+            }
+            serde_json::to_string(&cfg).unwrap_or_default()
+        };
 
         let provider_config = match &mount.config {
             Some(json) => {
