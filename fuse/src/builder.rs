@@ -190,3 +190,54 @@ impl Fs9FuseMount {
         self.guard.join();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mount_options_default() {
+        let opts = MountOptions::default();
+        assert!(!opts.allow_other);
+        assert!(!opts.allow_root);
+        assert!(!opts.auto_unmount);
+        assert!(!opts.read_only);
+    }
+
+    #[test]
+    fn test_mount_options_to_fuser_base() {
+        let opts = MountOptions::default();
+        let fuser_opts = opts.to_fuser_options();
+        // Base options: FSName, Subtype, DefaultPermissions
+        assert_eq!(fuser_opts.len(), 3);
+    }
+
+    #[test]
+    fn test_mount_options_to_fuser_all() {
+        let opts = MountOptions {
+            allow_other: true,
+            allow_root: true,
+            auto_unmount: true,
+            read_only: true,
+        };
+        let fuser_opts = opts.to_fuser_options();
+        // Base (3) + AllowOther + AllowRoot + AutoUnmount + RO = 7
+        assert_eq!(fuser_opts.len(), 7);
+    }
+
+    #[test]
+    fn test_builder_setters() {
+        // We can't fully test without a real client, but we can verify
+        // the builder compiles and the const setters work
+        // This test just verifies the API compiles correctly
+        let _: fn(Fs9FuseBuilder) -> Fs9FuseBuilder = |b| {
+            b.uid(1000)
+                .gid(1000)
+                .cache_ttl(Duration::from_secs(5))
+                .allow_other(true)
+                .allow_root(false)
+                .auto_unmount(true)
+                .read_only(false)
+        };
+    }
+}

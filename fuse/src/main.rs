@@ -6,10 +6,9 @@ use std::time::Duration;
 use clap::Parser;
 use fs9_client::Fs9Client;
 use fs9_config::Fs9Config;
-use fuser::MountOption;
 use tracing::{error, info};
 
-use fs9_fuse::Fs9Fuse;
+use fs9_fuse::Fs9FuseBuilder;
 
 #[derive(Parser, Debug)]
 #[command(name = "fs9-fuse")]
@@ -132,47 +131,27 @@ fn main() {
     }
     info!("Connected to FS9 server");
 
-    let uid = unsafe { libc::getuid() };
-    let gid = unsafe { libc::getgid() };
+    let builder = Fs9FuseBuilder::new(client, rt_handle.clone())
+        .cache_ttl(Duration::from_secs(cache_ttl))
+        .allow_other(allow_other)
+        .allow_root(allow_root)
+        .read_only(read_only);
 
-    let fs = Fs9Fuse::new(
-        client,
-        rt_handle.clone(),
-        uid,
-        gid,
-        Duration::from_secs(cache_ttl),
-    );
-
-    let mut options = vec![
-        MountOption::FSName("fs9".to_string()),
-        MountOption::Subtype("fs9".to_string()),
-        MountOption::DefaultPermissions,
-    ];
-
-    if allow_other {
-        options.push(MountOption::AllowOther);
-    }
-    if allow_root {
-        options.push(MountOption::AllowRoot);
-    }
-    if auto_unmount {
-        // fuser adds allow_other implicitly when auto_unmount is set without
-        // allow_other or allow_root.  That requires "user_allow_other" in
-        // /etc/fuse.conf, which is not enabled on most systems by default.
-        // Detect this early and fall back gracefully instead of failing with a
-        // cryptic "Operation now in progress (os error 115)".
+    let builder = if auto_unmount {
         if !allow_other && !allow_root && !fuse_conf_allows_other() {
             tracing::warn!(
                 "auto_unmount requires allow_other, but user_allow_other is not set in \
                  /etc/fuse.conf — skipping auto_unmount"
             );
+            builder
         } else {
-            options.push(MountOption::AutoUnmount);
+            builder.auto_unmount(true)
         }
-    }
-    if read_only {
-        options.push(MountOption::RO);
-    }
+    } else {
+        builder
+    };
+
+    let (fs, options) = builder.build();
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
