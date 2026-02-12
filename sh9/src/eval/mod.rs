@@ -454,6 +454,11 @@ impl Shell {
         if let Some(result) = self.try_execute_shell_builtin(name, args, ctx).await {
             return result;
         }
+
+        // Try custom builtins (registered via register_builtin)
+        if let Some(handler) = self.custom_builtins.get(name).cloned() {
+            return handler(args, self);
+        }
         
         // Try as user-defined function
         if let Some(body_str) = self.get_function(name).map(|s| s.to_string()) {

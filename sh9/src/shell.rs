@@ -6,6 +6,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
+/// Function signature for custom built-in commands registered via [`Shell::register_builtin`] or [`ShellBuilder::builtin`].
+pub type BuiltinFn = dyn Fn(&[String], &mut Shell) -> Sh9Result<i32> + Send + Sync;
+
+/// Captured output from [`Shell::execute_capture`].
+#[derive(Debug, Clone)]
+pub struct CapturedOutput {
+    pub exit_code: i32,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JobStatus {
     Running,
@@ -30,6 +41,7 @@ pub struct Shell {
     pub token: Option<String>,
     pub jobs: Vec<BackgroundJob>,
     pub next_job_id: usize,
+    pub custom_builtins: HashMap<String, Arc<Box<BuiltinFn>>>,
 }
 
 impl Shell {
@@ -45,6 +57,7 @@ impl Shell {
             token: None,
             jobs: Vec::new(),
             next_job_id: 1,
+            custom_builtins: HashMap::new(),
         }
     }
 
@@ -119,6 +132,7 @@ impl Shell {
             token: self.token.clone(),
             jobs: Vec::new(),
             next_job_id: 1,
+            custom_builtins: self.custom_builtins.clone(),
         }
     }
     
@@ -157,6 +171,108 @@ impl Shell {
     /// Get the most recent job
     pub fn get_current_job(&self) -> Option<&BackgroundJob> {
         self.jobs.last()
+    }
+
+    pub fn register_builtin<F>(&mut self, name: &str, handler: F)
+    where
+        F: Fn(&[String], &mut Shell) -> Sh9Result<i32> + Send + Sync + 'static,
+    {
+        self.custom_builtins
+            .insert(name.to_string(), Arc::new(Box::new(handler)));
+    }
+
+    pub async fn execute_capture(&mut self, input: &str) -> Sh9Result<CapturedOutput> {
+        let script = crate::parser::parse(input).map_err(|errs| {
+            let msg = errs
+                .into_iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Sh9Error::Parse(msg)
+        })?;
+
+        let mut ctx = crate::eval::ExecContext {
+            stdout: crate::eval::Output::Buffer(Vec::new()),
+            stderr: crate::eval::Output::Buffer(Vec::new()),
+            ..crate::eval::ExecContext::default()
+        };
+
+        let mut last_exit = 0;
+        for stmt in &script.statements {
+            last_exit = self.execute_statement_boxed(stmt, &mut ctx).await?;
+            self.last_exit_code = last_exit;
+            if ctx.should_break || ctx.should_continue || ctx.return_value.is_some() {
+                break;
+            }
+        }
+
+        let stdout = match ctx.stdout {
+            crate::eval::Output::Buffer(buf) => buf,
+            _ => Vec::new(),
+        };
+        let stderr = match ctx.stderr {
+            crate::eval::Output::Buffer(buf) => buf,
+            _ => Vec::new(),
+        };
+
+        Ok(CapturedOutput {
+            exit_code: last_exit,
+            stdout,
+            stderr,
+        })
+    }
+}
+
+pub struct ShellBuilder {
+    server_url: String,
+    token: Option<String>,
+    env: HashMap<String, String>,
+    builtins: HashMap<String, Arc<Box<BuiltinFn>>>,
+}
+
+impl ShellBuilder {
+    pub fn new(server_url: &str) -> Self {
+        Self {
+            server_url: server_url.to_string(),
+            token: None,
+            env: HashMap::new(),
+            builtins: HashMap::new(),
+        }
+    }
+
+    pub fn token(mut self, token: &str) -> Self {
+        self.token = Some(token.to_string());
+        self
+    }
+
+    pub fn env(mut self, key: &str, value: &str) -> Self {
+        self.env.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    pub fn builtin<F>(mut self, name: &str, handler: F) -> Self
+    where
+        F: Fn(&[String], &mut Shell) -> Sh9Result<i32> + Send + Sync + 'static,
+    {
+        self.builtins
+            .insert(name.to_string(), Arc::new(Box::new(handler)));
+        self
+    }
+
+    pub fn build(self) -> Shell {
+        Shell {
+            cwd: "/".to_string(),
+            env: self.env,
+            functions: HashMap::new(),
+            aliases: HashMap::new(),
+            last_exit_code: 0,
+            client: None,
+            server_url: self.server_url,
+            token: self.token,
+            jobs: Vec::new(),
+            next_job_id: 1,
+            custom_builtins: self.builtins,
+        }
     }
 }
 

@@ -16,4 +16,4 @@ pub mod shell;
 
 pub use error::{Sh9Error, Sh9Result};
 pub use parser::parse;
-pub use shell::Shell;
+pub use shell::{BuiltinFn, CapturedOutput, Shell, ShellBuilder};
