@@ -29,14 +29,14 @@ impl Shell {
     ) -> Sh9Result<i32> {
         match name {
             "pwd" => self.cmd_pwd(ctx),
-            "cd" => self.cmd_cd(args).await,
+            "cd" => self.cmd_cd(args, ctx).await,
             "ls" => self.cmd_ls(args, ctx).await,
-            "mkdir" => self.cmd_mkdir(args).await,
-            "touch" => self.cmd_touch(args).await,
-            "truncate" => self.cmd_truncate(args).await,
-            "rm" => self.cmd_rm(args).await,
-            "mv" => self.cmd_mv(args).await,
-            "cp" => self.cmd_cp(args).await,
+            "mkdir" => self.cmd_mkdir(args, ctx).await,
+            "touch" => self.cmd_touch(args, ctx).await,
+            "truncate" => self.cmd_truncate(args, ctx).await,
+            "rm" => self.cmd_rm(args, ctx).await,
+            "mv" => self.cmd_mv(args, ctx).await,
+            "cp" => self.cmd_cp(args, ctx).await,
             "stat" => self.cmd_stat(args, ctx).await,
             "mount" => self.cmd_mount(args, ctx).await,
             "lsfs" => self.cmd_lsfs(ctx).await,
@@ -54,7 +54,7 @@ impl Shell {
         Ok(0)
     }
 
-    async fn cmd_cd(&mut self, args: &[String]) -> Sh9Result<i32> {
+    async fn cmd_cd(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let path = args.first().map(|s| s.as_str()).unwrap_or("/");
         let new_cwd = self.resolve_path(path);
         
@@ -65,11 +65,11 @@ impl Shell {
                     Ok(0)
                 }
                 Ok(_) => {
-                    eprintln!("cd: {}: Not a directory", path);
+                    ctx.write_err(&format!("cd: {}: Not a directory", path));
                     Ok(1)
                 }
                 Err(_) => {
-                    eprintln!("cd: {}: No such file or directory", path);
+                    ctx.write_err(&format!("cd: {}: No such file or directory", path));
                     Ok(1)
                 }
             }
@@ -143,7 +143,7 @@ impl Shell {
         }
     }
 
-    async fn cmd_mkdir(&mut self, args: &[String]) -> Sh9Result<i32> {
+    async fn cmd_mkdir(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         for path in args {
             if path.starts_with('-') {
                 continue;
@@ -151,34 +151,34 @@ impl Shell {
             let full_path = self.resolve_path(path);
             if let Some(client) = &self.client {
                 if let Err(e) = client.mkdir(&full_path).await {
-                    eprintln!("mkdir: {}: {}", path, e);
+                    ctx.write_err(&format!("mkdir: {}: {}", path, e));
                     return Ok(1);
                 }
             } else {
-                eprintln!("mkdir: not connected to FS9 server");
+                ctx.write_err("mkdir: not connected to FS9 server");
                 return Ok(1);
             }
         }
         Ok(0)
     }
 
-    async fn cmd_touch(&mut self, args: &[String]) -> Sh9Result<i32> {
+    async fn cmd_touch(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         for path in args {
             let full_path = self.resolve_path(path);
             if let Some(client) = &self.client {
                 if let Err(e) = client.write_file(&full_path, &[]).await {
-                    eprintln!("touch: {}: {}", path, e);
+                    ctx.write_err(&format!("touch: {}: {}", path, e));
                     return Ok(1);
                 }
             } else {
-                eprintln!("touch: not connected to FS9 server");
+                ctx.write_err("touch: not connected to FS9 server");
                 return Ok(1);
             }
         }
         Ok(0)
     }
 
-    async fn cmd_truncate(&mut self, args: &[String]) -> Sh9Result<i32> {
+    async fn cmd_truncate(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let mut size: Option<usize> = None;
         let mut files: Vec<&String> = Vec::new();
         let mut i = 0;
@@ -203,18 +203,18 @@ impl Shell {
                 let current = client.read_file(&full_path).await.unwrap_or_default();
                 let truncated: Vec<u8> = current.iter().take(target_size).copied().collect();
                 if let Err(e) = client.write_file(&full_path, &truncated).await {
-                    eprintln!("truncate: {}: {}", path, e);
+                    ctx.write_err(&format!("truncate: {}: {}", path, e));
                     return Ok(1);
                 }
             } else {
-                eprintln!("truncate: not connected to FS9 server");
+                ctx.write_err("truncate: not connected to FS9 server");
                 return Ok(1);
             }
         }
         Ok(0)
     }
 
-    async fn cmd_rm(&mut self, args: &[String]) -> Sh9Result<i32> {
+    async fn cmd_rm(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         for path in args {
             if path.starts_with('-') {
                 continue;
@@ -222,20 +222,20 @@ impl Shell {
             let full_path = self.resolve_path(path);
             if let Some(client) = &self.client {
                 if let Err(e) = client.remove(&full_path).await {
-                    eprintln!("rm: {}: {}", path, e);
+                    ctx.write_err(&format!("rm: {}: {}", path, e));
                     return Ok(1);
                 }
             } else {
-                eprintln!("rm: not connected to FS9 server");
+                ctx.write_err("rm: not connected to FS9 server");
                 return Ok(1);
             }
         }
         Ok(0)
     }
 
-    async fn cmd_mv(&mut self, args: &[String]) -> Sh9Result<i32> {
+    async fn cmd_mv(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if args.len() != 2 {
-            eprintln!("mv: requires two arguments");
+            ctx.write_err("mv: requires two arguments");
             return Ok(1);
         }
         let src = self.resolve_path(&args[0]);
@@ -243,19 +243,19 @@ impl Shell {
         
         if let Some(client) = &self.client {
             if let Err(e) = client.rename(&src, &dst).await {
-                eprintln!("mv: {}", e);
+                ctx.write_err(&format!("mv: {}", e));
                 return Ok(1);
             }
             Ok(0)
         } else {
-            eprintln!("mv: not connected to FS9 server");
+            ctx.write_err("mv: not connected to FS9 server");
             Ok(1)
         }
     }
 
-    async fn cmd_cp(&mut self, args: &[String]) -> Sh9Result<i32> {
+    async fn cmd_cp(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if args.len() != 2 {
-            eprintln!("cp: requires two arguments");
+            ctx.write_err("cp: requires two arguments");
             return Ok(1);
         }
         let src = self.resolve_path(&args[0]);
@@ -265,7 +265,7 @@ impl Shell {
             let src_handle = match client.open(&src, OpenFlags::read()).await {
                 Ok(h) => h,
                 Err(e) => {
-                    eprintln!("cp: {}: {}", args[0], e);
+                    ctx.write_err(&format!("cp: {}: {}", args[0], e));
                     return Ok(1);
                 }
             };
@@ -273,7 +273,7 @@ impl Shell {
                 Ok(h) => h,
                 Err(e) => {
                     let _ = client.close(src_handle).await;
-                    eprintln!("cp: {}: {}", args[1], e);
+                    ctx.write_err(&format!("cp: {}: {}", args[1], e));
                     return Ok(1);
                 }
             };
@@ -287,7 +287,7 @@ impl Shell {
                         if let Err(e) = client.write(&dst_handle, offset, &data).await {
                             let _ = client.close(src_handle).await;
                             let _ = client.close(dst_handle).await;
-                            eprintln!("cp: write error: {}", e);
+                            ctx.write_err(&format!("cp: write error: {}", e));
                             return Ok(1);
                         }
                         offset += len as u64;
@@ -295,7 +295,7 @@ impl Shell {
                     Err(e) => {
                         let _ = client.close(src_handle).await;
                         let _ = client.close(dst_handle).await;
-                        eprintln!("cp: read error: {}", e);
+                        ctx.write_err(&format!("cp: read error: {}", e));
                         return Ok(1);
                     }
                 }
@@ -304,7 +304,7 @@ impl Shell {
             let _ = client.close(dst_handle).await;
             Ok(0)
         } else {
-            eprintln!("cp: not connected to FS9 server");
+            ctx.write_err("cp: not connected to FS9 server");
             Ok(1)
         }
     }
@@ -320,12 +320,12 @@ impl Shell {
                         ctx.stdout.writeln(&format!("type: {}", if stat.is_dir() { "directory" } else { "file" })).map_err(Sh9Error::Io)?;
                     }
                     Err(e) => {
-                        eprintln!("stat: {}: {}", path, e);
+                        ctx.write_err(&format!("stat: {}: {}", path, e));
                         return Ok(1);
                     }
                 }
             } else {
-                eprintln!("stat: not connected to FS9 server");
+                ctx.write_err("stat: not connected to FS9 server");
                 return Ok(1);
             }
         }
@@ -570,7 +570,7 @@ impl Shell {
 
     fn cmd_basename(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if args.is_empty() {
-            eprintln!("basename: missing operand");
+            ctx.write_err("basename: missing operand");
             return Ok(1);
         }
         let path = &args[0];
@@ -590,7 +590,7 @@ impl Shell {
 
     fn cmd_dirname(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if args.is_empty() {
-            eprintln!("dirname: missing operand");
+            ctx.write_err("dirname: missing operand");
             return Ok(1);
         }
         let path = &args[0];

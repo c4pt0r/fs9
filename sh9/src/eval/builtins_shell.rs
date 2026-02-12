@@ -38,7 +38,7 @@ impl Shell {
             "local" => self.cmd_local(args, ctx),
             "alias" => self.cmd_alias(args, ctx),
             "unalias" => self.cmd_unalias(args),
-            "source" | "." => self.cmd_source(args).await,
+            "source" | "." => self.cmd_source(args, ctx).await,
             "sleep" => self.cmd_sleep(args).await,
             "jobs" => self.cmd_jobs(ctx),
             "fg" => self.cmd_fg(args, ctx).await,
@@ -147,9 +147,9 @@ impl Shell {
         Ok(0)
     }
 
-    async fn cmd_source(&mut self, args: &[String]) -> Sh9Result<i32> {
+    async fn cmd_source(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if args.is_empty() {
-            eprintln!("source: filename argument required");
+            ctx.write_err("source: filename argument required");
             return Ok(1);
         }
         let path = &args[0];
@@ -158,7 +158,7 @@ impl Shell {
             match client.read_file(&full_path).await {
                 Ok(data) => String::from_utf8_lossy(&data).to_string(),
                 Err(e) => {
-                    eprintln!("source: {}: {}", path, e);
+                    ctx.write_err(&format!("source: {}: {}", path, e));
                     return Ok(1);
                 }
             }
@@ -166,7 +166,7 @@ impl Shell {
             match std::fs::read_to_string(path) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("source: {}: {}", path, e);
+                    ctx.write_err(&format!("source: {}: {}", path, e));
                     return Ok(1);
                 }
             }
@@ -331,7 +331,7 @@ impl Shell {
             "DELETE" => client.delete(&url),
             "PATCH" => client.patch(&url),
             _ => {
-                eprintln!("http: unknown method: {}", method);
+                ctx.write_err(&format!("http: unknown method: {}", method));
                 return Ok(1);
             }
         };
@@ -355,13 +355,13 @@ impl Shell {
                         Ok(0)
                     }
                     Err(e) => {
-                        eprintln!("http: {}", e);
+                        ctx.write_err(&format!("http: {}", e));
                         Ok(1)
                     }
                 }
             }
             Err(e) => {
-                eprintln!("http: {}", e);
+                ctx.write_err(&format!("http: {}", e));
                 Ok(1)
             }
         }

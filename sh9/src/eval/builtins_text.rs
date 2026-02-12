@@ -499,12 +499,12 @@ impl Shell {
                 match client.read_file(&full_path).await {
                     Ok(data) => String::from_utf8_lossy(&data).to_string(),
                     Err(e) => {
-                        eprintln!("sort: {}: {}", path, e);
+                        ctx.write_err(&format!("sort: {}: {}", path, e));
                         return Ok(1);
                     }
                 }
             } else {
-                eprintln!("sort: not connected to FS9 server");
+                ctx.write_err("sort: not connected to FS9 server");
                 return Ok(1);
             }
         } else {
@@ -531,12 +531,12 @@ impl Shell {
                 match client.read_file(&full_path).await {
                     Ok(data) => String::from_utf8_lossy(&data).to_string(),
                     Err(e) => {
-                        eprintln!("uniq: {}: {}", path, e);
+                        ctx.write_err(&format!("uniq: {}: {}", path, e));
                         return Ok(1);
                     }
                 }
             } else {
-                eprintln!("uniq: not connected to FS9 server");
+                ctx.write_err("uniq: not connected to FS9 server");
                 return Ok(1);
             }
         } else {
@@ -575,20 +575,20 @@ impl Shell {
         }
         
         if args.is_empty() {
-            eprintln!("tr: missing operand");
+            ctx.write_err("tr: missing operand");
             return Ok(1);
         }
         
         let delete_mode = args.first().map(|s| s == "-d").unwrap_or(false);
         let (set1, set2) = if delete_mode {
             if args.len() < 2 {
-                eprintln!("tr: missing operand");
+                ctx.write_err("tr: missing operand");
                 return Ok(1);
             }
             (&args[1], None)
         } else {
             if args.len() < 2 {
-                eprintln!("tr: missing operand");
+                ctx.write_err("tr: missing operand");
                 return Ok(1);
             }
             (&args[0], args.get(1))
@@ -627,12 +627,12 @@ impl Shell {
                 match client.read_file(&full_path).await {
                     Ok(data) => String::from_utf8_lossy(&data).to_string(),
                     Err(e) => {
-                        eprintln!("rev: {}: {}", path, e);
+                        ctx.write_err(&format!("rev: {}: {}", path, e));
                         return Ok(1);
                     }
                 }
             } else {
-                eprintln!("rev: not connected to FS9 server");
+                ctx.write_err("rev: not connected to FS9 server");
                 return Ok(1);
             }
         } else {
@@ -841,7 +841,7 @@ impl Shell {
                 args[1].parse::<i64>().unwrap_or(1),
             ),
             _ => {
-                eprintln!("seq: requires 1 or 2 arguments");
+                ctx.write_err("seq: requires 1 or 2 arguments");
                 return Ok(1);
             }
         };

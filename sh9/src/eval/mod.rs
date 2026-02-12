@@ -83,7 +83,8 @@ impl Output {
                             client.write_file(&path, &combined).await
                         }
                     } {
-                        eprintln!("Error flushing to {}: {}", path, e);
+                        let msg = format!("Error flushing to {}: {}\n", path, e);
+                        let _ = std::io::stderr().write_all(msg.as_bytes());
                     }
                 }
                 Ok(())
@@ -122,7 +123,8 @@ impl ExecContext {
     pub fn write_err(&mut self, msg: &str) {
         match &mut self.stderr {
             Output::Stdout => {
-                let _ = eprintln!("{}", msg);
+                let msg_with_newline = format!("{}\n", msg);
+                let _ = std::io::stderr().write_all(msg_with_newline.as_bytes());
             }
             Output::Buffer(buf) => {
                 buf.extend_from_slice(msg.as_bytes());
@@ -212,13 +214,15 @@ impl Shell {
                         match shell.execute_pipeline(&pipeline, &mut ctx).await {
                             Ok(code) => code,
                             Err(e) => {
-                                eprintln!("Background job error: {}", e);
+                                let msg = format!("Background job error: {}\n", e);
+                                let _ = std::io::stderr().write_all(msg.as_bytes());
                                 1
                             }
                         }
                     });
 
-                    self.add_job(cmd_str, handle);
+                    let job_id = self.add_job(cmd_str, handle);
+                    ctx.write_err(&format!("[{}] Started", job_id));
                     Ok(0)
                 } else {
                     self.execute_pipeline(pipeline, ctx).await
@@ -331,7 +335,7 @@ impl Shell {
                         match client.read_file(&path).await {
                             Ok(data) => ctx.stdin = Some(data.to_vec()),
                             Err(e) => {
-                                eprintln!("sh9: {}: {}", target, e);
+                                ctx.write_err(&format!("sh9: {}: {}", target, e));
                                 return Ok(1);
                             }
                         }

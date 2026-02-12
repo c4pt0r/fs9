@@ -131,7 +131,6 @@ impl Shell {
             handle,
             status: JobStatus::Running,
         });
-        eprintln!("[{}] Started", id);
         id
     }
 
