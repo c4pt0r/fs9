@@ -308,4 +308,75 @@ mod tests {
         assert_eq!(shell.get_function("greet"), Some("echo Hello"));
         assert_eq!(shell.get_function("nonexistent"), None);
     }
+
+    #[test]
+    fn test_shell_builder() {
+        let shell = ShellBuilder::new("http://localhost:9999")
+            .token("test-token")
+            .env("FOO", "bar")
+            .build();
+        assert_eq!(shell.server_url, "http://localhost:9999");
+        assert_eq!(shell.token, Some("test-token".to_string()));
+        assert_eq!(shell.get_var("FOO"), Some("bar"));
+        assert!(shell.custom_builtins.is_empty());
+    }
+
+    #[test]
+    fn test_shell_builder_with_builtin() {
+        let shell = ShellBuilder::new("http://localhost:9999")
+            .builtin("mycmd", |_args, _shell| Ok(42))
+            .build();
+        assert!(shell.custom_builtins.contains_key("mycmd"));
+    }
+
+    #[test]
+    fn test_register_builtin() {
+        let mut shell = Shell::default();
+        assert!(shell.custom_builtins.is_empty());
+        shell.register_builtin("hello", |_args, _shell| Ok(0));
+        assert!(shell.custom_builtins.contains_key("hello"));
+        assert_eq!(shell.custom_builtins.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_capture_echo() {
+        let mut shell = Shell::new("http://localhost:8080");
+        let output = shell.execute_capture("echo hello world").await.unwrap();
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "hello world\n");
+        assert!(output.stderr.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_capture_variable() {
+        let mut shell = Shell::new("http://localhost:8080");
+        shell.set_var("NAME", "fs9");
+        let output = shell.execute_capture("echo $NAME").await.unwrap();
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "fs9\n");
+    }
+
+    #[tokio::test]
+    async fn test_execute_capture_exit_code() {
+        let mut shell = Shell::new("http://localhost:8080");
+        let output = shell.execute_capture("false").await.unwrap();
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.is_empty());
+    }
+
+    #[test]
+    fn test_captured_output_struct() {
+        let output = CapturedOutput {
+            exit_code: 0,
+            stdout: b"hello\n".to_vec(),
+            stderr: Vec::new(),
+        };
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.stdout, b"hello\n");
+        assert!(output.stderr.is_empty());
+        
+        // Test Clone
+        let cloned = output.clone();
+        assert_eq!(cloned.exit_code, output.exit_code);
+    }
 }
