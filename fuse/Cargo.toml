@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "fs9_fuse"
+path = "src/lib.rs"
+
 [[bin]]
 name = "fs9-fuse"
 path = "src/main.rs"

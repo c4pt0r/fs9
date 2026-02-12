@@ -9,11 +9,7 @@ use fs9_config::Fs9Config;
 use fuser::MountOption;
 use tracing::{error, info};
 
-mod fs;
-mod handle;
-mod inode;
-
-use fs::Fs9Fuse;
+use fs9_fuse::Fs9Fuse;
 
 #[derive(Parser, Debug)]
 #[command(name = "fs9-fuse")]
