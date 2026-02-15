@@ -1,0 +1,29 @@
+# Test 35: Test negation with !
+# Tests: [ ! expr ] negation operator
+
+# Negate -z (empty check)
+[ ! -z "hello" ] && echo "not-empty"
+[ ! -z "" ] && echo "FAIL" || echo "is-empty"
+
+# Negate -n (non-empty check)
+[ ! -n "" ] && echo "not-nonempty"
+[ ! -n "hello" ] && echo "FAIL" || echo "is-nonempty"
+
+# Negate string comparison
+[ ! "a" = "b" ] && echo "a-neq-b"
+[ ! "x" = "x" ] && echo "FAIL" || echo "x-eq-x"
+
+# Negate numeric comparison
+[ ! 1 -eq 2 ] && echo "1-neq-2"
+[ ! 5 -lt 3 ] && echo "5-not-lt-3"
+[ ! 3 -gt 10 ] && echo "3-not-gt-10"
+[ ! 1 -eq 1 ] && echo "FAIL" || echo "1-eq-1"
+
+# Negate in if statement
+if [ ! -z "value" ]; then
+  echo "if-negation-works"
+fi
+
+# Double negation (not supported, but should not crash)
+# [ ! ! "hello" ] would have 3 args: !, !, hello
+# After stripping first !, we get [!, "hello"] which tests "!" as non-empty string

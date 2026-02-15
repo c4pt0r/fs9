@@ -1,0 +1,53 @@
+# Test 37: Compound commands in pipelines
+# Tests: cmd | while read, cmd | while | cmd, for in pipeline
+
+# Basic: cmd | while read
+printf "alpha\nbeta\ngamma\n" | while read line; do
+  echo "got: $line"
+done
+
+# while read with arithmetic
+seq 1 4 | while read n; do
+  echo "$((n * n))"
+done
+
+# Three-stage pipeline: cmd | while | cmd
+printf "hello\nworld\nfoo\n" | while read line; do
+  echo "PREFIX:$line"
+done | grep world
+
+# while read with if inside
+printf "3\n7\n2\n9\n1\n" | while read n; do
+  if [ $n -gt 5 ]; then
+    echo "big: $n"
+  fi
+done
+
+# while read with parameter expansion
+printf "/path/to/file.txt\n/usr/bin/ls\n" | while read p; do
+  echo "${p##*/}"
+done
+
+# while read with counter
+i=0
+seq 1 3 | while read n; do
+  i=$((i + 1))
+  echo "$i: $n"
+done
+
+# Standalone while still works
+x=0
+while [ $x -lt 3 ]; do
+  echo "x=$x"
+  x=$((x + 1))
+done
+
+# Standalone for still works
+for v in a b c; do
+  echo "v=$v"
+done
+
+# Standalone if still works
+if [ 1 -eq 1 ]; then
+  echo "yes"
+fi

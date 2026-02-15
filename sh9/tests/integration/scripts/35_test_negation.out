@@ -1,0 +1,11 @@
+not-empty
+is-empty
+not-nonempty
+is-nonempty
+a-neq-b
+x-eq-x
+1-neq-2
+5-not-lt-3
+3-not-gt-10
+1-eq-1
+if-negation-works

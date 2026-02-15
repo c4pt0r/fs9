@@ -1,0 +1,55 @@
+# Test 36: Parameter expansion
+# Tests: ${var:-default}, ${var:=val}, ${var:+alt}, ${#var}, ${var#pat}, ${var%pat}
+
+# ${var:-default} — use default if unset or empty
+echo "${unset_abc:-fallback}"
+x=hello
+echo "${x:-fallback}"
+x=""
+echo "${x:-fallback}"
+
+# ${var-default} — use default only if unset (not empty)
+echo "${unset_def-default_val}"
+
+# ${var:=default} — assign default if unset or empty
+echo "${assigned_var:=my_default}"
+echo "$assigned_var"
+
+# ${var:+alt} — use alt if set and non-empty
+y=present
+echo "${y:+REPLACED}"
+echo "${unset_ghi:+REPLACED}"
+y=""
+echo "${y:+REPLACED}"
+
+# ${#var} — string length
+msg="hello"
+echo "${#msg}"
+empty=""
+echo "${#empty}"
+long="abcdefghij"
+echo "${#long}"
+
+# ${var#pattern} — remove shortest prefix
+path="/usr/local/bin/sh9"
+echo "${path#*/}"
+
+# ${var##pattern} — remove longest prefix
+echo "${path##*/}"
+
+# ${var%pattern} — remove shortest suffix
+file="archive.tar.gz"
+echo "${file%.*}"
+
+# ${var%%pattern} — remove longest suffix
+echo "${file%%.*}"
+
+# Practical: extract filename parts
+fullpath="/home/user/docs/report.pdf"
+echo "dir: ${fullpath%/*}"
+echo "file: ${fullpath##*/}"
+ext="${fullpath##*.}"
+echo "ext: $ext"
+
+# Nested expansion in default
+echo "${unset_jkl:-${unset_mno:-nested_default}}"

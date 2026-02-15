@@ -1,0 +1,20 @@
+fallback
+hello
+fallback
+default_val
+my_default
+my_default
+REPLACED
+
+
+5
+0
+10
+usr/local/bin/sh9
+sh9
+archive.tar
+archive
+dir: /home/user/docs
+file: report.pdf
+ext: pdf
+nested_default
