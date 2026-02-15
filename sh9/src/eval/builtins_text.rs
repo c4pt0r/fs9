@@ -4,6 +4,16 @@ use fs9_client::OpenFlags;
 use super::{ExecContext, STREAM_CHUNK_SIZE};
 use super::utils::interpret_escape_sequences;
 
+/// Parse the leading numeric portion of a string for `sort -n`.
+fn parse_leading_number(s: &str) -> f64 {
+    let trimmed = s.trim_start();
+    let num_str: String = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+')
+        .collect();
+    num_str.parse().unwrap_or(0.0)
+}
+
 impl Shell {
     pub(crate) async fn try_execute_text_builtin(
         &mut self,
@@ -576,10 +586,25 @@ impl Shell {
     }
 
     async fn cmd_sort(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
-        let reverse = args.iter().any(|a| a == "-r");
+        let mut reverse = false;
+        let mut numeric = false;
+        let mut unique = false;
+        let mut file_path = None;
+        for arg in args {
+            match arg.as_str() {
+                "-r" => reverse = true,
+                "-n" => numeric = true,
+                "-u" => unique = true,
+                "-rn" | "-nr" => { reverse = true; numeric = true; }
+                "-ru" | "-ur" => { reverse = true; unique = true; }
+                "-nu" | "-un" => { numeric = true; unique = true; }
+                s if !s.starts_with('-') => file_path = Some(s),
+                _ => {}
+            }
+        }
         let input = if let Some(data) = ctx.stdin.take() {
             String::from_utf8_lossy(&data).to_string()
-        } else if let Some(path) = args.iter().find(|a| !a.starts_with('-')) {
+        } else if let Some(path) = file_path {
             let full_path = self.resolve_path(path);
             if let Some(client) = &self.client {
                 match client.read_file(&full_path).await {
@@ -596,11 +621,22 @@ impl Shell {
         } else {
             String::new()
         };
-        
+
         let mut lines: Vec<&str> = input.lines().collect();
-        lines.sort();
+        if numeric {
+            lines.sort_by(|a, b| {
+                let na = parse_leading_number(a);
+                let nb = parse_leading_number(b);
+                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        } else {
+            lines.sort();
+        }
         if reverse {
             lines.reverse();
+        }
+        if unique {
+            lines.dedup();
         }
         for line in lines {
             ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
@@ -609,9 +645,22 @@ impl Shell {
     }
 
     async fn cmd_uniq(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+        let mut count = false;
+        let mut only_dups = false;
+        let mut only_unique = false;
+        let mut file_path = None;
+        for arg in args {
+            match arg.as_str() {
+                "-c" => count = true,
+                "-d" => only_dups = true,
+                "-u" => only_unique = true,
+                s if !s.starts_with('-') => file_path = Some(s),
+                _ => {}
+            }
+        }
         let input = if let Some(data) = ctx.stdin.take() {
             String::from_utf8_lossy(&data).to_string()
-        } else if let Some(path) = args.first() {
+        } else if let Some(path) = file_path {
             let full_path = self.resolve_path(path);
             if let Some(client) = &self.client {
                 match client.read_file(&full_path).await {
@@ -628,12 +677,26 @@ impl Shell {
         } else {
             String::new()
         };
-        
-        let mut prev: Option<&str> = None;
+
+        // Group consecutive equal lines
+        let mut groups: Vec<(usize, &str)> = Vec::new();
         for line in input.lines() {
-            if prev != Some(line) {
+            if let Some(last) = groups.last_mut() {
+                if last.1 == line {
+                    last.0 += 1;
+                    continue;
+                }
+            }
+            groups.push((1, line));
+        }
+
+        for (cnt, line) in &groups {
+            if only_dups && *cnt < 2 { continue; }
+            if only_unique && *cnt > 1 { continue; }
+            if count {
+                ctx.stdout.writeln(&format!("{:>7} {}", cnt, line)).map_err(Sh9Error::Io)?;
+            } else {
                 ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
-                prev = Some(line);
             }
         }
         Ok(0)
@@ -955,16 +1018,27 @@ impl Shell {
 
     fn cmd_read(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let var_name = args.first().map(|s| s.as_str()).unwrap_or("REPLY");
-        if let Some(data) = ctx.stdin.take() {
-            let value = String::from_utf8_lossy(&data).trim_end_matches('\n').to_string();
-            if ctx.locals.contains_key(var_name) {
-                ctx.locals.insert(var_name.to_string(), value);
-            } else {
-                self.set_var(var_name, &value);
-            }
-            Ok(0)
+
+        // Read one line from pipeline stdin or process stdin
+        let line = if let Some(data) = ctx.stdin.take() {
+            let text = String::from_utf8_lossy(&data);
+            // Take only the first line
+            text.lines().next().unwrap_or("").to_string()
         } else {
-            Ok(1)
+            // Fall back to process stdin
+            let mut buf = String::new();
+            match std::io::stdin().read_line(&mut buf) {
+                Ok(0) => return Ok(1), // EOF
+                Ok(_) => buf.trim_end_matches('\n').trim_end_matches('\r').to_string(),
+                Err(_) => return Ok(1),
+            }
+        };
+
+        if ctx.locals.contains_key(var_name) {
+            ctx.locals.insert(var_name.to_string(), line);
+        } else {
+            self.set_var(var_name, &line);
         }
+        Ok(0)
     }
 }

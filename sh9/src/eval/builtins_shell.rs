@@ -62,9 +62,18 @@ impl Shell {
     }
 
     fn cmd_export(&mut self, args: &[String]) -> Sh9Result<i32> {
-        for arg in args {
-            if let Some((name, value)) = arg.split_once('=') {
+        let mut i = 0;
+        while i < args.len() {
+            // Handle "NAME = VALUE" (3 tokens from lexer splitting FOO=bar)
+            if i + 2 < args.len() && args[i + 1] == "=" {
+                self.set_var(&args[i], &args[i + 2]);
+                i += 3;
+            } else if let Some((name, value)) = args[i].split_once('=') {
                 self.set_var(name, value);
+                i += 1;
+            } else {
+                // export without value — no-op
+                i += 1;
             }
         }
         Ok(0)

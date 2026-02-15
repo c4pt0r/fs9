@@ -140,7 +140,16 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .ignore_then(
             just('\\')
                 .then(any())
-                .map(|(b, c): (char, char)| format!("{}{}", b, c))
+                .map(|(_b, c): (char, char)| match c {
+                    // POSIX: these escapes are interpreted inside double quotes
+                    '"' => "\"".to_string(),
+                    '\\' => "\\".to_string(),
+                    '$' => "$".to_string(),
+                    '`' => "`".to_string(),
+                    '\n' => String::new(), // line continuation
+                    // All other \X sequences are literal (backslash preserved)
+                    _ => format!("\\{}", c),
+                })
                 .or(filter(|c: &char| *c != '"' && *c != '\\').map(|c: char| c.to_string()))
                 .repeated(),
         )
@@ -227,11 +236,23 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
             )
     });
 
-    let bare_word = word_char
+    // Backslash-escape outside quotes: \X → literal X (POSIX)
+    // \<newline> → line continuation (empty)
+    let escaped_char = just('\\')
+        .ignore_then(any())
+        .map(|c: char| if c == '\n' { String::new() } else { c.to_string() });
+
+    let bare_word = escaped_char
+        .or(word_char.map(|c: char| c.to_string()))
         .repeated()
         .at_least(1)
-        .collect::<String>()
-        .map(Token::Word);
+        .map(|parts| {
+            let s: String = parts.concat();
+            if s.is_empty() {
+                return Token::Word(String::new());
+            }
+            Token::Word(s)
+        });
 
     // Token: quoted strings, keywords (must check before bare_word), operators, or bare words
     let token = choice((

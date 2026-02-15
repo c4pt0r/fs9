@@ -177,6 +177,28 @@ impl Shell {
                 Ok(0)
             }
             
+            Statement::CommandList { first, rest } => {
+                let mut exit_code = self.execute_pipeline(first, ctx).await?;
+                self.last_exit_code = exit_code;
+                for (op, pipeline) in rest {
+                    match op {
+                        ListOp::And => {
+                            if exit_code == 0 {
+                                exit_code = self.execute_pipeline(pipeline, ctx).await?;
+                                self.last_exit_code = exit_code;
+                            }
+                        }
+                        ListOp::Or => {
+                            if exit_code != 0 {
+                                exit_code = self.execute_pipeline(pipeline, ctx).await?;
+                                self.last_exit_code = exit_code;
+                            }
+                        }
+                    }
+                }
+                Ok(exit_code)
+            }
+
             Statement::Pipeline(pipeline) => {
                 if pipeline.background {
                     // Format command string with redirections
@@ -275,32 +297,35 @@ impl Shell {
         if pipeline.commands.is_empty() {
             return Ok(0);
         }
-        
+
         if pipeline.commands.len() == 1 {
             return self.execute_command(&pipeline.commands[0], ctx).await;
         }
-        
+
+        // Save the original stdout so the last command writes to the correct destination
+        // (e.g. Buffer when inside command substitution, Stdout otherwise)
+        let mut original_stdout = Some(std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new())));
         let mut input: Option<Vec<u8>> = ctx.stdin.take();
-        
+
         for (i, cmd) in pipeline.commands.iter().enumerate() {
             let is_last = i == pipeline.commands.len() - 1;
-            
+
             ctx.stdin = input.take();
-            
+
             if is_last {
-                ctx.stdout = Output::Stdout;
+                ctx.stdout = original_stdout.take().unwrap_or(Output::Stdout);
                 return self.execute_command(cmd, ctx).await;
             } else {
                 ctx.stdout = Output::Buffer(Vec::new());
             }
-            
+
             self.execute_command(cmd, ctx).await?;
-            
+
             if let Output::Buffer(buf) = std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new())) {
                 input = Some(buf);
             }
         }
-        
+
         Ok(0)
     }
     

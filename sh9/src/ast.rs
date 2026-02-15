@@ -18,6 +18,11 @@ pub enum Statement {
     Assignment(Assignment),
     /// Pipeline of commands: cmd1 | cmd2 | ...
     Pipeline(Pipeline),
+    /// Command list: pipeline1 && pipeline2 || pipeline3 ...
+    CommandList {
+        first: Pipeline,
+        rest: Vec<(ListOp, Pipeline)>,
+    },
     /// If statement
     If(IfStatement),
     /// For loop
@@ -32,6 +37,12 @@ pub enum Statement {
     Continue,
     /// Return statement with optional value
     Return(Option<Word>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ListOp {
+    And, // &&
+    Or,  // ||
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

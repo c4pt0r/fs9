@@ -58,8 +58,23 @@ fn statement() -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
         // Function definition
         let func_def = function_def(stmt.clone());
 
-        // Pipeline (command | command | ...)
-        let pipeline_stmt = pipeline().map(Statement::Pipeline);
+        // Command list: pipeline { && | || pipeline }*
+        let command_list_stmt = pipeline()
+            .then(
+                choice((
+                    just(Token::AndAnd).to(ListOp::And),
+                    just(Token::OrOr).to(ListOp::Or),
+                ))
+                .then(pipeline())
+                .repeated(),
+            )
+            .map(|(first, rest)| {
+                if rest.is_empty() {
+                    Statement::Pipeline(first)
+                } else {
+                    Statement::CommandList { first, rest }
+                }
+            });
 
         choice((
             empty,
@@ -71,7 +86,7 @@ fn statement() -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
             while_loop,
             func_def,
             assignment,
-            pipeline_stmt,
+            command_list_stmt,
         ))
         .padded_by(sep)
     })
@@ -337,6 +352,53 @@ fn word() -> impl Parser<Token, Word, Error = Simple<Token>> + Clone {
     ))
 }
 
+/// Convert a token to a string that can be safely re-parsed by the lexer.
+/// Word tokens containing special characters are wrapped in double quotes.
+fn token_to_safe_string(tok: Token) -> String {
+    match tok {
+        Token::Word(s) => {
+            let needs_quoting = s.chars().any(|c| {
+                c.is_whitespace()
+                    || matches!(
+                        c,
+                        '|' | '&'
+                            | ';'
+                            | '<'
+                            | '>'
+                            | '('
+                            | ')'
+                            | '{'
+                            | '}'
+                            | '$'
+                            | '"'
+                            | '\''
+                            | '#'
+                            | '='
+                            | '\\'
+                            | '`'
+                    )
+            });
+            if needs_quoting {
+                let mut escaped = String::with_capacity(s.len() + 2);
+                escaped.push('"');
+                for c in s.chars() {
+                    if c == '\\' || c == '"' {
+                        escaped.push('\\');
+                    }
+                    escaped.push(c);
+                }
+                escaped.push('"');
+                escaped
+            } else {
+                s
+            }
+        }
+        Token::SingleQuoted(s) => format!("'{}'", s),
+        Token::Newline => ";".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn collect_until_double_paren() -> impl Parser<Token, String, Error = Simple<Token>> + Clone {
     recursive(|inner| {
         choice((
@@ -345,7 +407,7 @@ fn collect_until_double_paren() -> impl Parser<Token, String, Error = Simple<Tok
                 .then_ignore(just(Token::RightParen))
                 .map(|s| format!("({})", s)),
             filter(|t| !matches!(t, Token::RightParen | Token::LeftParen))
-                .map(|t: Token| t.to_string()),
+                .map(token_to_safe_string),
         ))
         .repeated()
         .map(|parts| {
@@ -400,7 +462,7 @@ fn collect_until_paren() -> impl Parser<Token, String, Error = Simple<Token>> + 
                         | Token::DollarDoubleParen
                 )
             })
-            .map(|t: Token| t.to_string()),
+            .map(token_to_safe_string),
         ))
         .repeated()
         .map(|parts| {
@@ -440,7 +502,7 @@ fn collect_until_backtick() -> impl Parser<Token, String, Error = Simple<Token>>
             let mut result = String::new();
             let mut prev_was_dollar = false;
             for tok in tokens {
-                let part = tok.to_string();
+                let part = token_to_safe_string(tok);
                 if prev_was_dollar
                     && (part
                         .chars()
