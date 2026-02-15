@@ -30,9 +30,9 @@ impl Shell {
             "echo" => self.cmd_echo(args, ctx),
             "printf" => self.cmd_printf(args, ctx),
             "cat" => self.cmd_cat(args, ctx).await,
-            "grep" => self.cmd_grep(args, ctx),
-            "wc" => self.cmd_wc(args, ctx),
-            "head" => self.cmd_head(args, ctx),
+            "grep" => self.cmd_grep(args, ctx).await,
+            "wc" => self.cmd_wc(args, ctx).await,
+            "head" => self.cmd_head(args, ctx).await,
             "tail" => self.cmd_tail(args, ctx).await,
             "sort" => self.cmd_sort(args, ctx).await,
             "uniq" => self.cmd_uniq(args, ctx).await,
@@ -207,7 +207,7 @@ impl Shell {
         Ok(0)
     }
 
-    fn cmd_grep(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+    async fn cmd_grep(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let mut ignore_case = false;
         let mut invert_match = false;
         let mut show_line_numbers = false;
@@ -216,47 +216,81 @@ impl Shell {
         let mut word_match = false;
         let mut quiet_mode = false;
         let mut use_regex = false;
-        let mut pattern = "";
-        
-        for arg in args {
-            match arg.as_str() {
-                "-i" => ignore_case = true,
-                "-v" => invert_match = true,
-                "-n" => show_line_numbers = true,
-                "-c" => count_only = true,
-                "-o" => only_matching = true,
-                "-w" => word_match = true,
-                "-q" => quiet_mode = true,
-                "-E" | "-e" => use_regex = true,
-                s if s.starts_with('-') && s.len() > 1 => {
-                    for c in s[1..].chars() {
-                        match c {
-                            'i' => ignore_case = true,
-                            'v' => invert_match = true,
-                            'n' => show_line_numbers = true,
-                            'c' => count_only = true,
-                            'o' => only_matching = true,
-                            'w' => word_match = true,
-                            'q' => quiet_mode = true,
-                            'E' | 'e' => use_regex = true,
-                            _ => {}
+        let mut pattern: Option<&str> = None;
+        let mut file_paths: Vec<&str> = Vec::new();
+
+        let mut i = 0;
+        while i < args.len() {
+            let arg = args[i].as_str();
+            if pattern.is_some() && !arg.starts_with('-') {
+                // After pattern is set, non-flag args are file paths
+                file_paths.push(arg);
+                i += 1;
+            } else {
+                match arg {
+                    "-i" => ignore_case = true,
+                    "-v" => invert_match = true,
+                    "-n" => show_line_numbers = true,
+                    "-c" => count_only = true,
+                    "-o" => only_matching = true,
+                    "-w" => word_match = true,
+                    "-q" => quiet_mode = true,
+                    "-E" | "-e" => use_regex = true,
+                    s if s.starts_with('-') && s.len() > 1 => {
+                        for c in s[1..].chars() {
+                            match c {
+                                'i' => ignore_case = true,
+                                'v' => invert_match = true,
+                                'n' => show_line_numbers = true,
+                                'c' => count_only = true,
+                                'o' => only_matching = true,
+                                'w' => word_match = true,
+                                'q' => quiet_mode = true,
+                                'E' | 'e' => use_regex = true,
+                                _ => {}
+                            }
                         }
                     }
+                    s if !s.starts_with('-') && pattern.is_none() => {
+                        pattern = Some(s);
+                    }
+                    _ => {}
                 }
-                s if !s.starts_with('-') => {
-                    pattern = s;
-                    break;
-                }
-                _ => {}
+                i += 1;
             }
         }
-        
-        let input = ctx.stdin.take().unwrap_or_default();
-        let input_str = String::from_utf8_lossy(&input);
+
+        let pattern = pattern.unwrap_or("");
+
+        // Get input: from stdin (pipe) or from file(s)
+        let input = if let Some(data) = ctx.stdin.take() {
+            String::from_utf8_lossy(&data).to_string()
+        } else if !file_paths.is_empty() {
+            let mut combined = String::new();
+            for path in &file_paths {
+                let full_path = self.resolve_path(path);
+                if let Some(client) = &self.client {
+                    match client.read_file(&full_path).await {
+                        Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
+                        Err(e) => {
+                            ctx.write_err(&format!("grep: {}: {}", path, e));
+                            return Ok(2);
+                        }
+                    }
+                } else {
+                    ctx.write_err("grep: not connected to FS9 server");
+                    return Ok(2);
+                }
+            }
+            combined
+        } else {
+            String::new()
+        };
+
         let mut match_count = 0;
         let mut found_any = false;
-        
-        for (line_num, line) in input_str.lines().enumerate() {
+
+        for (line_num, line) in input.lines().enumerate() {
             let line_to_check = if ignore_case {
                 line.to_lowercase()
             } else {
@@ -267,7 +301,7 @@ impl Shell {
             } else {
                 pattern.to_string()
             };
-            
+
             let matches = if use_regex && pattern_to_check.contains('|') {
                 pattern_to_check.split('|').any(|p| {
                     if word_match {
@@ -283,17 +317,17 @@ impl Shell {
             } else {
                 line_to_check.contains(&pattern_to_check)
             };
-            
+
             let final_match = if invert_match { !matches } else { matches };
-            
+
             if final_match {
                 found_any = true;
                 match_count += 1;
-                
+
                 if quiet_mode {
                     return Ok(0);
                 }
-                
+
                 if !count_only {
                     let output = if only_matching && !invert_match {
                         if use_regex && pattern.contains('|') {
@@ -308,7 +342,7 @@ impl Shell {
                     } else {
                         line.to_string()
                     };
-                    
+
                     if show_line_numbers {
                         ctx.stdout.writeln(&format!("{}:{}", line_num + 1, output)).map_err(Sh9Error::Io)?;
                     } else {
@@ -317,42 +351,69 @@ impl Shell {
                 }
             }
         }
-        
+
         if count_only && !quiet_mode {
             ctx.stdout.writeln(&match_count.to_string()).map_err(Sh9Error::Io)?;
         }
-        
+
         Ok(if found_any { 0 } else { 1 })
     }
 
-    fn cmd_wc(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
-        let input = ctx.stdin.take().unwrap_or_default();
-        let input_str = String::from_utf8_lossy(&input);
-        
+    async fn cmd_wc(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let count_lines = args.iter().any(|a| a == "-l");
         let count_words = args.iter().any(|a| a == "-w");
         let count_chars = args.iter().any(|a| a == "-c");
-        
+        let file_paths: Vec<&str> = args.iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .collect();
+
+        // Get input: from stdin (pipe) or from file(s)
+        let input = if let Some(data) = ctx.stdin.take() {
+            String::from_utf8_lossy(&data).to_string()
+        } else if !file_paths.is_empty() {
+            let mut combined = String::new();
+            for path in &file_paths {
+                let full_path = self.resolve_path(path);
+                if let Some(client) = &self.client {
+                    match client.read_file(&full_path).await {
+                        Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
+                        Err(e) => {
+                            ctx.write_err(&format!("wc: {}: {}", path, e));
+                            return Ok(1);
+                        }
+                    }
+                } else {
+                    ctx.write_err("wc: not connected to FS9 server");
+                    return Ok(1);
+                }
+            }
+            combined
+        } else {
+            String::new()
+        };
+
         if count_lines {
-            let lines = input_str.lines().count();
+            let lines = input.lines().count();
             ctx.stdout.writeln(&lines.to_string()).map_err(Sh9Error::Io)?;
         } else if count_words {
-            let words = input_str.split_whitespace().count();
+            let words = input.split_whitespace().count();
             ctx.stdout.writeln(&words.to_string()).map_err(Sh9Error::Io)?;
         } else if count_chars {
-            let chars = input_str.len();
+            let chars = input.len();
             ctx.stdout.writeln(&chars.to_string()).map_err(Sh9Error::Io)?;
         } else {
-            let lines = input_str.lines().count();
-            let words = input_str.split_whitespace().count();
-            let chars = input_str.len();
+            let lines = input.lines().count();
+            let words = input.split_whitespace().count();
+            let chars = input.len();
             ctx.stdout.writeln(&format!("{} {} {}", lines, words, chars)).map_err(Sh9Error::Io)?;
         }
         Ok(0)
     }
 
-    fn cmd_head(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+    async fn cmd_head(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let mut n: usize = 10;
+        let mut file_paths: Vec<&str> = Vec::new();
         let mut i = 0;
         while i < args.len() {
             let arg = &args[i];
@@ -365,15 +426,40 @@ impl Shell {
             } else if arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) {
                 n = arg[1..].parse().unwrap_or(10);
                 i += 1;
+            } else if !arg.starts_with('-') {
+                file_paths.push(arg);
+                i += 1;
             } else {
                 i += 1;
             }
         }
-        
-        let input = ctx.stdin.take().unwrap_or_default();
-        let input_str = String::from_utf8_lossy(&input);
-        
-        for (idx, line) in input_str.lines().enumerate() {
+
+        // Get input: from stdin (pipe) or from file(s)
+        let input = if let Some(data) = ctx.stdin.take() {
+            String::from_utf8_lossy(&data).to_string()
+        } else if !file_paths.is_empty() {
+            let mut combined = String::new();
+            for path in &file_paths {
+                let full_path = self.resolve_path(path);
+                if let Some(client) = &self.client {
+                    match client.read_file(&full_path).await {
+                        Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
+                        Err(e) => {
+                            ctx.write_err(&format!("head: {}: {}", path, e));
+                            return Ok(1);
+                        }
+                    }
+                } else {
+                    ctx.write_err("head: not connected to FS9 server");
+                    return Ok(1);
+                }
+            }
+            combined
+        } else {
+            String::new()
+        };
+
+        for (idx, line) in input.lines().enumerate() {
             if idx >= n {
                 break;
             }
@@ -654,37 +740,53 @@ impl Shell {
         
         let mut i = 0;
         while i < args.len() {
-            match args[i].as_str() {
-                "-d" => {
-                    if i + 1 < args.len() {
-                        delimiter = args[i + 1].chars().next().unwrap_or('\t');
-                        i += 2;
-                    } else { i += 1; }
+            let arg = args[i].as_str();
+            if arg == "-d" {
+                if i + 1 < args.len() {
+                    delimiter = args[i + 1].chars().next().unwrap_or('\t');
+                    i += 2;
+                } else { i += 1; }
+            } else if arg.starts_with("-d") && arg.len() > 2 {
+                // Handle -d<char> (e.g. -d: or -d,)
+                delimiter = arg[2..].chars().next().unwrap_or('\t');
+                i += 1;
+            } else if arg == "-f" {
+                if i + 1 < args.len() {
+                    fields = Some(args[i + 1].split(',')
+                        .filter_map(|s| s.parse::<usize>().ok())
+                        .collect());
+                    i += 2;
+                } else { i += 1; }
+            } else if arg.starts_with("-f") && arg.len() > 2 {
+                // Handle -f<list> (e.g. -f2 or -f1,3)
+                fields = Some(arg[2..].split(',')
+                    .filter_map(|s| s.parse::<usize>().ok())
+                    .collect());
+                i += 1;
+            } else if arg == "-c" {
+                if i + 1 < args.len() {
+                    let range = &args[i + 1];
+                    if let Some((start, end)) = range.split_once('-') {
+                        let s = start.parse::<usize>().unwrap_or(1);
+                        let e = if end.is_empty() { None } else { end.parse::<usize>().ok() };
+                        chars = Some((s, e));
+                    }
+                    i += 2;
+                } else { i += 1; }
+            } else if arg.starts_with("-c") && arg.len() > 2 {
+                // Handle -c<range> (e.g. -c1-5)
+                let range = &arg[2..];
+                if let Some((start, end)) = range.split_once('-') {
+                    let s = start.parse::<usize>().unwrap_or(1);
+                    let e = if end.is_empty() { None } else { end.parse::<usize>().ok() };
+                    chars = Some((s, e));
                 }
-                "-f" => {
-                    if i + 1 < args.len() {
-                        fields = Some(args[i + 1].split(',')
-                            .filter_map(|s| s.parse::<usize>().ok())
-                            .collect());
-                        i += 2;
-                    } else { i += 1; }
-                }
-                "-c" => {
-                    if i + 1 < args.len() {
-                        let range = &args[i + 1];
-                        if let Some((start, end)) = range.split_once('-') {
-                            let s = start.parse::<usize>().unwrap_or(1);
-                            let e = if end.is_empty() { None } else { end.parse::<usize>().ok() };
-                            chars = Some((s, e));
-                        }
-                        i += 2;
-                    } else { i += 1; }
-                }
-                s if !s.starts_with('-') => {
-                    file_path = Some(s);
-                    i += 1;
-                }
-                _ => { i += 1; }
+                i += 1;
+            } else if !arg.starts_with('-') {
+                file_path = Some(arg);
+                i += 1;
+            } else {
+                i += 1;
             }
         }
         
