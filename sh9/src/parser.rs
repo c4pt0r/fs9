@@ -292,6 +292,18 @@ fn word() -> impl Parser<Token, Word, Error = Simple<Token>> + Clone {
         Token::SingleQuoted(s) => Ok(Word {
             parts: vec![WordPart::SingleQuoted(s)],
         }),
+        Token::CompoundWord(segments) => Ok(Word {
+            parts: segments
+                .into_iter()
+                .map(|(is_sq, s)| {
+                    if is_sq {
+                        WordPart::SingleQuoted(s)
+                    } else {
+                        WordPart::Literal(s)
+                    }
+                })
+                .collect(),
+        }),
         Token::Number(n) => Ok(Word {
             parts: vec![WordPart::Literal(n)],
         }),
@@ -394,6 +406,54 @@ fn token_to_safe_string(tok: Token) -> String {
             }
         }
         Token::SingleQuoted(s) => format!("'{}'", s),
+        Token::CompoundWord(segments) => {
+            segments
+                .into_iter()
+                .map(|(is_sq, s)| {
+                    if is_sq {
+                        format!("'{}'", s)
+                    } else {
+                        // Same quoting logic as Word
+                        let needs_quoting = s.chars().any(|c| {
+                            c.is_whitespace()
+                                || matches!(
+                                    c,
+                                    '|' | '&'
+                                        | ';'
+                                        | '<'
+                                        | '>'
+                                        | '('
+                                        | ')'
+                                        | '{'
+                                        | '}'
+                                        | '$'
+                                        | '"'
+                                        | '\''
+                                        | '#'
+                                        | '='
+                                        | '\\'
+                                        | '`'
+                                )
+                        });
+                        if needs_quoting {
+                            let mut escaped = String::with_capacity(s.len() + 2);
+                            escaped.push('"');
+                            for c in s.chars() {
+                                if c == '\\' || c == '"' {
+                                    escaped.push('\\');
+                                }
+                                escaped.push(c);
+                            }
+                            escaped.push('"');
+                            escaped
+                        } else {
+                            s
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        }
         Token::Newline => ";".to_string(),
         other => other.to_string(),
     }

@@ -41,6 +41,9 @@ serde_json = { workspace = true }
 # Error handling
 thiserror = { workspace = true }
 
+# Regex for grep
+regex = "1"
+
 # Utilities
 bytes = { workspace = true }
 

@@ -1,8 +1,28 @@
 use crate::error::{Sh9Error, Sh9Result};
 use crate::shell::Shell;
 use fs9_client::OpenFlags;
+use regex::Regex;
 use super::{ExecContext, STREAM_CHUNK_SIZE};
 use super::utils::interpret_escape_sequences;
+
+/// Parse a field/column spec like "2", "1,3", "2-4", "1-3,5" into a sorted list of 1-based indices.
+fn parse_field_spec(spec: &str) -> Vec<usize> {
+    let mut result = Vec::new();
+    for part in spec.split(',') {
+        if let Some((start_s, end_s)) = part.split_once('-') {
+            let start = start_s.parse::<usize>().unwrap_or(1);
+            let end = end_s.parse::<usize>().unwrap_or(start);
+            for i in start..=end {
+                result.push(i);
+            }
+        } else if let Ok(n) = part.parse::<usize>() {
+            result.push(n);
+        }
+    }
+    result.sort();
+    result.dedup();
+    result
+}
 
 /// Parse the leading numeric portion of a string for `sort -n`.
 fn parse_leading_number(s: &str) -> f64 {
@@ -95,50 +115,60 @@ impl Shell {
         }
         let format_str = &args[0];
         let format_args = &args[1..];
-        let mut result = String::new();
-        let mut chars = format_str.chars().peekable();
         let mut arg_idx = 0;
 
-        while let Some(c) = chars.next() {
-            if c == '%' {
-                match chars.peek() {
-                    Some('s') => {
-                        chars.next();
-                        if arg_idx < format_args.len() {
-                            result.push_str(&format_args[arg_idx]);
-                            arg_idx += 1;
+        // Loop: repeat format string until all args consumed (POSIX behavior)
+        loop {
+            let mut result = String::new();
+            let mut chars = format_str.chars().peekable();
+            let start_arg_idx = arg_idx;
+
+            while let Some(c) = chars.next() {
+                if c == '%' {
+                    match chars.peek() {
+                        Some('s') => {
+                            chars.next();
+                            if arg_idx < format_args.len() {
+                                result.push_str(&format_args[arg_idx]);
+                                arg_idx += 1;
+                            }
                         }
-                    }
-                    Some('d') => {
-                        chars.next();
-                        if arg_idx < format_args.len() {
-                            let n: i64 = format_args[arg_idx].parse().unwrap_or(0);
-                            result.push_str(&n.to_string());
-                            arg_idx += 1;
+                        Some('d') => {
+                            chars.next();
+                            if arg_idx < format_args.len() {
+                                let n: i64 = format_args[arg_idx].parse().unwrap_or(0);
+                                result.push_str(&n.to_string());
+                                arg_idx += 1;
+                            }
                         }
+                        Some('%') => {
+                            chars.next();
+                            result.push('%');
+                        }
+                        _ => result.push('%'),
                     }
-                    Some('%') => {
-                        chars.next();
-                        result.push('%');
+                } else if c == '\\' {
+                    match chars.next() {
+                        Some('n') => result.push('\n'),
+                        Some('t') => result.push('\t'),
+                        Some('\\') => result.push('\\'),
+                        Some(other) => {
+                            result.push('\\');
+                            result.push(other);
+                        }
+                        None => result.push('\\'),
                     }
-                    _ => result.push('%'),
+                } else {
+                    result.push(c);
                 }
-            } else if c == '\\' {
-                match chars.next() {
-                    Some('n') => result.push('\n'),
-                    Some('t') => result.push('\t'),
-                    Some('\\') => result.push('\\'),
-                    Some(other) => {
-                        result.push('\\');
-                        result.push(other);
-                    }
-                    None => result.push('\\'),
-                }
-            } else {
-                result.push(c);
+            }
+            ctx.stdout.write(result.as_bytes()).map_err(Sh9Error::Io)?;
+
+            // Stop if no args consumed this iteration, or all args consumed
+            if arg_idx == start_arg_idx || arg_idx >= format_args.len() {
+                break;
             }
         }
-        ctx.stdout.write(result.as_bytes()).map_err(Sh9Error::Io)?;
         Ok(0)
     }
 
@@ -225,7 +255,6 @@ impl Shell {
         let mut only_matching = false;
         let mut word_match = false;
         let mut quiet_mode = false;
-        let mut use_regex = false;
         let mut pattern: Option<&str> = None;
         let mut file_paths: Vec<&str> = Vec::new();
 
@@ -245,7 +274,7 @@ impl Shell {
                     "-o" => only_matching = true,
                     "-w" => word_match = true,
                     "-q" => quiet_mode = true,
-                    "-E" | "-e" => use_regex = true,
+                    "-E" | "-e" => {} // regex is always on
                     s if s.starts_with('-') && s.len() > 1 => {
                         for c in s[1..].chars() {
                             match c {
@@ -256,7 +285,7 @@ impl Shell {
                                 'o' => only_matching = true,
                                 'w' => word_match = true,
                                 'q' => quiet_mode = true,
-                                'E' | 'e' => use_regex = true,
+                                'E' | 'e' => {} // regex is always on
                                 _ => {}
                             }
                         }
@@ -297,37 +326,35 @@ impl Shell {
             String::new()
         };
 
+        // Build regex pattern
+        // grep always uses regex. -E enables ERE (extended regex).
+        // Without -E, BRE treats +, ?, |, (, ) as literal (must be escaped for special meaning).
+        // With -E (ERE), these are regex metacharacters.
+        // For simplicity, we always use ERE-style (Rust regex crate) and just pass through.
+        // The -E flag is effectively always on since our regex crate uses ERE by default.
+        let regex_pattern = if word_match {
+            format!(r"\b(?:{})\b", pattern)
+        } else {
+            pattern.to_string()
+        };
+
+        let re = match if ignore_case {
+            regex::RegexBuilder::new(&regex_pattern).case_insensitive(true).build()
+        } else {
+            Regex::new(&regex_pattern)
+        } {
+            Ok(re) => re,
+            Err(e) => {
+                ctx.write_err(&format!("grep: invalid pattern: {}", e));
+                return Ok(2);
+            }
+        };
+
         let mut match_count = 0;
         let mut found_any = false;
 
         for (line_num, line) in input.lines().enumerate() {
-            let line_to_check = if ignore_case {
-                line.to_lowercase()
-            } else {
-                line.to_string()
-            };
-            let pattern_to_check = if ignore_case {
-                pattern.to_lowercase()
-            } else {
-                pattern.to_string()
-            };
-
-            let matches = if use_regex && pattern_to_check.contains('|') {
-                pattern_to_check.split('|').any(|p| {
-                    if word_match {
-                        line_to_check.split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .any(|word| word == p)
-                    } else {
-                        line_to_check.contains(p)
-                    }
-                })
-            } else if word_match {
-                line_to_check.split(|c: char| !c.is_alphanumeric() && c != '_')
-                    .any(|word| word == pattern_to_check)
-            } else {
-                line_to_check.contains(&pattern_to_check)
-            };
-
+            let matches = re.is_match(line);
             let final_match = if invert_match { !matches } else { matches };
 
             if final_match {
@@ -339,24 +366,20 @@ impl Shell {
                 }
 
                 if !count_only {
-                    let output = if only_matching && !invert_match {
-                        if use_regex && pattern.contains('|') {
-                            let pat = if ignore_case { pattern.to_lowercase() } else { pattern.to_string() };
-                            pat.split('|')
-                                .find(|p| line_to_check.contains(*p))
-                                .unwrap_or("")
-                                .to_string()
-                        } else {
-                            pattern.to_string()
+                    if only_matching && !invert_match {
+                        // -o: print each match on its own line
+                        for m in re.find_iter(line) {
+                            let output = m.as_str();
+                            if show_line_numbers {
+                                ctx.stdout.writeln(&format!("{}:{}", line_num + 1, output)).map_err(Sh9Error::Io)?;
+                            } else {
+                                ctx.stdout.writeln(output).map_err(Sh9Error::Io)?;
+                            }
                         }
+                    } else if show_line_numbers {
+                        ctx.stdout.writeln(&format!("{}:{}", line_num + 1, line)).map_err(Sh9Error::Io)?;
                     } else {
-                        line.to_string()
-                    };
-
-                    if show_line_numbers {
-                        ctx.stdout.writeln(&format!("{}:{}", line_num + 1, output)).map_err(Sh9Error::Io)?;
-                    } else {
-                        ctx.stdout.writeln(&output).map_err(Sh9Error::Io)?;
+                        ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
                     }
                 }
             }
@@ -815,16 +838,12 @@ impl Shell {
                 i += 1;
             } else if arg == "-f" {
                 if i + 1 < args.len() {
-                    fields = Some(args[i + 1].split(',')
-                        .filter_map(|s| s.parse::<usize>().ok())
-                        .collect());
+                    fields = Some(parse_field_spec(&args[i + 1]));
                     i += 2;
                 } else { i += 1; }
             } else if arg.starts_with("-f") && arg.len() > 2 {
-                // Handle -f<list> (e.g. -f2 or -f1,3)
-                fields = Some(arg[2..].split(',')
-                    .filter_map(|s| s.parse::<usize>().ok())
-                    .collect());
+                // Handle -f<list> (e.g. -f2, -f1,3, -f2-4)
+                fields = Some(parse_field_spec(&arg[2..]));
                 i += 1;
             } else if arg == "-c" {
                 if i + 1 < args.len() {
@@ -982,9 +1001,10 @@ impl Shell {
         }
         let d = remaining_days + 1;
         
-        let format = args.first().map(|s| s.as_str());
-        let output = if let Some(fmt) = format {
-            fmt.trim_matches('+')
+        // Join all args — handles cases like date + '%Y-%m-%d' (split by lexer)
+        let format_str = if !args.is_empty() { Some(args.join("")) } else { None };
+        let output = if let Some(fmt) = format_str.as_deref() {
+            fmt.trim_start_matches('+')
                 .replace("%Y", &format!("{:04}", y))
                 .replace("%m", &format!("{:02}", m + 1))
                 .replace("%d", &format!("{:02}", d))
@@ -999,19 +1019,38 @@ impl Shell {
     }
 
     fn cmd_seq(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
-        let (start, end) = match args.len() {
-            1 => (1i64, args[0].parse::<i64>().unwrap_or(1)),
+        let (start, step, end) = match args.len() {
+            1 => (1i64, 1i64, args[0].parse::<i64>().unwrap_or(1)),
             2 => (
                 args[0].parse::<i64>().unwrap_or(1),
+                1i64,
                 args[1].parse::<i64>().unwrap_or(1),
             ),
+            3 => (
+                args[0].parse::<i64>().unwrap_or(1),
+                args[1].parse::<i64>().unwrap_or(1),
+                args[2].parse::<i64>().unwrap_or(1),
+            ),
             _ => {
-                ctx.write_err("seq: requires 1 or 2 arguments");
+                ctx.write_err("seq: requires 1, 2, or 3 arguments");
                 return Ok(1);
             }
         };
-        for i in start..=end {
-            ctx.stdout.writeln(&i.to_string()).map_err(Sh9Error::Io)?;
+        if step == 0 {
+            ctx.write_err("seq: zero step");
+            return Ok(1);
+        }
+        let mut i = start;
+        if step > 0 {
+            while i <= end {
+                ctx.stdout.writeln(&i.to_string()).map_err(Sh9Error::Io)?;
+                i += step;
+            }
+        } else {
+            while i >= end {
+                ctx.stdout.writeln(&i.to_string()).map_err(Sh9Error::Io)?;
+                i += step;
+            }
         }
         Ok(0)
     }

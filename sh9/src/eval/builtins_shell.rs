@@ -49,7 +49,7 @@ impl Shell {
             "http" => self.execute_http(args, ctx).await,
             "upload" => self.cmd_upload(args, ctx).await,
             "download" => self.cmd_download(args, ctx).await,
-            "[" | "test" => self.execute_test(args, ctx),
+            "[" | "test" => self.execute_test(args, ctx).await,
             _ => unreachable!(),
         }
     }

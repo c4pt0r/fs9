@@ -66,6 +66,10 @@ pub enum Token {
     DollarDoubleParen, // $((
     DollarBrace,       // ${
     Backtick,          // `
+
+    // Compound word: adjacent bare/quoted segments merged
+    // Vec<(is_single_quoted, content)>
+    CompoundWord(Vec<(bool, String)>),
 }
 
 impl std::fmt::Display for Token {
@@ -118,6 +122,16 @@ impl std::fmt::Display for Token {
             Token::DollarDoubleParen => write!(f, "$(("),
             Token::DollarBrace => write!(f, "${{"),
             Token::Backtick => write!(f, "`"),
+            Token::CompoundWord(segments) => {
+                for (is_sq, s) in segments {
+                    if *is_sq {
+                        write!(f, "'{}'", s)?;
+                    } else {
+                        write!(f, "{}", s)?;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -130,13 +144,16 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
     // Whitespace (not including newlines)
     let ws = filter(|c: &char| *c == ' ' || *c == '\t').repeated();
 
-    let single_quoted = just('\'')
+    // Word segments: bare chars, single-quoted, double-quoted, escaped chars
+    // Adjacent segments (no whitespace between) form a compound word.
+    // (bool, String): true = single-quoted (no expansion), false = normal (expansion happens)
+    let sq_seg = just('\'')
         .ignore_then(filter(|c| *c != '\'').repeated())
         .then_ignore(just('\''))
         .collect::<String>()
-        .map(Token::SingleQuoted);
+        .map(|s| (true, s));
 
-    let double_quoted = just('"')
+    let dq_seg = just('"')
         .ignore_then(
             just('\\')
                 .then(any())
@@ -154,7 +171,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
                 .repeated(),
         )
         .then_ignore(just('"'))
-        .map(|parts: Vec<String>| Token::Word(parts.concat()));
+        .map(|parts: Vec<String>| (false, parts.concat()));
 
     // Keywords
     let keyword = choice((
@@ -242,26 +259,36 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         .ignore_then(any())
         .map(|c: char| if c == '\n' { String::new() } else { c.to_string() });
 
-    let bare_word = escaped_char
+    let bare_seg = escaped_char
         .or(word_char.map(|c: char| c.to_string()))
         .repeated()
         .at_least(1)
-        .map(|parts| {
-            let s: String = parts.concat();
-            if s.is_empty() {
-                return Token::Word(String::new());
+        .map(|parts| (false, parts.concat()));
+
+    // Compound word: one or more adjacent segments (bare, single-quoted, double-quoted)
+    // with no whitespace between them. Produces the appropriate token type.
+    let compound_word = choice((bare_seg, sq_seg, dq_seg))
+        .repeated()
+        .at_least(1)
+        .map(|segments: Vec<(bool, String)>| {
+            if segments.len() == 1 {
+                let (is_sq, s) = segments.into_iter().next().unwrap();
+                if is_sq {
+                    Token::SingleQuoted(s)
+                } else {
+                    Token::Word(s)
+                }
+            } else {
+                Token::CompoundWord(segments)
             }
-            Token::Word(s)
         });
 
-    // Token: quoted strings, keywords (must check before bare_word), operators, or bare words
+    // Token: operators, keywords, then compound words (bare+quoted merged)
     let token = choice((
-        single_quoted,
-        double_quoted,
         multi_op,
         single_op,
         keyword,
-        bare_word,
+        compound_word,
     ));
 
     // Skip comments and whitespace between tokens
