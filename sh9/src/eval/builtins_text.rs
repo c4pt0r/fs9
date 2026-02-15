@@ -1060,9 +1060,25 @@ impl Shell {
 
         // Read one line from pipeline stdin or process stdin
         let line = if let Some(data) = ctx.stdin.take() {
+            if data.is_empty() {
+                return Ok(1); // EOF — all piped data consumed
+            }
             let text = String::from_utf8_lossy(&data);
-            // Take only the first line
-            text.lines().next().unwrap_or("").to_string()
+            let mut parts = text.splitn(2, '\n');
+            let first = parts.next().unwrap_or("").to_string();
+            // Put remaining data back into stdin for next read
+            if let Some(rest) = parts.next() {
+                if !rest.is_empty() {
+                    ctx.stdin = Some(rest.as_bytes().to_vec());
+                } else {
+                    // No more data — set empty to signal EOF on next read
+                    ctx.stdin = Some(Vec::new());
+                }
+            } else {
+                // No newline found — this was the last line
+                ctx.stdin = Some(Vec::new());
+            }
+            first
         } else {
             // Fall back to process stdin
             let mut buf = String::new();

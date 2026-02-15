@@ -14,7 +14,18 @@ impl Shell {
             return Ok(1);
         }
 
-        let result = match args.as_slice() {
+        // Handle ! negation
+        let (negate, args) = if args.first() == Some(&"!") {
+            (true, &args[1..])
+        } else {
+            (false, args.as_slice())
+        };
+
+        if args.is_empty() {
+            return Ok(if negate { 0 } else { 1 });
+        }
+
+        let result = match args {
             [s1, "=", s2] | [s1, "==", s2] => s1 == s2,
             [s1, "!=", s2] => s1 != s2,
             [n1, "-eq", n2] => {
@@ -76,6 +87,7 @@ impl Shell {
             _ => false,
         };
 
+        let result = if negate { !result } else { result };
         Ok(if result { 0 } else { 1 })
     }
 

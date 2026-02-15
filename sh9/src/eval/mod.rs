@@ -201,38 +201,39 @@ impl Shell {
 
             Statement::Pipeline(pipeline) => {
                 if pipeline.background {
-                    // Format command string with redirections
-                    let cmd_str = pipeline.commands.iter()
-                        .map(|c| {
-                            let name = format!("{}", c.name);
-                            let args = c.args.iter().map(|a| format!("{}", a)).collect::<Vec<_>>().join(" ");
-                            let mut cmd = if args.is_empty() { name } else { format!("{} {}", name, args) };
-
-                            // Add redirections
-                            for redir in &c.redirections {
-                                let target = format!("{}", redir.target);
-                                let redir_str = match redir.kind {
-                                    RedirectKind::StdoutWrite => format!(" > {}", target),
-                                    RedirectKind::StdoutAppend => format!(" >> {}", target),
-                                    RedirectKind::StdinRead => format!(" < {}", target),
-                                    RedirectKind::StderrWrite => format!(" 2> {}", target),
-                                    RedirectKind::StderrAppend => format!(" 2>> {}", target),
-                                    RedirectKind::BothWrite => format!(" &> {}", target),
-                                };
-                                cmd.push_str(&redir_str);
+                    // Format command string
+                    let cmd_str = pipeline.elements.iter()
+                        .map(|elem| match elem {
+                            PipelineElement::Simple(c) => {
+                                let name = format!("{}", c.name);
+                                let args = c.args.iter().map(|a| format!("{}", a)).collect::<Vec<_>>().join(" ");
+                                let mut cmd = if args.is_empty() { name } else { format!("{} {}", name, args) };
+                                for redir in &c.redirections {
+                                    let target = format!("{}", redir.target);
+                                    let redir_str = match redir.kind {
+                                        RedirectKind::StdoutWrite => format!(" > {}", target),
+                                        RedirectKind::StdoutAppend => format!(" >> {}", target),
+                                        RedirectKind::StdinRead => format!(" < {}", target),
+                                        RedirectKind::StderrWrite => format!(" 2> {}", target),
+                                        RedirectKind::StderrAppend => format!(" 2>> {}", target),
+                                        RedirectKind::BothWrite => format!(" &> {}", target),
+                                    };
+                                    cmd.push_str(&redir_str);
+                                }
+                                cmd
                             }
-                            cmd
+                            PipelineElement::Compound(stmt) => format!("{:?}", stmt),
                         })
                         .collect::<Vec<_>>()
                         .join(" | ");
 
-                    let commands = pipeline.commands.clone();
+                    let elements = pipeline.elements.clone();
                     let shell_copy = self.clone_for_subshell();
 
                     let handle = tokio::spawn(async move {
                         let mut shell = shell_copy;
                         let mut ctx = ExecContext::default();
-                        let pipeline = Pipeline { commands, background: false };
+                        let pipeline = Pipeline { elements, background: false };
                         match shell.execute_pipeline(&pipeline, &mut ctx).await {
                             Ok(code) => code,
                             Err(e) => {
@@ -294,32 +295,31 @@ impl Shell {
     }
     
     async fn execute_pipeline(&mut self, pipeline: &Pipeline, ctx: &mut ExecContext) -> Sh9Result<i32> {
-        if pipeline.commands.is_empty() {
+        if pipeline.elements.is_empty() {
             return Ok(0);
         }
 
-        if pipeline.commands.len() == 1 {
-            return self.execute_command(&pipeline.commands[0], ctx).await;
+        if pipeline.elements.len() == 1 {
+            return self.execute_pipeline_element(&pipeline.elements[0], ctx).await;
         }
 
-        // Save the original stdout so the last command writes to the correct destination
-        // (e.g. Buffer when inside command substitution, Stdout otherwise)
+        // Save the original stdout so the last element writes to the correct destination
         let mut original_stdout = Some(std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new())));
         let mut input: Option<Vec<u8>> = ctx.stdin.take();
 
-        for (i, cmd) in pipeline.commands.iter().enumerate() {
-            let is_last = i == pipeline.commands.len() - 1;
+        for (i, elem) in pipeline.elements.iter().enumerate() {
+            let is_last = i == pipeline.elements.len() - 1;
 
             ctx.stdin = input.take();
 
             if is_last {
                 ctx.stdout = original_stdout.take().unwrap_or(Output::Stdout);
-                return self.execute_command(cmd, ctx).await;
+                return self.execute_pipeline_element(elem, ctx).await;
             } else {
                 ctx.stdout = Output::Buffer(Vec::new());
             }
 
-            self.execute_command(cmd, ctx).await?;
+            self.execute_pipeline_element(elem, ctx).await?;
 
             if let Output::Buffer(buf) = std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new())) {
                 input = Some(buf);
@@ -327,6 +327,13 @@ impl Shell {
         }
 
         Ok(0)
+    }
+
+    async fn execute_pipeline_element(&mut self, elem: &PipelineElement, ctx: &mut ExecContext) -> Sh9Result<i32> {
+        match elem {
+            PipelineElement::Simple(cmd) => self.execute_command(cmd, ctx).await,
+            PipelineElement::Compound(stmt) => self.execute_statement_boxed(stmt, ctx).await,
+        }
     }
     
     async fn execute_command(&mut self, cmd: &Command, ctx: &mut ExecContext) -> Sh9Result<i32> {

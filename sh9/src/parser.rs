@@ -46,26 +46,18 @@ fn statement() -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
             .ignore_then(word().or_not())
             .map(Statement::Return);
 
-        // If statement
-        let if_stmt = if_statement(stmt.clone());
-
-        // For loop
-        let for_loop = for_statement(stmt.clone());
-
-        // While loop
-        let while_loop = while_statement(stmt.clone());
-
         // Function definition
         let func_def = function_def(stmt.clone());
 
         // Command list: pipeline { && | || pipeline }*
-        let command_list_stmt = pipeline()
+        // pipeline(stmt) handles both simple commands AND compound commands (while/for/if)
+        let command_list_stmt = pipeline(stmt.clone())
             .then(
                 choice((
                     just(Token::AndAnd).to(ListOp::And),
                     just(Token::OrOr).to(ListOp::Or),
                 ))
-                .then(pipeline())
+                .then(pipeline(stmt))
                 .repeated(),
             )
             .map(|(first, rest)| {
@@ -81,9 +73,6 @@ fn statement() -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
             break_stmt,
             continue_stmt,
             return_stmt,
-            if_stmt,
-            for_loop,
-            while_loop,
             func_def,
             assignment,
             command_list_stmt,
@@ -98,13 +87,13 @@ fn if_statement(
 ) -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
     // if condition; then body; elif condition; then body; else body; fi
     just(Token::If)
-        .ignore_then(pipeline())
+        .ignore_then(simple_pipeline())
         .then_ignore(just(Token::Semicolon).or_not())
         .then_ignore(just(Token::Then))
         .then(stmt.clone().repeated())
         .then(
             just(Token::Elif)
-                .ignore_then(pipeline())
+                .ignore_then(simple_pipeline())
                 .then_ignore(just(Token::Semicolon).or_not())
                 .then_ignore(just(Token::Then))
                 .then(stmt.clone().repeated())
@@ -154,7 +143,7 @@ fn while_statement(
 ) -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
     // while condition; do body; done
     just(Token::While)
-        .ignore_then(pipeline())
+        .ignore_then(simple_pipeline())
         .then_ignore(just(Token::Semicolon).or_not())
         .then_ignore(just(Token::Do))
         .then(stmt.repeated())
@@ -205,14 +194,34 @@ fn function_def(
     paren_style.or(function_keyword)
 }
 
-/// Parse a pipeline of commands
-fn pipeline() -> impl Parser<Token, Pipeline, Error = Simple<Token>> + Clone {
+/// Parse a simple pipeline (only simple commands, used in conditions)
+fn simple_pipeline() -> impl Parser<Token, Pipeline, Error = Simple<Token>> + Clone {
     command()
         .separated_by(just(Token::Pipe))
         .at_least(1)
         .then(just(Token::Ampersand).or_not())
         .map(|(commands, bg)| Pipeline {
-            commands,
+            elements: commands.into_iter().map(PipelineElement::Simple).collect(),
+            background: bg.is_some(),
+        })
+}
+
+/// Parse a pipeline that can contain compound commands (while/for/if) in pipe positions
+fn pipeline(
+    stmt: impl Parser<Token, Statement, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, Pipeline, Error = Simple<Token>> + Clone {
+    let compound_while = while_statement(stmt.clone()).map(PipelineElement::Compound);
+    let compound_for = for_statement(stmt.clone()).map(PipelineElement::Compound);
+    let compound_if = if_statement(stmt).map(PipelineElement::Compound);
+    let simple = command().map(PipelineElement::Simple);
+    let element = choice((compound_while, compound_for, compound_if, simple));
+
+    element
+        .separated_by(just(Token::Pipe))
+        .at_least(1)
+        .then(just(Token::Ampersand).or_not())
+        .map(|(elements, bg)| Pipeline {
+            elements,
             background: bg.is_some(),
         })
 }
@@ -627,7 +636,7 @@ mod tests {
         let script = parse_tokens("echo hello").unwrap();
         assert_eq!(script.statements.len(), 1);
         if let Statement::Pipeline(p) = &script.statements[0] {
-            assert_eq!(p.commands.len(), 1);
+            assert_eq!(p.elements.len(), 1);
             assert!(!p.background);
         } else {
             panic!("Expected pipeline");
@@ -649,7 +658,7 @@ mod tests {
     fn test_pipeline() {
         let script = parse_tokens("ls | grep foo").unwrap();
         if let Statement::Pipeline(p) = &script.statements[0] {
-            assert_eq!(p.commands.len(), 2);
+            assert_eq!(p.elements.len(), 2);
         } else {
             panic!("Expected pipeline");
         }

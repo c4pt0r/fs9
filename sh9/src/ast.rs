@@ -53,8 +53,14 @@ pub struct Assignment {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pipeline {
-    pub commands: Vec<Command>,
+    pub elements: Vec<PipelineElement>,
     pub background: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PipelineElement {
+    Simple(Command),
+    Compound(Statement),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

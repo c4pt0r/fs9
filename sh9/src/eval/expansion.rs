@@ -59,17 +59,23 @@ impl Shell {
                     }
                 } else if chars.peek() == Some(&'{') {
                     chars.next();
-                    let mut name = String::new();
+                    let mut content = String::new();
+                    let mut depth = 1;
                     while let Some(&c) = chars.peek() {
-                        if c == '}' {
-                            chars.next();
-                            break;
+                        if c == '{' {
+                            depth += 1;
+                        } else if c == '}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                chars.next();
+                                break;
+                            }
                         }
-                        name.push(c);
+                        content.push(c);
                         chars.next();
                     }
-                    let value = self.get_variable_value(&name, ctx);
-                    result.push_str(&value);
+                    let expanded = Box::pin(self.expand_braced_param(&content, ctx)).await?;
+                    result.push_str(&expanded);
                 } else if chars.peek().map(|c| c.is_alphabetic() || *c == '_' || *c == '?').unwrap_or(false) {
                     let mut name = String::new();
                     let first_char = *chars.peek().unwrap();
@@ -102,6 +108,160 @@ impl Shell {
         }
         
         Ok(result)
+    }
+
+    async fn expand_braced_param(&mut self, content: &str, ctx: &mut ExecContext) -> Sh9Result<String> {
+        // ${#var} — string length
+        if let Some(var_name) = content.strip_prefix('#') {
+            let value = self.get_variable_value(var_name, ctx);
+            return Ok(value.len().to_string());
+        }
+
+        // Try to find an operator in the content
+        // Check two-char operators first, then single-char
+        let operators = [":-", "-", ":=", "=", ":+", "+", "##", "#", "%%", "%"];
+        for op in &operators {
+            if let Some(pos) = content.find(op) {
+                // Make sure we're not matching inside the var name for # and %
+                // For # and %, the var name is everything before the operator
+                let var_name = &content[..pos];
+                let operand = &content[pos + op.len()..];
+
+                // Skip if var_name is empty (shouldn't happen)
+                if var_name.is_empty() {
+                    continue;
+                }
+
+                let value = self.get_variable_value(var_name, ctx);
+                let is_set = !value.is_empty() || self.has_variable(var_name, ctx);
+
+                match *op {
+                    ":-" => {
+                        // ${var:-word} — use word if var is unset or empty
+                        return Ok(if value.is_empty() {
+                            self.expand_variables_in_string(operand, ctx).await?
+                        } else {
+                            value
+                        });
+                    }
+                    "-" => {
+                        // ${var-word} — use word if var is unset
+                        return Ok(if !is_set {
+                            self.expand_variables_in_string(operand, ctx).await?
+                        } else {
+                            value
+                        });
+                    }
+                    ":=" => {
+                        // ${var:=word} — assign word if var is unset or empty
+                        if value.is_empty() {
+                            let default = self.expand_variables_in_string(operand, ctx).await?;
+                            self.set_var(var_name, &default);
+                            return Ok(default);
+                        }
+                        return Ok(value);
+                    }
+                    "=" => {
+                        // ${var=word} — assign word if var is unset
+                        if !is_set {
+                            let default = self.expand_variables_in_string(operand, ctx).await?;
+                            self.set_var(var_name, &default);
+                            return Ok(default);
+                        }
+                        return Ok(value);
+                    }
+                    ":+" => {
+                        // ${var:+word} — use word if var is set and non-empty
+                        return Ok(if !value.is_empty() {
+                            self.expand_variables_in_string(operand, ctx).await?
+                        } else {
+                            String::new()
+                        });
+                    }
+                    "+" => {
+                        // ${var+word} — use word if var is set
+                        return Ok(if is_set {
+                            self.expand_variables_in_string(operand, ctx).await?
+                        } else {
+                            String::new()
+                        });
+                    }
+                    "##" => {
+                        // ${var##pattern} — remove longest prefix match
+                        return Ok(Self::remove_prefix(&value, operand, true));
+                    }
+                    "#" => {
+                        // ${var#pattern} — remove shortest prefix match
+                        return Ok(Self::remove_prefix(&value, operand, false));
+                    }
+                    "%%" => {
+                        // ${var%%pattern} — remove longest suffix match
+                        return Ok(Self::remove_suffix(&value, operand, true));
+                    }
+                    "%" => {
+                        // ${var%pattern} — remove shortest suffix match
+                        return Ok(Self::remove_suffix(&value, operand, false));
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+
+        // No operator found — simple variable reference
+        Ok(self.get_variable_value(content, ctx))
+    }
+
+    fn has_variable(&self, name: &str, ctx: &ExecContext) -> bool {
+        match name {
+            "?" | "0" | "PWD" => return true,
+            _ => {}
+        }
+        if let Ok(n) = name.parse::<usize>() {
+            return n > 0 && n <= ctx.positional.len();
+        }
+        ctx.locals.contains_key(name)
+            || self.get_var(name).is_some()
+            || std::env::var(name).is_ok()
+    }
+
+    fn remove_prefix(value: &str, pattern: &str, greedy: bool) -> String {
+        use super::utils::match_glob_pattern;
+        if greedy {
+            // Remove longest prefix: try from the longest to shortest
+            for i in (0..=value.len()).rev() {
+                if match_glob_pattern(pattern, &value[..i]) {
+                    return value[i..].to_string();
+                }
+            }
+        } else {
+            // Remove shortest prefix: try from shortest to longest
+            for i in 0..=value.len() {
+                if match_glob_pattern(pattern, &value[..i]) {
+                    return value[i..].to_string();
+                }
+            }
+        }
+        value.to_string()
+    }
+
+    fn remove_suffix(value: &str, pattern: &str, greedy: bool) -> String {
+        use super::utils::match_glob_pattern;
+        if greedy {
+            // Remove longest suffix: try from the longest to shortest
+            for i in 0..=value.len() {
+                if match_glob_pattern(pattern, &value[i..]) {
+                    return value[..i].to_string();
+                }
+            }
+        } else {
+            // Remove shortest suffix: try from shortest to longest
+            for i in (0..=value.len()).rev() {
+                if match_glob_pattern(pattern, &value[i..]) {
+                    return value[..i].to_string();
+                }
+            }
+        }
+        value.to_string()
     }
 
     pub(crate) fn collect_balanced_parens(chars: &mut std::iter::Peekable<std::str::Chars>, initial_depth: usize) -> String {
