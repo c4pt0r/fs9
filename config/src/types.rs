@@ -38,6 +38,8 @@ pub struct ServerConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub db9_api_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_timeout_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_concurrent_requests: Option<usize>,
@@ -62,6 +64,9 @@ pub struct ServerConfig {
     /// Token refresh grace period in hours. Default: 4.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_grace_period_hours: Option<u64>,
+    /// Default pagefs (TiKV) configuration for auto-provisioning db9 tenant namespaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_pagefs: Option<DefaultPagefsConfig>,
 }
 
 impl Default for ServerConfig {
@@ -73,6 +78,7 @@ impl Default for ServerConfig {
             plugins: PluginsConfig::default(),
             meta_url: None,
             meta_key: None,
+            db9_api_url: None,
             request_timeout_secs: None,
             max_concurrent_requests: None,
             shutdown_timeout_secs: None,
@@ -82,6 +88,7 @@ impl Default for ServerConfig {
             max_write_size_bytes: None,
             meta_resilience: MetaResilienceConfig::default(),
             refresh_grace_period_hours: None,
+            default_pagefs: None,
         }
     }
 }
@@ -180,6 +187,26 @@ impl Default for PluginsConfig {
 pub struct PluginEntry {
     pub name: String,
     pub path: String,
+}
+
+/// Default pagefs configuration for auto-provisioning db9 tenant namespaces.
+/// When a db9-authenticated request targets a tenant without an fs9 namespace,
+/// the server auto-creates the namespace with a pagefs mount using this config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefaultPagefsConfig {
+    pub pd_endpoints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+    #[serde(default = "default_keyspace_prefix")]
+    pub keyspace_prefix: String,
+}
+
+fn default_keyspace_prefix() -> String {
+    "tipg_fs_".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

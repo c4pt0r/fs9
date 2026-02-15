@@ -29,7 +29,7 @@ libc = "0.2"
 aws-sdk-s3 = { version = "1.65", optional = true }
 aws-config = { version = "1.5", optional = true }
 tikv-client = { git = "https://github.com/tikv/client-rust.git", branch = "master", optional = true }
-reqwest = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true, features = ["rustls-tls"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -39,11 +39,21 @@ impl PageFsProvider {
 
     fn init_filesystem(&self) {
         if self.kv.get(&keys::superblock()).is_none() {
+            eprintln!("[pagefs] No superblock found, creating fresh filesystem");
             let sb = Superblock::default();
             self.save_superblock(&sb);
 
             let root = Inode::new_directory(ROOT_INODE, 0o755);
             self.save_inode(&root);
+            eprintln!("[pagefs] Created superblock and root inode");
+        } else if self.load_inode(ROOT_INODE).is_none() {
+            // Superblock exists but root inode is missing (e.g. stale data from
+            // a previous session where writes failed silently). Recreate it.
+            eprintln!("[pagefs] WARNING: Superblock exists but root inode missing — recreating");
+            let root = Inode::new_directory(ROOT_INODE, 0o755);
+            self.save_inode(&root);
+        } else {
+            eprintln!("[pagefs] Filesystem already initialized, superblock and root inode OK");
         }
     }
 

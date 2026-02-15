@@ -5,10 +5,12 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::circuit_breaker::CircuitBreaker;
+use crate::db9_client::Db9Client;
 use crate::meta_client::MetaClient;
 use crate::namespace::{Namespace, NamespaceManager, DEFAULT_NAMESPACE};
 use crate::token_cache::TokenCache;
 use crate::token_revocation::RevocationSet;
+use fs9_config::DefaultPagefsConfig;
 
 pub struct AppState {
     pub namespace_manager: Arc<NamespaceManager>,
@@ -16,6 +18,8 @@ pub struct AppState {
     pub provider_registry: Arc<ProviderRegistry>,
     pub jwt_secret: RwLock<String>,
     pub meta_client: Option<MetaClient>,
+    pub db9_client: Option<Db9Client>,
+    pub default_pagefs: Option<DefaultPagefsConfig>,
     pub token_cache: TokenCache,
     pub circuit_breaker: Arc<CircuitBreaker>,
     pub revocation_set: Arc<RevocationSet>,
@@ -68,22 +72,31 @@ const DEFAULT_TOKEN_CACHE_TTL: Duration = Duration::from_secs(300);
 impl AppState {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_options(Duration::from_secs(300), None)
+        Self::with_options(Duration::from_secs(300), None, None, None)
     }
 
     #[must_use]
     pub fn with_handle_ttl(ttl: Duration) -> Self {
-        Self::with_options(ttl, None)
+        Self::with_options(ttl, None, None, None)
     }
 
     /// Create AppState with meta client integration.
     #[must_use]
-    pub fn with_meta(meta_client: Option<MetaClient>) -> Self {
-        Self::with_options(Duration::from_secs(300), meta_client)
+    pub fn with_meta(
+        meta_client: Option<MetaClient>,
+        db9_client: Option<Db9Client>,
+        default_pagefs: Option<DefaultPagefsConfig>,
+    ) -> Self {
+        Self::with_options(Duration::from_secs(300), meta_client, db9_client, default_pagefs)
     }
 
     #[must_use]
-    pub fn with_options(handle_ttl: Duration, meta_client: Option<MetaClient>) -> Self {
+    pub fn with_options(
+        handle_ttl: Duration,
+        meta_client: Option<MetaClient>,
+        db9_client: Option<Db9Client>,
+        default_pagefs: Option<DefaultPagefsConfig>,
+    ) -> Self {
         let namespace_manager = Arc::new(NamespaceManager::new(handle_ttl));
         let plugin_manager = Arc::new(PluginManager::new());
         let provider_registry = Arc::new(fs9_core::default_registry());
@@ -97,6 +110,8 @@ impl AppState {
             provider_registry,
             jwt_secret: RwLock::new(String::new()),
             meta_client,
+            db9_client,
+            default_pagefs,
             token_cache,
             circuit_breaker,
             revocation_set,

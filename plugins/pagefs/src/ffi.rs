@@ -16,10 +16,29 @@ use crate::{
 };
 
 unsafe extern "C" fn create_provider(config: *const c_char, config_len: size_t) -> *mut c_void {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        create_provider_inner(config, config_len)
+    })) {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("pagefs: create_provider panicked: {msg}");
+            ptr::null_mut()
+        }
+    }
+}
+
+fn create_provider_inner(config: *const c_char, config_len: size_t) -> *mut c_void {
     let cfg: PageFsConfig = if config.is_null() || config_len == 0 {
         PageFsConfig::default()
     } else {
-        let config_slice = std::slice::from_raw_parts(config as *const u8, config_len);
+        let config_slice = unsafe { std::slice::from_raw_parts(config as *const u8, config_len) };
         serde_json::from_slice(config_slice).unwrap_or_default()
     };
 
@@ -28,9 +47,20 @@ unsafe extern "C" fn create_provider(config: *const c_char, config_len: size_t) 
         #[cfg(feature = "s3")]
         BackendConfig::S3 { bucket, prefix } => Box::new(crate::S3KvBackend::new(bucket, prefix)),
         #[cfg(feature = "tikv")]
-        BackendConfig::Tikv { pd_endpoints } => {
-            Box::new(TikvKvBackend::new(pd_endpoints, cfg.ns.clone()))
-        }
+        BackendConfig::Tikv {
+            pd_endpoints,
+            ca_path,
+            cert_path,
+            key_path,
+            keyspace,
+        } => Box::new(TikvKvBackend::new(
+            pd_endpoints,
+            cfg.ns.clone(),
+            keyspace,
+            ca_path,
+            cert_path,
+            key_path,
+        )),
     };
 
     let provider = Box::new(PageFsProvider::with_config(backend, cfg.uid, cfg.gid));

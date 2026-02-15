@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::db9_client::Db9AuthError;
 use crate::state::AppState;
 
 /// Inline error response for auth failures (avoids coupling to api module).
@@ -240,12 +241,23 @@ impl AuthMiddlewareState {
     }
 }
 
+/// Extract tenant_id from URL paths like `/{tenant_id}/api/v1/...`.
+fn extract_tenant_id(path: &str) -> Option<&str> {
+    let path = path.strip_prefix('/')?;
+    let (tenant_id, rest) = path.split_once('/')?;
+    if rest.starts_with("api/v1/") && !tenant_id.is_empty() {
+        Some(tenant_id)
+    } else {
+        None
+    }
+}
+
 pub async fn auth_middleware(
     axum::extract::State(state): axum::extract::State<AuthMiddlewareState>,
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
-    let path = request.uri().path();
+    let path = request.uri().path().to_owned();
 
     // Health endpoint needs no auth
     if path == "/health" {
@@ -290,6 +302,32 @@ pub async fn auth_middleware(
         }
         None => return unauthorized("Missing Authorization header"),
     };
+
+    // Try db9 token auth if tenant_id is in the URL and db9_client is configured
+    let tenant_id = extract_tenant_id(&path);
+    if let (Some(tenant_id), Some(db9_client)) = (tenant_id, &state.app_state.db9_client) {
+        match db9_client.validate_token(token, tenant_id).await {
+            Ok(customer_id) => {
+                let ctx = RequestContext {
+                    ns: tenant_id.to_string(),
+                    user_id: customer_id,
+                    roles: vec!["admin".to_string()],
+                };
+                request.extensions_mut().insert(ctx);
+                return next.run(request).await;
+            }
+            Err(Db9AuthError::TenantNotAuthorized(_)) => {
+                return forbidden("Tenant not authorized for this token");
+            }
+            Err(Db9AuthError::Backend(401, _)) => {
+                // Token rejected by db9 — fall through to JWT validation
+                tracing::debug!("db9 token rejected (401), falling back to JWT");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "db9 token validation failed, falling back to JWT");
+            }
+        }
+    }
 
     // Check if token has been revoked
     if state.app_state.revocation_set.is_revoked(token).await {
@@ -442,6 +480,17 @@ fn unauthorized(message: &str) -> Response {
         Json(ErrorResponse {
             error: message.to_string(),
             code: 401,
+        }),
+    )
+        .into_response()
+}
+
+fn forbidden(message: &str) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(ErrorResponse {
+            error: message.to_string(),
+            code: 403,
         }),
     )
         .into_response()

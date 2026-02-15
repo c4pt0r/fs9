@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::api::models::*;
 use crate::auth::RequestContext;
+use crate::meta_client::MetaClient;
 use crate::namespace::Namespace;
 use crate::state::AppState;
 
@@ -89,9 +90,146 @@ impl IntoResponse for AppError {
 }
 
 /// Resolve the namespace for this request from the RequestContext.
+/// If the namespace is not found locally but meta_client is configured,
+/// lazily load it from fs9-meta (namespace + mounts).
+/// If the namespace doesn't exist in meta but db9_client is configured,
+/// auto-provision it with a pagefs mount.
 async fn resolve_ns(state: &AppState, ctx: &RequestContext) -> Result<Arc<Namespace>, AppError> {
-    state.namespace_manager.get(&ctx.ns).await
-        .ok_or_else(|| AppError::forbidden("Namespace not found or access denied"))
+    // Fast path: namespace already exists in memory
+    if let Some(ns) = state.namespace_manager.get(&ctx.ns).await {
+        return Ok(ns);
+    }
+
+    // Slow path: try to load from meta
+    let meta_client = state.meta_client.as_ref().ok_or_else(|| {
+        AppError::forbidden("Namespace not found or access denied")
+    })?;
+
+    // Try to get namespace from meta
+    let needs_provision = match meta_client.get_namespace(&ctx.ns).await {
+        Ok(ns_info) => {
+            if ns_info.status != "active" {
+                return Err(AppError::forbidden("Namespace is not active"));
+            }
+            false
+        }
+        Err(_) if state.db9_client.is_some() && state.default_pagefs.is_some() => {
+            // Namespace not in meta, but db9 auth is configured — auto-provision
+            true
+        }
+        Err(e) => {
+            tracing::warn!(ns = %ctx.ns, error = %e, "Failed to fetch namespace from meta");
+            return Err(AppError::forbidden("Namespace not found or access denied"));
+        }
+    };
+
+    if needs_provision {
+        auto_provision_namespace(state, meta_client, &ctx.ns).await?;
+    }
+
+    // Create namespace locally
+    let ns = state.namespace_manager.get_or_create(&ctx.ns).await;
+
+    // Fetch and apply mounts from meta
+    load_mounts_from_meta(state, meta_client, &ns, &ctx.ns).await;
+
+    Ok(ns)
+}
+
+/// Auto-provision a namespace and pagefs mount in fs9-meta for a db9 tenant.
+async fn auto_provision_namespace(
+    state: &AppState,
+    meta_client: &MetaClient,
+    tenant_id: &str,
+) -> Result<(), AppError> {
+    let pagefs_config = state.default_pagefs.as_ref().unwrap();
+    let keyspace = format!("{}{}", pagefs_config.keyspace_prefix, tenant_id);
+
+    tracing::info!(ns = %tenant_id, keyspace = %keyspace, "Auto-provisioning namespace for db9 tenant");
+
+    // Create namespace in meta
+    if let Err(e) = meta_client.create_namespace(tenant_id).await {
+        tracing::warn!(ns = %tenant_id, error = %e, "Failed to create namespace in meta (may already exist)");
+    }
+
+    // Build pagefs mount config with explicit keyspace
+    let mount_config = serde_json::json!({
+        "backend": {
+            "type": "tikv",
+            "pd_endpoints": pagefs_config.pd_endpoints,
+            "ca_path": pagefs_config.ca_path,
+            "cert_path": pagefs_config.cert_path,
+            "key_path": pagefs_config.key_path,
+            "keyspace": keyspace,
+        }
+    });
+
+    // Create mount in meta
+    if let Err(e) = meta_client
+        .create_mount(tenant_id, "/", "pagefs", &mount_config)
+        .await
+    {
+        tracing::warn!(ns = %tenant_id, error = %e, "Failed to create mount in meta (may already exist)");
+    }
+
+    Ok(())
+}
+
+/// Load mounts from meta and mount them into the namespace.
+async fn load_mounts_from_meta(
+    state: &AppState,
+    meta_client: &MetaClient,
+    ns: &Arc<Namespace>,
+    ns_name: &str,
+) {
+    match meta_client.get_namespace_mounts(ns_name).await {
+        Ok(mounts) => {
+            for mount in mounts {
+                let mut config: serde_json::Value = mount.config.clone();
+                if let Some(obj) = config.as_object_mut() {
+                    obj.insert(
+                        "ns".to_string(),
+                        serde_json::json!(ns_name),
+                    );
+                }
+                let config_json = serde_json::to_string(&config).unwrap_or_default();
+
+                match state
+                    .plugin_manager
+                    .create_provider(&mount.provider, &config_json)
+                {
+                    Ok(p) => {
+                        let provider: Arc<dyn fs9_sdk::FsProvider> = Arc::new(p);
+                        if let Err(e) = ns
+                            .mount_table
+                            .mount(&mount.path, &mount.provider, provider)
+                            .await
+                        {
+                            tracing::error!(
+                                ns = %ns_name, path = %mount.path,
+                                error = %e, "Failed to mount from meta config"
+                            );
+                        } else {
+                            tracing::info!(
+                                ns = %ns_name, path = %mount.path,
+                                provider = %mount.provider,
+                                "Lazily mounted from meta"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            ns = %ns_name, provider = %mount.provider,
+                            error = %e, "Failed to create provider from meta config"
+                        );
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(ns = %ns_name, error = %e, "Failed to fetch mounts from meta");
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]

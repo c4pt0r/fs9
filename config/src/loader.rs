@@ -161,6 +161,49 @@ impl ConfigLoader {
                 config.server.meta_key = Some(meta_key);
             }
         }
+        if let Ok(db9_api_url) = std::env::var("FS9_DB9_API_URL") {
+            if !db9_api_url.is_empty() {
+                config.server.db9_api_url = Some(db9_api_url);
+            }
+        }
+
+        // Default pagefs config from env vars
+        if let Ok(pd_endpoints) = std::env::var("FS9_PAGEFS_PD_ENDPOINTS") {
+            if !pd_endpoints.is_empty() {
+                let pagefs = config
+                    .server
+                    .default_pagefs
+                    .get_or_insert_with(|| crate::DefaultPagefsConfig {
+                        pd_endpoints: Vec::new(),
+                        ca_path: None,
+                        cert_path: None,
+                        key_path: None,
+                        keyspace_prefix: "tipg_fs_".to_string(),
+                    });
+                pagefs.pd_endpoints =
+                    pd_endpoints.split(',').map(|s| s.trim().to_string()).collect();
+            }
+        }
+        if let Ok(ca) = std::env::var("FS9_PAGEFS_CA_PATH") {
+            if let Some(ref mut pagefs) = config.server.default_pagefs {
+                pagefs.ca_path = Some(ca);
+            }
+        }
+        if let Ok(cert) = std::env::var("FS9_PAGEFS_CERT_PATH") {
+            if let Some(ref mut pagefs) = config.server.default_pagefs {
+                pagefs.cert_path = Some(cert);
+            }
+        }
+        if let Ok(key) = std::env::var("FS9_PAGEFS_KEY_PATH") {
+            if let Some(ref mut pagefs) = config.server.default_pagefs {
+                pagefs.key_path = Some(key);
+            }
+        }
+        if let Ok(prefix) = std::env::var("FS9_PAGEFS_KEYSPACE_PREFIX") {
+            if let Some(ref mut pagefs) = config.server.default_pagefs {
+                pagefs.keyspace_prefix = prefix;
+            }
+        }
     }
 }
 

@@ -3,6 +3,8 @@
 mod api;
 
 use fs9_server::auth;
+use fs9_server::db9_client::Db9Client;
+use fs9_server::meta_client;
 use fs9_server::meta_client::MetaClient;
 use fs9_server::metrics as fs9_metrics;
 use fs9_server::namespace;
@@ -75,7 +77,17 @@ async fn main() {
         }
     };
 
-    let state = Arc::new(state::AppState::with_meta(meta_client));
+    let db9_client = config.server.db9_api_url.as_ref().map(|url| {
+        tracing::info!(db9_api_url = %url, "db9 token authentication enabled");
+        Db9Client::new(url)
+    });
+
+    let default_pagefs = config.server.default_pagefs.clone();
+    if default_pagefs.is_some() {
+        tracing::info!("Default pagefs config loaded for auto-provisioning");
+    }
+
+    let state = Arc::new(state::AppState::with_meta(meta_client, db9_client, default_pagefs));
     let registry = default_registry();
 
     load_plugins(&state, &config);

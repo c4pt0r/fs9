@@ -83,37 +83,130 @@ impl KvBackend for InMemoryKv {
 
 #[cfg(feature = "tikv")]
 pub struct TikvKvBackend {
-    client: tikv_client::RawClient,
+    client: tikv_client::TransactionClient,
     runtime: tokio::runtime::Runtime,
 }
 
 #[cfg(feature = "tikv")]
 impl TikvKvBackend {
-    pub fn new(pd_endpoints: Vec<String>, ns: Option<String>) -> Self {
+    pub fn new(
+        pd_endpoints: Vec<String>,
+        ns: Option<String>,
+        explicit_keyspace: Option<String>,
+        ca_path: Option<String>,
+        cert_path: Option<String>,
+        key_path: Option<String>,
+    ) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         let client = runtime.block_on(async {
-            let keyspace = ns.map(|ns| {
-                let sanitized = ns.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-                format!("{sanitized}_fs")
+            // Explicit keyspace takes priority, otherwise derive from ns
+            let keyspace = explicit_keyspace.or_else(|| {
+                ns.map(|ns| ns.replace(|c: char| !c.is_alphanumeric() && c != '_', "_"))
             });
+
+            eprintln!("[pagefs-tikv] Creating TiKV backend (txn), keyspace={keyspace:?}, pd={pd_endpoints:?}");
+
             if let Some(ks) = &keyspace {
-                Self::ensure_keyspace(&pd_endpoints[0], ks).await;
+                Self::ensure_keyspace(
+                    &pd_endpoints[0],
+                    ks,
+                    ca_path.as_deref(),
+                    cert_path.as_deref(),
+                    key_path.as_deref(),
+                )
+                .await;
             }
-            let config = match &keyspace {
+
+            let mut config = match &keyspace {
                 Some(ks) => tikv_client::Config::default().with_keyspace(ks),
                 None => tikv_client::Config::default(),
             };
-            tikv_client::RawClient::new_with_config(pd_endpoints, config)
+            if let Some(ca) = &ca_path {
+                config = config.with_security(
+                    ca,
+                    cert_path.as_deref().unwrap(),
+                    key_path.as_deref().unwrap(),
+                );
+            }
+            tikv_client::TransactionClient::new_with_config(pd_endpoints, config)
                 .await
                 .expect("Failed to connect to TiKV")
         });
         Self { client, runtime }
     }
 
-    async fn ensure_keyspace(pd_endpoint: &str, keyspace: &str) {
-        let url = format!("http://{pd_endpoint}/pd/api/v2/keyspaces");
+    async fn ensure_keyspace(
+        pd_endpoint: &str,
+        keyspace: &str,
+        ca_path: Option<&str>,
+        cert_path: Option<&str>,
+        key_path: Option<&str>,
+    ) {
+        // Build PD URL: if endpoint already starts with http, use as-is
+        let base_url = if pd_endpoint.starts_with("http") {
+            pd_endpoint.to_string()
+        } else {
+            format!("http://{pd_endpoint}")
+        };
+        let url = format!("{base_url}/pd/api/v2/keyspaces");
         let body = serde_json::json!({ "name": keyspace });
-        let resp = reqwest::Client::new().post(&url).json(&body).send().await;
+
+        // Build HTTP client with optional mTLS
+        let client = match (ca_path, cert_path, key_path) {
+            (Some(ca), Some(cert), Some(key)) => {
+                let ca_data = match std::fs::read(ca) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::warn!(keyspace, error = %e, "Failed to read CA cert for keyspace creation");
+                        return;
+                    }
+                };
+                let cert_data = match std::fs::read(cert) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::warn!(keyspace, error = %e, "Failed to read client cert for keyspace creation");
+                        return;
+                    }
+                };
+                let key_data = match std::fs::read(key) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        tracing::warn!(keyspace, error = %e, "Failed to read client key for keyspace creation");
+                        return;
+                    }
+                };
+                let ca_cert = match reqwest::Certificate::from_pem(&ca_data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(keyspace, error = %e, "Failed to parse CA cert");
+                        return;
+                    }
+                };
+                let mut pem = cert_data;
+                pem.extend_from_slice(&key_data);
+                let identity = match reqwest::Identity::from_pem(&pem) {
+                    Ok(i) => i,
+                    Err(e) => {
+                        tracing::warn!(keyspace, error = %e, "Failed to create client identity");
+                        return;
+                    }
+                };
+                match reqwest::Client::builder()
+                    .add_root_certificate(ca_cert)
+                    .identity(identity)
+                    .build()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(keyspace, error = %e, "Failed to build TLS HTTP client");
+                        return;
+                    }
+                }
+            }
+            _ => reqwest::Client::new(),
+        };
+
+        let resp = client.post(&url).json(&body).send().await;
         match resp {
             Ok(r) if r.status().is_success() => {
                 tracing::info!(keyspace, "Created TiKV keyspace");
@@ -136,16 +229,30 @@ impl TikvKvBackend {
 #[cfg(feature = "tikv")]
 impl KvBackend for TikvKvBackend {
     fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.runtime
-            .block_on(self.client.get(key.to_vec()))
-            .ok()
-            .flatten()
+        match self.runtime.block_on(async {
+            let mut snapshot = self.client.snapshot(
+                self.client.current_timestamp().await?,
+                tikv_client::TransactionOptions::default(),
+            );
+            snapshot.get(key.to_vec()).await
+        }) {
+            Ok(val) => val,
+            Err(e) => {
+                eprintln!("[pagefs-tikv] get FAILED: {e}");
+                None
+            }
+        }
     }
 
     fn set(&self, key: &[u8], value: &[u8]) {
-        let _ = self
-            .runtime
-            .block_on(self.client.put(key.to_vec(), value.to_vec()));
+        if let Err(e) = self.runtime.block_on(async {
+            let mut txn = self.client.begin_optimistic().await?;
+            txn.put(key.to_vec(), value.to_vec()).await?;
+            txn.commit().await?;
+            Ok::<(), tikv_client::Error>(())
+        }) {
+            eprintln!("[pagefs-tikv] put FAILED: {e}");
+        }
     }
 
     fn scan(&self, prefix: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -160,30 +267,26 @@ impl KvBackend for TikvKvBackend {
 
         const BATCH: u32 = 10240;
         let mut result = Vec::new();
-        let mut cursor = prefix.to_vec();
 
         self.runtime.block_on(async {
-            loop {
-                let batch = self
-                    .client
-                    .scan(cursor.clone()..end.clone(), BATCH)
-                    .await
-                    .unwrap_or_default();
-                let exhausted = (batch.len() as u32) < BATCH;
-                for kv in batch {
-                    let key_bytes: &[u8] = kv.key().into();
-                    if !key_bytes.starts_with(prefix) {
-                        return;
-                    }
-                    let next = key_bytes.to_vec();
-                    let (key, value) = kv.into();
-                    result.push((Vec::from(key), value));
-                    cursor = next;
-                    cursor.push(0x00);
-                }
-                if exhausted {
+            let mut snapshot = self.client.snapshot(
+                self.client.current_timestamp().await.unwrap(),
+                tikv_client::TransactionOptions::default(),
+            );
+            let pairs = match snapshot.scan(prefix.to_vec()..end.clone(), BATCH).await {
+                Ok(pairs) => pairs,
+                Err(e) => {
+                    eprintln!("[pagefs-tikv] scan FAILED: {e}");
                     return;
                 }
+            };
+            for kv in pairs {
+                let key_bytes: Vec<u8> = kv.0.into();
+                if !key_bytes.starts_with(prefix) {
+                    break;
+                }
+                let value: Vec<u8> = kv.1;
+                result.push((key_bytes, value));
             }
         });
 
@@ -191,7 +294,14 @@ impl KvBackend for TikvKvBackend {
     }
 
     fn delete(&self, key: &[u8]) {
-        let _ = self.runtime.block_on(self.client.delete(key.to_vec()));
+        if let Err(e) = self.runtime.block_on(async {
+            let mut txn = self.client.begin_optimistic().await?;
+            txn.delete(key.to_vec()).await?;
+            txn.commit().await?;
+            Ok::<(), tikv_client::Error>(())
+        }) {
+            eprintln!("[pagefs-tikv] delete FAILED: {e}");
+        }
     }
 }
 
@@ -502,6 +612,15 @@ pub(crate) enum BackendConfig {
     Tikv {
         #[serde(default = "default_pd_endpoints")]
         pd_endpoints: Vec<String>,
+        #[serde(default)]
+        ca_path: Option<String>,
+        #[serde(default)]
+        cert_path: Option<String>,
+        #[serde(default)]
+        key_path: Option<String>,
+        /// Explicit keyspace name. If set, takes priority over the top-level `ns` field.
+        #[serde(default)]
+        keyspace: Option<String>,
     },
 }
 

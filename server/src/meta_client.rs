@@ -48,6 +48,21 @@ pub struct RefreshResponse {
     pub expires_at: String,
 }
 
+/// Mount info returned by fs9-meta.
+#[derive(Debug, Deserialize)]
+pub struct MountInfo {
+    pub path: String,
+    pub provider: String,
+    pub config: serde_json::Value,
+}
+
+/// Namespace info returned by fs9-meta.
+#[derive(Debug, Deserialize)]
+pub struct NamespaceInfo {
+    pub name: String,
+    pub status: String,
+}
+
 /// Error type for meta client operations.
 #[derive(Debug, thiserror::Error)]
 pub enum MetaClientError {
@@ -139,6 +154,99 @@ impl MetaClient {
         Err(last_err.unwrap_or_else(|| {
             MetaClientError::ServiceError("All retry attempts exhausted".to_string())
         }))
+    }
+
+    /// Fetch a namespace's info from meta service.
+    pub async fn get_namespace(&self, name: &str) -> Result<NamespaceInfo, MetaClientError> {
+        let url = format!("{}/api/v1/namespaces/{}", self.base_url, name);
+        let mut req = self.client.get(&url);
+        if let Some(key) = &self.admin_key {
+            req = req.header("x-fs9-meta-key", key);
+        }
+        let response = req.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(MetaClientError::ServiceError(format!(
+                "HTTP {status}: {body}"
+            )));
+        }
+        Ok(response.json().await?)
+    }
+
+    /// Fetch mounts for a namespace from meta service.
+    pub async fn get_namespace_mounts(
+        &self,
+        namespace: &str,
+    ) -> Result<Vec<MountInfo>, MetaClientError> {
+        let url = format!(
+            "{}/api/v1/namespaces/{}/mounts",
+            self.base_url, namespace
+        );
+        let mut req = self.client.get(&url);
+        if let Some(key) = &self.admin_key {
+            req = req.header("x-fs9-meta-key", key);
+        }
+        let response = req.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(MetaClientError::ServiceError(format!(
+                "HTTP {status}: {body}"
+            )));
+        }
+        Ok(response.json().await?)
+    }
+
+    /// Create a namespace in the meta service.
+    pub async fn create_namespace(&self, name: &str) -> Result<NamespaceInfo, MetaClientError> {
+        let url = format!("{}/api/v1/namespaces", self.base_url);
+        let body = serde_json::json!({ "name": name });
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(key) = &self.admin_key {
+            req = req.header("x-fs9-meta-key", key);
+        }
+        let response = req.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(MetaClientError::ServiceError(format!(
+                "HTTP {status}: {body}"
+            )));
+        }
+        Ok(response.json().await?)
+    }
+
+    /// Create a mount for a namespace in the meta service.
+    pub async fn create_mount(
+        &self,
+        namespace: &str,
+        path: &str,
+        provider: &str,
+        config: &serde_json::Value,
+    ) -> Result<MountInfo, MetaClientError> {
+        let url = format!(
+            "{}/api/v1/namespaces/{}/mounts",
+            self.base_url, namespace
+        );
+        let body = serde_json::json!({
+            "path": path,
+            "provider": provider,
+            "config": config,
+        });
+        let mut req = self.client.post(&url).json(&body);
+        if let Some(key) = &self.admin_key {
+            req = req.header("x-fs9-meta-key", key);
+        }
+        let response = req.send().await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(MetaClientError::ServiceError(format!(
+                "HTTP {status}: {body}"
+            )));
+        }
+        Ok(response.json().await?)
     }
 
     /// Refresh a JWT token with the meta service.

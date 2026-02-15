@@ -1,0 +1,90 @@
+# FS9 Server with TiKV+TLS support
+# Cross-compile from x86_64 to arm64 (EKS nodes are arm64)
+
+# --- Build Stage ---
+FROM --platform=linux/amd64 rust:1.85-bookworm AS builder
+
+RUN dpkg --add-architecture arm64 && \
+    apt-get update && apt-get install -y \
+    gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+    libc6-dev-arm64-cross \
+    pkg-config \
+    libssl-dev \
+    libssl-dev:arm64 \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add aarch64-unknown-linux-gnu
+
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+    OPENSSL_DIR=/usr \
+    OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu \
+    OPENSSL_INCLUDE_DIR=/usr/include \
+    PKG_CONFIG_ALLOW_CROSS=1 \
+    PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+
+WORKDIR /build
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY sdk/ sdk/
+COPY sdk-ffi/ sdk-ffi/
+COPY core/ core/
+COPY config/ config/
+COPY server/ server/
+COPY plugins/ plugins/
+COPY clients/ clients/
+COPY tests/ tests/
+COPY sh9/ sh9/
+COPY cli/ cli/
+COPY fuse/ fuse/
+COPY meta/ meta/
+
+# Build server
+RUN cargo build --release --target aarch64-unknown-linux-gnu -p fs9-server
+
+# Build plugins (pagefs with tikv feature)
+RUN cargo build --release --target aarch64-unknown-linux-gnu \
+    -p fs9-plugin-pagefs --features tikv \
+    -p fs9-plugin-kv \
+    -p fs9-plugin-hellofs \
+    -p fs9-plugin-streamfs \
+    -p fs9-plugin-pubsubfs
+
+# --- Runtime Stage ---
+FROM --platform=linux/arm64 debian:bookworm-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy server binary
+COPY --from=builder /build/target/aarch64-unknown-linux-gnu/release/fs9-server /app/
+
+# Copy plugins
+RUN mkdir -p /app/plugins
+COPY --from=builder /build/target/aarch64-unknown-linux-gnu/release/libfs9_plugin_pagefs.so /app/plugins/
+COPY --from=builder /build/target/aarch64-unknown-linux-gnu/release/libfs9_plugin_kv.so /app/plugins/
+COPY --from=builder /build/target/aarch64-unknown-linux-gnu/release/libfs9_plugin_hellofs.so /app/plugins/
+COPY --from=builder /build/target/aarch64-unknown-linux-gnu/release/libfs9_plugin_streamfs.so /app/plugins/
+COPY --from=builder /build/target/aarch64-unknown-linux-gnu/release/libfs9_plugin_pubsubfs.so /app/plugins/
+
+# Create data directory
+RUN mkdir -p /app/data
+
+# Environment
+ENV FS9_HOST=0.0.0.0
+ENV FS9_PORT=9999
+ENV FS9_PLUGIN_DIR=/app/plugins
+ENV RUST_LOG=info
+
+EXPOSE 9999
+
+CMD ["/app/fs9-server"]
