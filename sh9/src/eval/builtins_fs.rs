@@ -38,10 +38,19 @@ impl Shell {
             "mv" => self.cmd_mv(args, ctx).await,
             "cp" => self.cmd_cp(args, ctx).await,
             "stat" => self.cmd_stat(args, ctx).await,
-            "mount" => self.cmd_mount(args, ctx).await,
-            "lsfs" => self.cmd_lsfs(ctx).await,
+            "mount" => {
+                ctx.write_err("mount: command disabled for security reasons");
+                Ok(1)
+            },
+            "lsfs" => {
+                ctx.write_err("lsfs: command disabled for security reasons");
+                Ok(1)
+            },
             "tree" => self.cmd_tree(args, ctx).await,
-            "plugin" => self.cmd_plugin(args, ctx).await,
+            "plugin" => {
+                ctx.write_err("plugin: command disabled for security reasons");
+                Ok(1)
+            },
             "chroot" => self.cmd_chroot(args, ctx).await,
             "basename" => self.cmd_basename(args, ctx),
             "dirname" => self.cmd_dirname(args, ctx),
@@ -579,99 +588,7 @@ impl Shell {
         Ok(0)
     }
 
-    async fn cmd_mount(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
-        if let Some(client) = &self.client {
-            if args.is_empty() {
-                match client.list_mounts().await {
-                    Ok(mounts) => {
-                        for m in mounts {
-                            ctx.stdout.writeln(&format!("{:<20} {}", m.path, m.provider_name)).map_err(Sh9Error::Io)?;
-                        }
-                        Ok(0)
-                    }
-                    Err(e) => {
-                        ctx.write_err(&format!("mount: {}", e));
-                        Ok(1)
-                    }
-                }
-            } else if args.len() >= 2 {
-                let provider = &args[0];
-                let mount_path = &args[1];
-                let config: Option<serde_json::Value> = if args.len() > 2 {
-                    match serde_json::from_str(&args[2]) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            ctx.write_err(&format!("mount: invalid config JSON: {}", e));
-                            return Ok(1);
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                match client.mount_plugin(mount_path, provider, config).await {
-                    Ok(info) => {
-                        ctx.stdout.writeln(&format!("mounted {} at {}", info.provider_name, info.path)).map_err(Sh9Error::Io)?;
-                        Ok(0)
-                    }
-                    Err(e) => {
-                        ctx.write_err(&format!("mount: {}", e));
-                        Ok(1)
-                    }
-                }
-            } else {
-                ctx.write_err("mount: usage: mount [<fstype> <mount_point> [config_json]]");
-                Ok(1)
-            }
-        } else {
-            ctx.write_err("mount: not connected to FS9 server");
-            Ok(1)
-        }
-    }
-
-    async fn cmd_lsfs(&mut self, ctx: &mut ExecContext) -> Sh9Result<i32> {
-        if let Some(client) = &self.client {
-            let plugins = match client.list_plugins().await {
-                Ok(p) => p,
-                Err(e) => {
-                    ctx.write_err(&format!("lsfs: {}", e));
-                    return Ok(1);
-                }
-            };
-
-            let mounts = match client.list_mounts().await {
-                Ok(m) => m,
-                Err(e) => {
-                    ctx.write_err(&format!("lsfs: {}", e));
-                    return Ok(1);
-                }
-            };
-
-            ctx.stdout.writeln("Available filesystems:").map_err(Sh9Error::Io)?;
-            if plugins.is_empty() {
-                ctx.stdout.writeln("  (none)").map_err(Sh9Error::Io)?;
-            } else {
-                for plugin in &plugins {
-                    ctx.stdout.writeln(&format!("  {}", plugin)).map_err(Sh9Error::Io)?;
-                }
-            }
-
-            ctx.stdout.writeln("").map_err(Sh9Error::Io)?;
-            ctx.stdout.writeln("Current mounts:").map_err(Sh9Error::Io)?;
-            if mounts.is_empty() {
-                ctx.stdout.writeln("  (none)").map_err(Sh9Error::Io)?;
-            } else {
-                for m in &mounts {
-                    ctx.stdout.writeln(&format!("  {:<20} {}", m.path, m.provider_name)).map_err(Sh9Error::Io)?;
-                }
-            }
-
-            Ok(0)
-        } else {
-            ctx.write_err("lsfs: not connected to FS9 server");
-            Ok(1)
-        }
-    }
+    // cmd_mount, cmd_lsfs removed — disabled for security reasons
 
     async fn cmd_tree(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let mut max_depth: Option<usize> = None;
@@ -714,77 +631,7 @@ impl Shell {
         Ok(0)
     }
 
-    async fn cmd_plugin(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
-        if let Some(client) = &self.client {
-            if args.is_empty() {
-                ctx.write_err("plugin: usage: plugin <load|unload|list> [args...]");
-                return Ok(1);
-            }
-
-            match args[0].as_str() {
-                "list" => {
-                    match client.list_plugins().await {
-                        Ok(plugins) => {
-                            if plugins.is_empty() {
-                                ctx.stdout.writeln("no plugins loaded").map_err(Sh9Error::Io)?;
-                            } else {
-                                for p in plugins {
-                                    ctx.stdout.writeln(&p).map_err(Sh9Error::Io)?;
-                                }
-                            }
-                            Ok(0)
-                        }
-                        Err(e) => {
-                            ctx.write_err(&format!("plugin list: {}", e));
-                            Ok(1)
-                        }
-                    }
-                }
-                "load" => {
-                    if args.len() < 3 {
-                        ctx.write_err("plugin load: usage: plugin load <name> <path>");
-                        return Ok(1);
-                    }
-                    let name = &args[1];
-                    let path = &args[2];
-                    match client.load_plugin(name, path).await {
-                        Ok(info) => {
-                            ctx.stdout.writeln(&format!("loaded plugin '{}': {}", info.name, info.status)).map_err(Sh9Error::Io)?;
-                            Ok(0)
-                        }
-                        Err(e) => {
-                            ctx.write_err(&format!("plugin load: {}", e));
-                            Ok(1)
-                        }
-                    }
-                }
-                "unload" => {
-                    if args.len() < 2 {
-                        ctx.write_err("plugin unload: usage: plugin unload <name>");
-                        return Ok(1);
-                    }
-                    let name = &args[1];
-                    match client.unload_plugin(name).await {
-                        Ok(()) => {
-                            ctx.stdout.writeln(&format!("unloaded plugin '{}'", name)).map_err(Sh9Error::Io)?;
-                            Ok(0)
-                        }
-                        Err(e) => {
-                            ctx.write_err(&format!("plugin unload: {}", e));
-                            Ok(1)
-                        }
-                    }
-                }
-                _ => {
-                    ctx.write_err(&format!("plugin: unknown subcommand '{}'. Use: load, unload, list", args[0]));
-                    Ok(1)
-                }
-            }
-        } else {
-            ctx.write_err("plugin: not connected to FS9 server");
-            Ok(1)
-        }
-    }
+    // cmd_plugin removed — disabled for security reasons
 
     async fn cmd_chroot(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if args.is_empty() {
