@@ -87,7 +87,9 @@ impl Db9Client {
             if cached.tenant_ids.iter().any(|id| id == tenant_id) {
                 return Ok(cached.customer_id);
             }
-            return Err(Db9AuthError::TenantNotAuthorized(tenant_id.to_string()));
+            // Tenant not in cached list — might be newly created.
+            // Invalidate and re-fetch below.
+            self.cache.invalidate(&key).await;
         }
 
         // Fetch customer info and databases in parallel
