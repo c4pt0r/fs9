@@ -470,6 +470,25 @@ pub fn format_help_list() -> String {
     }
 
     out.push_str("\nUse 'help COMMAND' or 'COMMAND --help' for more information.\n");
+    out.push_str("\nPrompt Variables (use in shell.prompt config):\n");
+    out.push_str("  {cwd}    Current working directory\n");
+    out.push_str("  {user}   Username ($USER or \"anonymous\")\n");
+    out.push_str("  {host}   Server hostname\n");
+    out.push_str("  {time}   Current time (HH:MM:SS)\n");
+    out.push_str("  {date}   Current date (YYYY-MM-DD)\n");
+    out.push_str("  {status} Last exit code\n");
+    out.push_str("  {ns}     Current namespace\n");
+    out.push_str("\nPrompt Colors (ANSI escape codes):\n");
+    out.push_str("  {red}    Red text\n");
+    out.push_str("  {green}  Green text\n");
+    out.push_str("  {blue}   Blue text\n");
+    out.push_str("  {yellow} Yellow text\n");
+    out.push_str("  {cyan}   Cyan text\n");
+    out.push_str("  {bold}   Bold text\n");
+    out.push_str("  {reset}  Reset formatting\n");
+    out.push_str(
+        "\nExample: shell.prompt: \"{bold}{green}{user}{reset}@{host}:{blue}{cwd}{reset}> \"\n",
+    );
     out
 }
 

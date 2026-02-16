@@ -3,6 +3,7 @@ use fs9_config::Fs9Config;
 use sh9::{Shell, Sh9Error};
 use std::env;
 use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod completer;
 
@@ -89,14 +90,103 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     } else {
-        // Interactive REPL
-        run_repl(&mut shell, &config.shell).await?;
+        run_repl(&mut shell, &config.shell, &server_url).await?;
     }
     
     Ok(())
 }
 
-async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig) -> Result<(), Box<dyn std::error::Error>> {
+/// Get the current username from $USER env var or "anonymous"
+fn get_prompt_user() -> String {
+    env::var("USER")
+        .unwrap_or_else(|_| "anonymous".to_string())
+}
+
+/// Extract hostname from server URL (e.g., "http://localhost:9999" -> "localhost")
+fn get_prompt_host(server_url: &str) -> String {
+    // Remove protocol (http://, https://)
+    let without_protocol = server_url
+        .strip_prefix("https://")
+        .or_else(|| server_url.strip_prefix("http://"))
+        .unwrap_or(server_url);
+    
+    // Take part before ':' (port) or '/' (path)
+    without_protocol
+        .split(':')
+        .next()
+        .unwrap_or("localhost")
+        .to_string()
+}
+
+/// Get current time as HH:MM:SS
+fn get_prompt_time() -> String {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            let total_secs = duration.as_secs();
+            let secs_today = total_secs % 86400;
+            let hours = secs_today / 3600;
+            let minutes = (secs_today % 3600) / 60;
+            let seconds = secs_today % 60;
+            format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+        }
+        Err(_) => "00:00:00".to_string(),
+    }
+}
+
+/// Get current date as YYYY-MM-DD
+fn get_prompt_date() -> String {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            let total_secs = duration.as_secs();
+            let days_since_epoch = total_secs / 86400;
+            
+            // Calculate year, month, day from days since epoch (1970-01-01)
+            let mut year = 1970;
+            let mut remaining_days = days_since_epoch as i32;
+            
+            loop {
+                let days_in_year = if is_leap_year(year) { 366 } else { 365 };
+                if remaining_days < days_in_year {
+                    break;
+                }
+                remaining_days -= days_in_year;
+                year += 1;
+            }
+            
+            let days_in_months = if is_leap_year(year) {
+                [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+            } else {
+                [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+            };
+            
+            let mut month = 1;
+            let mut day = remaining_days + 1;
+            
+            for &days_in_month in &days_in_months {
+                if day <= days_in_month {
+                    break;
+                }
+                day -= days_in_month;
+                month += 1;
+            }
+            
+            format!("{:04}-{:02}-{:02}", year, month, day)
+        }
+        Err(_) => "1970-01-01".to_string(),
+    }
+}
+
+/// Check if a year is a leap year
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+/// Get current namespace (always "default" for local shell)
+fn get_prompt_namespace(_shell: &Shell) -> String {
+    "default".to_string()
+}
+
+async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig, server_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     use rustyline::error::ReadlineError;
     use rustyline::{Config, Editor, CompletionType};
     use completer::Sh9Helper;
@@ -130,13 +220,30 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig) -> 
     }
     println!();
 
+    let mut last_exit_code = 0;
+
     loop {
         {
             let mut cwd_guard = cwd.write().unwrap();
             *cwd_guard = shell.cwd.clone();
         }
 
-        let prompt = shell_config.prompt.replace("{cwd}", &shell.cwd);
+        let prompt = shell_config.prompt
+            .replace("{cwd}", &shell.cwd)
+            .replace("{user}", &get_prompt_user())
+            .replace("{host}", &get_prompt_host(server_url))
+            .replace("{time}", &get_prompt_time())
+            .replace("{date}", &get_prompt_date())
+            .replace("{status}", &last_exit_code.to_string())
+            .replace("{ns}", &get_prompt_namespace(shell))
+            .replace("{red}", "\x1b[31m")
+            .replace("{green}", "\x1b[32m")
+            .replace("{blue}", "\x1b[34m")
+            .replace("{yellow}", "\x1b[33m")
+            .replace("{cyan}", "\x1b[36m")
+            .replace("{bold}", "\x1b[1m")
+            .replace("{reset}", "\x1b[0m");
+        
         match rl.readline(&prompt) {
             Ok(line) => {
                 let line = line.trim();
@@ -151,12 +258,15 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig) -> 
                 }
                 
                 match shell.execute(line).await {
-                    Ok(_) => {}
+                    Ok(code) => {
+                        last_exit_code = code;
+                    }
                     Err(Sh9Error::Exit(code)) => {
                         std::process::exit(code);
                     }
                     Err(e) => {
                         eprintln!("sh9: {}", e);
+                        last_exit_code = 1;
                     }
                 }
             }

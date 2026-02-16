@@ -1,0 +1,36 @@
+# Comma form
+echo {a,b,c}
+
+# Range form
+echo {1..5}
+
+# Prefix and suffix
+echo pre{x,y}suf
+
+# No expansion in quotes
+echo "{a,b}"
+
+# Single element = no expansion
+echo {a}
+
+# Range with chars
+echo {a..e}
+
+# Range with step
+echo {1..10..2}
+
+# Reverse range
+echo {5..1}
+
+# Character reverse range
+echo {e..a}
+
+# Used in assignments (no expansion in bash)
+x={hello,world}
+echo $x
+
+# Multiple braces in one word
+echo {a,b}{1,2}
+
+# Empty alternative
+echo {a,,c}

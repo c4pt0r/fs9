@@ -436,8 +436,19 @@ impl Shell {
         
         for arg in &cmd.args {
             let expanded = self.expand_word(arg, ctx).await?;
-            let glob_expanded = self.expand_glob(&expanded).await;
-            args.extend(glob_expanded);
+            let should_expand_braces = arg.parts.iter().any(|p| matches!(p, WordPart::Literal(_)));
+            let is_fully_quoted = arg.parts.iter().all(|p| matches!(p, WordPart::SingleQuoted(_) | WordPart::DoubleQuoted(_)));
+            
+            let brace_expanded = if is_fully_quoted || !should_expand_braces {
+                vec![expanded]
+            } else {
+                expansion::expand_braces_in_string(&expanded)
+            };
+            
+            for be in brace_expanded {
+                let glob_expanded = self.expand_glob(&be).await;
+                args.extend(glob_expanded);
+            }
         }
         
         for redir in &cmd.redirections {

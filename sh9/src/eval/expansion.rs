@@ -414,6 +414,118 @@ impl Shell {
     }
 }
 
+/// Expand a range like "1..5" or "a..z" or "1..10..2"
+fn expand_range(content: &str) -> Option<Vec<String>> {
+    let parts: Vec<&str> = content.split("..").collect();
+    match parts.len() {
+        2 => {
+            let start = parts[0];
+            let end = parts[1];
+            // Try numeric range
+            if let (Ok(s), Ok(e)) = (start.parse::<i32>(), end.parse::<i32>()) {
+                let step = if s <= e { 1 } else { -1 };
+                let mut result = Vec::new();
+                let mut current = s;
+                while (step > 0 && current <= e) || (step < 0 && current >= e) {
+                    result.push(current.to_string());
+                    current += step;
+                }
+                return Some(result);
+            }
+            // Try character range
+            if start.len() == 1 && end.len() == 1 {
+                let start_char = start.chars().next().unwrap();
+                let end_char = end.chars().next().unwrap();
+                if start_char.is_ascii_alphabetic() && end_char.is_ascii_alphabetic() {
+                    let mut result = Vec::new();
+                    if start_char <= end_char {
+                        for c in start_char..=end_char { result.push(c.to_string()); }
+                    } else {
+                        for c in (end_char..=start_char).rev() { result.push(c.to_string()); }
+                    }
+                    return Some(result);
+                }
+            }
+            None
+        }
+        3 => {
+            // Range with step: {1..10..2}
+            let start = parts[0];
+            let end = parts[1];
+            let step_str = parts[2];
+            if let (Ok(s), Ok(e), Ok(step)) = (start.parse::<i32>(), end.parse::<i32>(), step_str.parse::<i32>()) {
+                if step == 0 { return None; }
+                let mut result = Vec::new();
+                let mut current = s;
+                if step > 0 {
+                    while current <= e { result.push(current.to_string()); current += step; }
+                } else {
+                    while current >= e { result.push(current.to_string()); current += step; }
+                }
+                return Some(result);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Expand brace expressions in a string: {a,b,c} -> vec!["a", "b", "c"]
+/// Also handles ranges: {1..5} -> vec!["1", "2", "3", "4", "5"]
+/// And prefix/suffix: pre{a,b}suf -> vec!["preasuf", "prebsuf"]
+pub(super) fn expand_braces_in_string(s: &str) -> Vec<String> {
+    // Find first unquoted '{'
+    let brace_start = s.chars().enumerate().find_map(|(i, c)| if c == '{' { Some(i) } else { None });
+    let start = match brace_start {
+        Some(i) => i,
+        None => return vec![s.to_string()],
+    };
+    
+    // Find matching '}'
+    let mut depth = 1;
+    let mut brace_end = None;
+    for (i, c) in s[start + 1..].chars().enumerate() {
+        if c == '{' { depth += 1; }
+        else if c == '}' {
+            depth -= 1;
+            if depth == 0 { brace_end = Some(start + 1 + i); break; }
+        }
+    }
+    let end = match brace_end {
+        Some(i) => i,
+        None => return vec![s.to_string()],
+    };
+    
+    let prefix = &s[..start];
+    let content = &s[start + 1..end];
+    let suffix = &s[end + 1..];
+    
+    // Try range expansion first
+    if let Some(alternatives) = expand_range(content) {
+        let mut results = Vec::new();
+        for alt in alternatives {
+            let expanded = format!("{}{}{}", prefix, alt, suffix);
+            results.extend(expand_braces_in_string(&expanded));
+        }
+        return results;
+    }
+    
+    // Try comma-separated alternatives
+    if content.contains(',') {
+        let alternatives: Vec<&str> = content.split(',').collect();
+        if alternatives.len() == 1 { return vec![s.to_string()]; }
+        let mut results = Vec::new();
+        for alt in alternatives {
+            let expanded = format!("{}{}{}", prefix, alt, suffix);
+            results.extend(expand_braces_in_string(&expanded));
+        }
+        return results;
+    }
+    
+    // No expansion
+    vec![s.to_string()]
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
