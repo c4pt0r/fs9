@@ -3,12 +3,23 @@
 //! Validates bearer tokens by calling the db9 customer API and checking
 //! that the requested tenant_id belongs to the authenticated customer.
 //! Results are cached with a 5-minute TTL using moka.
+//!
+//! Protections against amplification attacks:
+//! - **Negative caching**: failed validations are cached (30s TTL) to avoid
+//!   repeated backend calls for the same invalid token.
+//! - **Request coalescing**: concurrent validations for the same token share
+//!   a single in-flight backend request (via tokio broadcast).
+//! - **Backend rate limiting**: a semaphore caps concurrent backend calls to
+//!   prevent a flood of unique invalid tokens from overwhelming db9.
 
 use moka::future::Cache;
 use reqwest::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{Mutex, Semaphore};
 
 #[derive(Debug, Deserialize)]
 struct CustomerResponse {
@@ -37,6 +48,12 @@ pub enum Db9AuthError {
 
     #[error("tenant {0} not authorized for this customer")]
     TenantNotAuthorized(String),
+
+    #[error("token validation failed (cached rejection)")]
+    CachedRejection,
+
+    #[error("too many concurrent validation requests")]
+    RateLimited,
 }
 
 /// Client for validating db9 API bearer tokens.
@@ -44,7 +61,14 @@ pub enum Db9AuthError {
 pub struct Db9Client {
     client: Client,
     base_url: String,
+    /// Positive cache: successful token → auth info (5 min TTL)
     cache: Cache<String, CachedAuth>,
+    /// Negative cache: failed token hash → () (30s TTL)
+    neg_cache: Cache<String, ()>,
+    /// In-flight request coalescing: token hash → broadcast sender
+    in_flight: Arc<Mutex<HashMap<String, tokio::sync::broadcast::Sender<Result<CachedAuth, String>>>>>,
+    /// Semaphore to limit concurrent backend validation calls
+    backend_semaphore: Arc<Semaphore>,
 }
 
 impl Db9Client {
@@ -60,10 +84,19 @@ impl Db9Client {
             .time_to_live(Duration::from_secs(300))
             .build();
 
+        let neg_cache = Cache::builder()
+            .max_capacity(50_000)
+            .time_to_live(Duration::from_secs(30))
+            .build();
+
         Self {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
             cache,
+            neg_cache,
+            in_flight: Arc::new(Mutex::new(HashMap::new())),
+            // Allow at most 20 concurrent backend validation calls
+            backend_semaphore: Arc::new(Semaphore::new(20)),
         }
     }
 
@@ -83,6 +116,7 @@ impl Db9Client {
     ) -> Result<String, Db9AuthError> {
         let key = Self::cache_key(token);
 
+        // 1. Check positive cache
         if let Some(cached) = self.cache.get(&key).await {
             if cached.tenant_ids.iter().any(|id| id == tenant_id) {
                 return Ok(cached.customer_id);
@@ -92,7 +126,77 @@ impl Db9Client {
             self.cache.invalidate(&key).await;
         }
 
-        // Fetch customer info and databases in parallel
+        // 2. Check negative cache — reject immediately if recently failed
+        if self.neg_cache.get(&key).await.is_some() {
+            return Err(Db9AuthError::CachedRejection);
+        }
+
+        // 3. Request coalescing: check if another task is already validating this token
+        let mut in_flight = self.in_flight.lock().await;
+        if let Some(tx) = in_flight.get(&key) {
+            // Another request is in-flight for this token — subscribe and wait
+            let mut rx = tx.subscribe();
+            drop(in_flight); // release lock while waiting
+
+            match rx.recv().await {
+                Ok(Ok(cached)) => {
+                    if cached.tenant_ids.iter().any(|id| id == tenant_id) {
+                        return Ok(cached.customer_id);
+                    }
+                    return Err(Db9AuthError::TenantNotAuthorized(tenant_id.to_string()));
+                }
+                _ => return Err(Db9AuthError::CachedRejection),
+            }
+        }
+
+        // We are the first — register a broadcast channel
+        let (tx, _) = tokio::sync::broadcast::channel(1);
+        in_flight.insert(key.clone(), tx.clone());
+        drop(in_flight);
+
+        // 4. Acquire semaphore permit (rate limit backend calls)
+        let _permit = match self.backend_semaphore.try_acquire() {
+            Ok(permit) => permit,
+            Err(_) => {
+                self.cleanup_in_flight(&key).await;
+                self.neg_cache.insert(key, ()).await;
+                let _ = tx.send(Err("rate limited".to_string()));
+                return Err(Db9AuthError::RateLimited);
+            }
+        };
+
+        // 5. Fetch from backend
+        let result = self.fetch_from_backend(token).await;
+
+        match result {
+            Ok(cached) => {
+                // Positive cache
+                self.cache.insert(key.clone(), cached.clone()).await;
+                self.cleanup_in_flight(&key).await;
+                let _ = tx.send(Ok(cached.clone()));
+
+                if cached.tenant_ids.iter().any(|id| id == tenant_id) {
+                    Ok(cached.customer_id)
+                } else {
+                    Err(Db9AuthError::TenantNotAuthorized(tenant_id.to_string()))
+                }
+            }
+            Err(e) => {
+                // Negative cache for auth failures (401, 403)
+                self.neg_cache.insert(key.clone(), ()).await;
+                self.cleanup_in_flight(&key).await;
+                let _ = tx.send(Err(e.to_string()));
+                Err(e)
+            }
+        }
+    }
+
+    async fn cleanup_in_flight(&self, key: &str) {
+        let mut in_flight = self.in_flight.lock().await;
+        in_flight.remove(key);
+    }
+
+    async fn fetch_from_backend(&self, token: &str) -> Result<CachedAuth, Db9AuthError> {
         let me_url = format!("{}/customer/me", self.base_url);
         let dbs_url = format!("{}/customer/databases", self.base_url);
 
@@ -128,21 +232,9 @@ impl Db9Client {
 
         let tenant_ids: Vec<String> = databases.into_iter().map(|d| d.id).collect();
 
-        // Cache the result
-        self.cache
-            .insert(
-                key,
-                CachedAuth {
-                    customer_id: customer.id.clone(),
-                    tenant_ids: tenant_ids.clone(),
-                },
-            )
-            .await;
-
-        if tenant_ids.iter().any(|id| id == tenant_id) {
-            Ok(customer.id)
-        } else {
-            Err(Db9AuthError::TenantNotAuthorized(tenant_id.to_string()))
-        }
+        Ok(CachedAuth {
+            customer_id: customer.id,
+            tenant_ids,
+        })
     }
 }

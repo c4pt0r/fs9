@@ -319,6 +319,13 @@ pub async fn auth_middleware(
             Err(Db9AuthError::TenantNotAuthorized(_)) => {
                 return forbidden("Tenant not authorized for this token");
             }
+            Err(Db9AuthError::CachedRejection) => {
+                // Token was recently rejected — fall through to JWT quickly
+                tracing::debug!("db9 token rejected (cached), falling back to JWT");
+            }
+            Err(Db9AuthError::RateLimited) => {
+                return too_many_requests("Too many authentication requests, please retry later");
+            }
             Err(Db9AuthError::Backend(401, _)) => {
                 // Token rejected by db9 — fall through to JWT validation
                 tracing::debug!("db9 token rejected (401), falling back to JWT");
@@ -491,6 +498,17 @@ fn forbidden(message: &str) -> Response {
         Json(ErrorResponse {
             error: message.to_string(),
             code: 403,
+        }),
+    )
+        .into_response()
+}
+
+fn too_many_requests(message: &str) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(ErrorResponse {
+            error: message.to_string(),
+            code: 429,
         }),
     )
         .into_response()
