@@ -1,4 +1,6 @@
 === readwrite ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 bind: /tmp/sh9_test_40 -> /mnt
 === cat ===
 hello world
@@ -12,4 +14,6 @@ inner.txt
 === ls after rm ===
 file.txt
 unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 === readwrite done ===

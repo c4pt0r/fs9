@@ -1,10 +1,14 @@
 # Test 42: Glob expansion on local mounts
 echo "=== glob ==="
 
-mkdir /tmp/sh9_test_42
-echo "aaa" > /tmp/sh9_test_42/alpha.txt
-echo "bbb" > /tmp/sh9_test_42/beta.txt
-echo "ccc" > /tmp/sh9_test_42/gamma.log
+# Bootstrap host test directory via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_42
+echo "aaa" > /host_tmp/sh9_test_42/alpha.txt
+echo "bbb" > /host_tmp/sh9_test_42/beta.txt
+echo "ccc" > /host_tmp/sh9_test_42/gamma.log
+unmount /host_tmp
+
 bind /tmp/sh9_test_42 /mnt
 
 # Glob *.txt
@@ -24,5 +28,7 @@ rm /mnt/alpha.txt
 rm /mnt/beta.txt
 rm /mnt/gamma.log
 unmount /mnt
-rm /tmp/sh9_test_42
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_42
+unmount /host_tmp
 echo "=== glob done ==="

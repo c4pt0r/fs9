@@ -1,4 +1,6 @@
 === glob ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 bind: /tmp/sh9_test_42 -> /mnt
 === echo txt ===
 /mnt/alpha.txt /mnt/beta.txt
@@ -7,4 +9,6 @@ bind: /tmp/sh9_test_42 -> /mnt
 === echo all ===
 /mnt/alpha.txt /mnt/beta.txt /mnt/gamma.log
 unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 === glob done ===

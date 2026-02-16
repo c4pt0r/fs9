@@ -1,7 +1,11 @@
 # Test 43: Output/input redirection to local mounts
 echo "=== redirect ==="
 
-mkdir /tmp/sh9_test_43
+# Bootstrap host test directory via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_43
+unmount /host_tmp
+
 bind /tmp/sh9_test_43 /mnt
 
 # Write with > and >>
@@ -23,5 +27,7 @@ wc -l < /mnt/input.txt
 rm /mnt/out.txt
 rm /mnt/input.txt
 unmount /mnt
-rm /tmp/sh9_test_43
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_43
+unmount /host_tmp
 echo "=== redirect done ==="

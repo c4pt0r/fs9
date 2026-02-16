@@ -1,12 +1,14 @@
 # Test 39: Union directory operations (MBEFORE/MAFTER)
 echo "=== union before ==="
 
-# Create two directories with overlapping files
-mkdir /tmp/sh9_test_39a
-mkdir /tmp/sh9_test_39b
-echo "from_a" > /tmp/sh9_test_39a/a.txt
-echo "from_b" > /tmp/sh9_test_39b/b.txt
-echo "overlay_b" > /tmp/sh9_test_39b/a.txt
+# Bootstrap host test directories via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_39a
+mkdir /host_tmp/sh9_test_39b
+echo "from_a" > /host_tmp/sh9_test_39a/a.txt
+echo "from_b" > /host_tmp/sh9_test_39b/b.txt
+echo "overlay_b" > /host_tmp/sh9_test_39b/a.txt
+unmount /host_tmp
 
 # Bind base, then prepend (-b = MBEFORE)
 bind /tmp/sh9_test_39a /mnt
@@ -45,9 +47,11 @@ cat /mnt/a.txt
 unmount /mnt
 
 # Cleanup
-rm /tmp/sh9_test_39a/a.txt
-rm /tmp/sh9_test_39b/b.txt
-rm /tmp/sh9_test_39b/a.txt
-rm /tmp/sh9_test_39a
-rm /tmp/sh9_test_39b
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_39a/a.txt
+rm /host_tmp/sh9_test_39b/b.txt
+rm /host_tmp/sh9_test_39b/a.txt
+rm /host_tmp/sh9_test_39a
+rm /host_tmp/sh9_test_39b
+unmount /host_tmp
 echo "=== union done ==="

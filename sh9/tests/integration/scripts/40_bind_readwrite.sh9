@@ -1,7 +1,11 @@
 # Test 40: Read/write/mkdir/rm on local mounts
 echo "=== readwrite ==="
 
-mkdir /tmp/sh9_test_40
+# Bootstrap host test directory via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_40
+unmount /host_tmp
+
 bind /tmp/sh9_test_40 /mnt
 
 # Write and read a file
@@ -30,5 +34,7 @@ ls /mnt
 # Cleanup
 rm /mnt/file.txt
 unmount /mnt
-rm /tmp/sh9_test_40
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_40
+unmount /host_tmp
 echo "=== readwrite done ==="

@@ -1,4 +1,6 @@
 === redirect ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 bind: /tmp/sh9_test_43 -> /mnt
 === cat out ===
 line1
@@ -9,4 +11,6 @@ line2
 === wc ===
 1
 unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 === redirect done ===

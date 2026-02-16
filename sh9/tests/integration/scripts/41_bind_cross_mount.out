@@ -1,4 +1,6 @@
 === cross mount ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 bind: /tmp/sh9_test_41a -> /mnt/a
 bind: /tmp/sh9_test_41b -> /mnt/b
 === cat copied ===
@@ -12,4 +14,6 @@ copied.txt
 moved.txt
 unmount: /mnt/a
 unmount: /mnt/b
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 === cross mount done ===

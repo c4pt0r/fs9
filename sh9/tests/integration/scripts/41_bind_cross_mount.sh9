@@ -1,8 +1,12 @@
 # Test 41: Cross-mount cp/mv between two local mounts
 echo "=== cross mount ==="
 
-mkdir /tmp/sh9_test_41a
-mkdir /tmp/sh9_test_41b
+# Bootstrap host test directories via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_41a
+mkdir /host_tmp/sh9_test_41b
+unmount /host_tmp
+
 bind /tmp/sh9_test_41a /mnt/a
 bind /tmp/sh9_test_41b /mnt/b
 
@@ -29,6 +33,8 @@ rm /mnt/b/copied.txt
 rm /mnt/b/moved.txt
 unmount /mnt/a
 unmount /mnt/b
-rm /tmp/sh9_test_41a
-rm /tmp/sh9_test_41b
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_41a
+rm /host_tmp/sh9_test_41b
+unmount /host_tmp
 echo "=== cross mount done ==="

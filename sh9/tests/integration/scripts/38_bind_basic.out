@@ -1,5 +1,7 @@
 === bind basic ===
 (no bindings)
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 bind: /tmp/sh9_test_38 -> /mnt
 === ns after bind ===
 /mnt	/tmp/sh9_test_38	(replace)
@@ -8,4 +10,6 @@ test.txt
 unmount: /mnt
 === ns after unmount ===
 (no bindings)
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 === bind basic done ===

@@ -1,4 +1,6 @@
 === union before ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 bind: /tmp/sh9_test_39a -> /mnt
 bind: /tmp/sh9_test_39b -> /mnt
 === ns ===
@@ -22,4 +24,6 @@ bind: /tmp/sh9_test_39b -> /mnt
 === cat a.txt ===
 from_a
 unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
 === union done ===
