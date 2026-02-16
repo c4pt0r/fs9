@@ -18,6 +18,8 @@ mod builtins_text;
 mod control_flow;
 mod expansion;
 mod utils;
+pub(crate) mod local_fs;
+mod namespace;
 
 pub(crate) const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
