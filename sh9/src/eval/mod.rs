@@ -21,6 +21,8 @@ mod utils;
 #[allow(dead_code)]
 mod local_fs;
 mod namespace;
+#[allow(dead_code)]
+mod router;
 
 pub(crate) const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
