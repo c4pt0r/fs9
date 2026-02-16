@@ -156,6 +156,51 @@ fn while_statement(
         })
 }
 
+/// Parse an until loop
+fn until_statement(
+    stmt: impl Parser<Token, Statement, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
+    // until condition; do body; done
+    just(Token::Until)
+        .ignore_then(simple_pipeline())
+        .then_ignore(just(Token::Semicolon).or_not())
+        .then_ignore(just(Token::Do))
+        .then(stmt.repeated())
+        .then_ignore(just(Token::Done))
+        .map(|(condition, body)| {
+            Statement::Until(UntilLoop {
+                condition: Box::new(condition),
+                body,
+            })
+        })
+}
+
+/// Parse a case statement
+fn case_statement(
+    stmt: impl Parser<Token, Statement, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
+    // case word in pattern|pattern) body;; ... esac
+    let newline_sep = filter(|t| matches!(t, Token::Newline)).repeated();
+
+    let case_arm = word()
+        .separated_by(just(Token::Pipe))
+        .at_least(1)
+        .then_ignore(just(Token::RightParen))
+        .then(stmt.clone().repeated())
+        .then_ignore(just(Token::Semicolon))
+        .then_ignore(just(Token::Semicolon))
+        .then_ignore(newline_sep.clone())
+        .map(|(patterns, body)| CaseArm { patterns, body });
+
+    just(Token::Case)
+        .ignore_then(word())
+        .then_ignore(just(Token::In))
+        .then_ignore(newline_sep.clone())
+        .then(case_arm.repeated())
+        .then_ignore(just(Token::Esac))
+        .map(|(word, arms)| Statement::Case(CaseStatement { word, arms }))
+}
+
 /// Parse a function definition
 fn function_def(
     stmt: impl Parser<Token, Statement, Error = Simple<Token>> + Clone,
@@ -211,10 +256,19 @@ fn pipeline(
     stmt: impl Parser<Token, Statement, Error = Simple<Token>> + Clone,
 ) -> impl Parser<Token, Pipeline, Error = Simple<Token>> + Clone {
     let compound_while = while_statement(stmt.clone()).map(PipelineElement::Compound);
+    let compound_until = until_statement(stmt.clone()).map(PipelineElement::Compound);
     let compound_for = for_statement(stmt.clone()).map(PipelineElement::Compound);
-    let compound_if = if_statement(stmt).map(PipelineElement::Compound);
+    let compound_if = if_statement(stmt.clone()).map(PipelineElement::Compound);
+    let compound_case = case_statement(stmt).map(PipelineElement::Compound);
     let simple = command().map(PipelineElement::Simple);
-    let element = choice((compound_while, compound_for, compound_if, simple));
+    let element = choice((
+        compound_while,
+        compound_until,
+        compound_for,
+        compound_if,
+        compound_case,
+        simple,
+    ));
 
     element
         .separated_by(just(Token::Pipe))
@@ -304,11 +358,12 @@ fn word() -> impl Parser<Token, Word, Error = Simple<Token>> + Clone {
         Token::CompoundWord(segments) => Ok(Word {
             parts: segments
                 .into_iter()
-                .map(|(is_sq, s)| {
-                    if is_sq {
-                        WordPart::SingleQuoted(s)
-                    } else {
-                        WordPart::Literal(s)
+                .map(|(quote_type, s)| {
+                    use crate::lexer::QuoteType;
+                    match quote_type {
+                        QuoteType::SingleQuoted => WordPart::SingleQuoted(s),
+                        QuoteType::DoubleQuoted => WordPart::DoubleQuoted(s),
+                        QuoteType::Bare => WordPart::Literal(s),
                     }
                 })
                 .collect(),
@@ -416,35 +471,13 @@ fn token_to_safe_string(tok: Token) -> String {
         }
         Token::SingleQuoted(s) => format!("'{}'", s),
         Token::CompoundWord(segments) => {
+            use crate::lexer::QuoteType;
             segments
                 .into_iter()
-                .map(|(is_sq, s)| {
-                    if is_sq {
-                        format!("'{}'", s)
-                    } else {
-                        // Same quoting logic as Word
-                        let needs_quoting = s.chars().any(|c| {
-                            c.is_whitespace()
-                                || matches!(
-                                    c,
-                                    '|' | '&'
-                                        | ';'
-                                        | '<'
-                                        | '>'
-                                        | '('
-                                        | ')'
-                                        | '{'
-                                        | '}'
-                                        | '$'
-                                        | '"'
-                                        | '\''
-                                        | '#'
-                                        | '='
-                                        | '\\'
-                                        | '`'
-                                )
-                        });
-                        if needs_quoting {
+                .map(|(quote_type, s)| {
+                    match quote_type {
+                        QuoteType::SingleQuoted => format!("'{}'", s),
+                        QuoteType::DoubleQuoted => {
                             let mut escaped = String::with_capacity(s.len() + 2);
                             escaped.push('"');
                             for c in s.chars() {
@@ -455,8 +488,44 @@ fn token_to_safe_string(tok: Token) -> String {
                             }
                             escaped.push('"');
                             escaped
-                        } else {
-                            s
+                        }
+                        QuoteType::Bare => {
+                            // Same quoting logic as Word
+                            let needs_quoting = s.chars().any(|c| {
+                                c.is_whitespace()
+                                    || matches!(
+                                        c,
+                                        '|' | '&'
+                                            | ';'
+                                            | '<'
+                                            | '>'
+                                            | '('
+                                            | ')'
+                                            | '{'
+                                            | '}'
+                                            | '$'
+                                            | '"'
+                                            | '\''
+                                            | '#'
+                                            | '='
+                                            | '\\'
+                                            | '`'
+                                    )
+                            });
+                            if needs_quoting {
+                                let mut escaped = String::with_capacity(s.len() + 2);
+                                escaped.push('"');
+                                for c in s.chars() {
+                                    if c == '\\' || c == '"' {
+                                        escaped.push('\\');
+                                    }
+                                    escaped.push(c);
+                                }
+                                escaped.push('"');
+                                escaped
+                            } else {
+                                s
+                            }
                         }
                     }
                 })
@@ -597,7 +666,9 @@ fn word_to_string(word: &Word) -> String {
     word.parts
         .iter()
         .map(|p| match p {
-            WordPart::Literal(s) | WordPart::SingleQuoted(s) => s.clone(),
+            WordPart::Literal(s) | WordPart::SingleQuoted(s) | WordPart::DoubleQuoted(s) => {
+                s.clone()
+            }
             WordPart::Variable(s) => format!("${}", s),
             WordPart::BracedVariable(s) => format!("${{{}}}", s),
             WordPart::Arithmetic(s) => format!("$(({})", s),

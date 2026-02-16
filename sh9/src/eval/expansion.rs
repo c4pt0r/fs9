@@ -11,11 +11,18 @@ impl Shell {
         for part in &word.parts {
             match part {
                 WordPart::Literal(s) => {
-                    let expanded = self.expand_variables_in_string(s, ctx).await?;
+                    // Tilde expansion: ~ or ~/path → $HOME or $HOME/path
+                    let tilde_expanded = self.expand_tilde(s, ctx);
+                    let expanded = self.expand_variables_in_string(&tilde_expanded, ctx).await?;
                     result.push_str(&expanded);
                 }
                 WordPart::SingleQuoted(s) => {
                     result.push_str(s);
+                }
+                WordPart::DoubleQuoted(s) => {
+                    // Double-quoted: expand variables but NOT tilde
+                    let expanded = self.expand_variables_in_string(s, ctx).await?;
+                    result.push_str(&expanded);
                 }
                 WordPart::Variable(name) => {
                     let value = self.get_variable_value(name, ctx);
@@ -108,6 +115,26 @@ impl Shell {
         }
         
         Ok(result)
+    }
+
+    fn expand_tilde(&self, s: &str, ctx: &ExecContext) -> String {
+        if s.starts_with("~/") {
+            let home = self.get_variable_value("HOME", ctx);
+            if home.is_empty() {
+                s.to_string()
+            } else {
+                format!("{}{}", home, &s[1..])
+            }
+        } else if s == "~" {
+            let home = self.get_variable_value("HOME", ctx);
+            if home.is_empty() {
+                s.to_string()
+            } else {
+                home
+            }
+        } else {
+            s.to_string()
+        }
     }
 
     async fn expand_braced_param(&mut self, content: &str, ctx: &mut ExecContext) -> Sh9Result<String> {

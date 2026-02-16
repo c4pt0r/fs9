@@ -14,7 +14,7 @@ impl Shell {
             "true" | "false" | "exit" | "export" | "set" | "unset" | "env"
             | "local" | "alias" | "unalias" | "source" | "." | "sleep"
             | "jobs" | "fg" | "bg" | "kill" | "wait" | "help" | "http"
-            | "upload" | "download" | "[" | "test" => {
+            | "upload" | "download" | "[" | "test" | ":" => {
                 Some(self.dispatch_shell_builtin(name, args, ctx).await)
             }
             _ => None,
@@ -30,6 +30,7 @@ impl Shell {
         match name {
             "true" => Ok(0),
             "false" => Ok(1),
+            ":" => Ok(0),
             "exit" => self.cmd_exit(args),
             "export" => self.cmd_export(args),
             "set" => self.cmd_set(ctx),

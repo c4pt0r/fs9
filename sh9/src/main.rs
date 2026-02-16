@@ -116,8 +116,8 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig) -> 
     rl.set_helper(Some(helper));
 
     let history_file = shell_config.history.file.clone();
-    let history_path = if history_file.starts_with("~/") {
-        dirs_home().join(&history_file[2..])
+    let history_path = if let Some(stripped) = history_file.strip_prefix("~/") {
+        dirs_home().join(stripped)
     } else {
         std::path::PathBuf::from(&history_file)
     };

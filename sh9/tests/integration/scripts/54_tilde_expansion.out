@@ -1,0 +1,6 @@
+/test/home
+/test/home/subdir
+~
+/test/home
+prefix~suffix
+~/quoted

@@ -1,0 +1,26 @@
+# Basic case
+x=hello
+case $x in
+hello) echo "matched hello";;
+world) echo "matched world";;
+esac
+
+# Wildcard pattern
+y=foobar
+case $y in
+foo*) echo "starts with foo";;
+*) echo "default";;
+esac
+
+# Alternation with |
+z=banana
+case $z in
+apple|orange) echo "citrus or apple";;
+banana|grape) echo "banana or grape";;
+esac
+
+# No match
+case "nomatch" in
+a) echo "should not print";;
+esac
+echo "after no match: $?"

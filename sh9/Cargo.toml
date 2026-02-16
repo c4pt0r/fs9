@@ -46,6 +46,7 @@ regex = "1"
 
 # Utilities
 bytes = { workspace = true }
+libc = "0.2"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

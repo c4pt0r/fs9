@@ -1,0 +1,23 @@
+# Test 53: Null Command (:)
+# Tests: null command returns 0, ignores arguments, works in conditionals
+
+# Simple null command
+:
+echo "after colon: $?"
+
+# Null command with arguments (should be ignored)
+: some args that are ignored
+echo "with args: $?"
+
+# Null command in if condition
+if :; then
+    echo "colon is truthy"
+fi
+
+# Null command in while loop
+x=0
+while [ $x -lt 2 ]; do
+    : "loop iteration $x"
+    x=$((x + 1))
+done
+echo "loop completed"

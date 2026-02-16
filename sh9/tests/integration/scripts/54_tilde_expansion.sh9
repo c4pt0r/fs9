@@ -1,0 +1,24 @@
+# Test 54: Tilde Expansion (~)
+# Tests: ~ expands to $HOME, ~/path expands to $HOME/path, quoted ~ stays literal
+
+# Set HOME explicitly for deterministic output
+HOME=/test/home
+
+# Test bare tilde
+echo ~
+
+# Test tilde with path
+echo ~/subdir
+
+# Test quoted tilde (should NOT expand)
+echo "~"
+
+# Test tilde in variable assignment
+x=~
+echo $x
+
+# Test tilde in middle of word (should NOT expand)
+echo prefix~suffix
+
+# Test tilde in double quotes (should NOT expand)
+echo "~/quoted"

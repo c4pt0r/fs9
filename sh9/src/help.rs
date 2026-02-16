@@ -7,6 +7,12 @@ pub struct CommandHelp {
 
 pub const COMMANDS: &[CommandHelp] = &[
     CommandHelp {
+        name: ":",
+        summary: "Null command (does nothing, returns 0)",
+        usage: ":",
+        options: &[],
+    },
+    CommandHelp {
         name: "alias",
         summary: "Define or display aliases",
         usage: "alias [name[=value] ...]",

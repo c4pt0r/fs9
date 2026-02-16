@@ -1,6 +1,6 @@
 use crate::error::{Sh9Error, Sh9Result};
 use crate::shell::Shell;
-use super::ExecContext;
+use super::{ExecContext, Output};
 use super::namespace::MountFlags;
 use super::router::NamespaceRouter;
 use super::utils::format_mtime;
@@ -127,6 +127,7 @@ impl Shell {
         match router.stat(&full_path).await {
             Ok(info) if !info.is_dir => {
                 // It's a file — show it as a single entry
+                let colorize = matches!(&ctx.stdout, Output::Stdout) && unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
                 if long_format {
                     let type_char = '-';
                     let mode = info.mode;
@@ -143,13 +144,23 @@ impl Shell {
                         if mode & 0o001 != 0 { 'x' } else { '-' },
                     );
                     let mtime_str = format_mtime(info.mtime);
+                    let name = if colorize && info.mode & 0o111 != 0 {
+                        format!("\x1b[32m{}\x1b[0m", path)
+                    } else {
+                        path.to_string()
+                    };
                     let line = format!(
                         "{}{} {} {} {:>6} {} {}",
-                        type_char, mode_str, info.uid, info.gid, info.size, mtime_str, path
+                        type_char, mode_str, info.uid, info.gid, info.size, mtime_str, name
                     );
                     ctx.stdout.writeln(&line).map_err(Sh9Error::Io)?;
                 } else {
-                    ctx.stdout.writeln(path).map_err(Sh9Error::Io)?;
+                    let name = if colorize && info.mode & 0o111 != 0 {
+                        format!("\x1b[32m{}\x1b[0m", path)
+                    } else {
+                        path.to_string()
+                    };
+                    ctx.stdout.writeln(&name).map_err(Sh9Error::Io)?;
                 }
                 return Ok(0);
             }
@@ -175,6 +186,7 @@ impl Shell {
         match router.readdir(full_path).await {
             Ok(entries) => {
                 let mut subdirs = Vec::new();
+                let colorize = matches!(&ctx.stdout, Output::Stdout) && unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
                 for entry in &entries {
                     if long_format {
                         let type_char = if entry.is_dir { 'd' } else { '-' };
@@ -192,13 +204,35 @@ impl Shell {
                             if mode & 0o001 != 0 { 'x' } else { '-' },
                         );
                         let mtime_str = format_mtime(entry.mtime);
+                        let name = if colorize {
+                            if entry.is_dir {
+                                format!("\x1b[34m{}\x1b[0m", entry.name)
+                            } else if entry.mode & 0o111 != 0 {
+                                format!("\x1b[32m{}\x1b[0m", entry.name)
+                            } else {
+                                entry.name.clone()
+                            }
+                        } else {
+                            entry.name.clone()
+                        };
                         let line = format!(
                             "{}{} {} {} {:>6} {} {}",
-                            type_char, mode_str, entry.uid, entry.gid, entry.size, mtime_str, entry.name
+                            type_char, mode_str, entry.uid, entry.gid, entry.size, mtime_str, name
                         );
                         ctx.stdout.writeln(&line).map_err(Sh9Error::Io)?;
                     } else {
-                        ctx.stdout.writeln(&entry.name).map_err(Sh9Error::Io)?;
+                        let name = if colorize {
+                            if entry.is_dir {
+                                format!("\x1b[34m{}\x1b[0m", entry.name)
+                            } else if entry.mode & 0o111 != 0 {
+                                format!("\x1b[32m{}\x1b[0m", entry.name)
+                            } else {
+                                entry.name.clone()
+                            }
+                        } else {
+                            entry.name.clone()
+                        };
+                        ctx.stdout.writeln(&name).map_err(Sh9Error::Io)?;
                     }
                     if recursive && entry.is_dir {
                         let sub_full = if full_path.ends_with('/') {

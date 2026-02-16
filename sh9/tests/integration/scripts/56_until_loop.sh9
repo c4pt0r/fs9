@@ -1,0 +1,14 @@
+# Basic until loop
+i=0
+until [ $i -eq 3 ]; do
+echo $i
+i=$(($i + 1))
+done
+
+# Until with break
+j=0
+until false; do
+if [ $j -eq 2 ]; then break; fi
+echo "j=$j"
+j=$(($j + 1))
+done

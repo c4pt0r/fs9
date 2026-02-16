@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::error::Sh9Result;
 use crate::shell::Shell;
 use super::ExecContext;
+use super::utils::match_glob_pattern;
 
 impl Shell {
     pub(crate) async fn execute_test(&self, args: &[String], _ctx: &mut ExecContext) -> Sh9Result<i32> {
@@ -189,5 +190,56 @@ impl Shell {
         }
         
         Ok(result)
+    }
+    
+    pub(crate) async fn execute_until(&mut self, until_loop: &crate::ast::UntilLoop, ctx: &mut ExecContext) -> Sh9Result<i32> {
+        let mut result = 0;
+        
+        loop {
+            let cond_result = self.execute_pipeline(&until_loop.condition, ctx).await?;
+            if cond_result == 0 {
+                break;
+            }
+            
+            for stmt in &until_loop.body {
+                result = self.execute_statement_boxed(stmt, ctx).await?;
+                
+                if ctx.should_break {
+                    ctx.should_break = false;
+                    return Ok(result);
+                }
+                if ctx.should_continue {
+                    ctx.should_continue = false;
+                    break;
+                }
+                if ctx.return_value.is_some() {
+                    return Ok(result);
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+
+    pub(crate) async fn execute_case(&mut self, case_stmt: &CaseStatement, ctx: &mut ExecContext) -> Sh9Result<i32> {
+        let word_value = self.expand_word(&case_stmt.word, ctx).await?;
+        
+        for arm in &case_stmt.arms {
+            for pattern in &arm.patterns {
+                let pattern_value = self.expand_word(pattern, ctx).await?;
+                if match_glob_pattern(&pattern_value, &word_value) {
+                    let mut last = 0;
+                    for stmt in &arm.body {
+                        last = self.execute_statement_boxed(stmt, ctx).await?;
+                        if ctx.should_break || ctx.should_continue || ctx.return_value.is_some() {
+                            return Ok(last);
+                        }
+                    }
+                    return Ok(last);
+                }
+            }
+        }
+        
+        Ok(0)
     }
 }

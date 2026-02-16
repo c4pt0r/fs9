@@ -153,7 +153,12 @@ impl ExecContext {
     pub fn write_err(&mut self, msg: &str) {
         match &mut self.stderr {
             Output::Stdout => {
-                let msg_with_newline = format!("{}\n", msg);
+                // Red ANSI color only if stderr is connected to a terminal
+                let msg_with_newline = if unsafe { libc::isatty(libc::STDERR_FILENO) } == 1 {
+                    format!("\x1b[31m{}\x1b[0m\n", msg)
+                } else {
+                    format!("{}\n", msg)
+                };
                 let _ = std::io::stderr().write_all(msg_with_newline.as_bytes());
             }
             Output::Buffer(buf) => {
@@ -320,6 +325,14 @@ impl Shell {
                 };
                 ctx.return_value = Some(code);
                 Ok(code)
+            }
+            
+            Statement::Case(case_stmt) => {
+                self.execute_case(case_stmt, ctx).await
+            }
+            
+            Statement::Until(until_loop) => {
+                self.execute_until(until_loop, ctx).await
             }
         }
     }

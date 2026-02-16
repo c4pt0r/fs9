@@ -37,6 +37,10 @@ pub enum Statement {
     Continue,
     /// Return statement with optional value
     Return(Option<Word>),
+    /// Case statement: case word in pattern) body;; ... esac
+    Case(CaseStatement),
+    /// Until loop: until condition; do body; done
+    Until(UntilLoop),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,7 +110,9 @@ impl fmt::Display for Word {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for part in &self.parts {
             match part {
-                WordPart::Literal(s) | WordPart::SingleQuoted(s) => write!(f, "{}", s)?,
+                WordPart::Literal(s) | WordPart::SingleQuoted(s) | WordPart::DoubleQuoted(s) => {
+                    write!(f, "{}", s)?
+                }
                 WordPart::Variable(name) => write!(f, "${}", name)?,
                 WordPart::BracedVariable(name) => write!(f, "${{{}}}", name)?,
                 WordPart::Arithmetic(expr) => write!(f, "$(({}))", expr)?,
@@ -121,6 +127,7 @@ impl fmt::Display for Word {
 pub enum WordPart {
     Literal(String),
     SingleQuoted(String),
+    DoubleQuoted(String),
     Variable(String),
     BracedVariable(String),
     Arithmetic(String),
@@ -173,6 +180,24 @@ pub struct ForLoop {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WhileLoop {
     pub condition: Box<Pipeline>,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UntilLoop {
+    pub condition: Box<Pipeline>,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaseStatement {
+    pub word: Word,
+    pub arms: Vec<CaseArm>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaseArm {
+    pub patterns: Vec<Word>,
     pub body: Vec<Statement>,
 }
 
