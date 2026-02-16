@@ -268,7 +268,7 @@ impl Shell {
         let mut result = String::new();
         let mut depth = initial_depth;
         
-        while let Some(c) = chars.next() {
+        for c in chars.by_ref() {
             if c == '(' {
                 depth += 1;
                 result.push(c);

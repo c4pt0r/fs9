@@ -46,7 +46,7 @@ pub struct MountInfo {
     pub flags: MountFlags,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Namespace {
     mounts: BTreeMap<String, Vec<NamespaceLayer>>,
     next_order: usize,

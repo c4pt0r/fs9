@@ -86,6 +86,10 @@ impl NamespaceRouter {
         }
     }
 
+    pub fn with_namespace(namespace: Namespace, client: Option<Arc<Fs9Client>>) -> Self {
+        Self { namespace, client }
+    }
+
     pub async fn stat(&self, path: &str) -> Result<RouteFileInfo, String> {
         let normalized = normalize_path(path);
         let local_layers = self.local_layers_for_path(&normalized);

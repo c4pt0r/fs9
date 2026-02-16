@@ -20,9 +20,8 @@ mod expansion;
 mod utils;
 #[allow(dead_code)]
 mod local_fs;
-mod namespace;
-#[allow(dead_code)]
-mod router;
+pub mod namespace;
+pub mod router;
 
 pub(crate) const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
@@ -32,6 +31,11 @@ pub enum Output {
     File {
         client: Arc<Fs9Client>,
         path: String,
+        buffer: Vec<u8>,
+        mode: FileWriteMode,
+    },
+    LocalFile {
+        path: std::path::PathBuf,
         buffer: Vec<u8>,
         mode: FileWriteMode,
     },
@@ -54,8 +58,7 @@ impl Output {
                 buf.extend_from_slice(data);
                 Ok(())
             }
-            Output::File { buffer, .. } => {
-                // Just buffer the data, flush will write it
+            Output::File { buffer, .. } | Output::LocalFile { buffer, .. } => {
                 buffer.extend_from_slice(data);
                 Ok(())
             }
@@ -76,19 +79,41 @@ impl Output {
                     let to_write = std::mem::take(buffer);
                     if let Err(e) = match mode {
                         FileWriteMode::Write => {
-                            let result = client.write_file(&path, &to_write).await;
-                            // After first write, switch to append mode
+                            let result = client.write_file(path, &to_write).await;
                             *mode = FileWriteMode::Append;
                             result
                         }
                         FileWriteMode::Append => {
-                            let existing: bytes::Bytes = client.read_file(&path).await.unwrap_or_default();
+                            let existing: bytes::Bytes = client.read_file(path).await.unwrap_or_default();
                             let mut combined = existing.to_vec();
                             combined.extend_from_slice(&to_write);
-                            client.write_file(&path, &combined).await
+                            client.write_file(path, &combined).await
                         }
                     } {
                         let msg = format!("Error flushing to {}: {}\n", path, e);
+                        let _ = std::io::stderr().write_all(msg.as_bytes());
+                    }
+                }
+                Ok(())
+            }
+            Output::LocalFile { path, buffer, mode } => {
+                if !buffer.is_empty() {
+                    let to_write = std::mem::take(buffer);
+                    let result = match mode {
+                        FileWriteMode::Write => {
+                            std::fs::write(&*path, &to_write)
+                                .map_err(|e| e.to_string())
+                                .map(|()| { *mode = FileWriteMode::Append; })
+                        }
+                        FileWriteMode::Append => {
+                            std::fs::OpenOptions::new()
+                                .create(true).append(true).open(&*path)
+                                .and_then(|mut f| f.write_all(&to_write))
+                                .map_err(|e| e.to_string())
+                        }
+                    };
+                    if let Err(e) = result {
+                        let msg = format!("Error flushing to {}: {}\n", path.display(), e);
                         let _ = std::io::stderr().write_all(msg.as_bytes());
                     }
                 }
@@ -135,7 +160,7 @@ impl ExecContext {
                 buf.extend_from_slice(msg.as_bytes());
                 buf.push(b'\n');
             }
-            Output::File { buffer, .. } => {
+            Output::File { buffer, .. } | Output::LocalFile { buffer, .. } => {
                 buffer.extend_from_slice(msg.as_bytes());
                 buffer.push(b'\n');
             }
@@ -341,6 +366,30 @@ impl Shell {
         }
     }
     
+    fn resolve_local_path(&self, vfs_path: &str) -> Option<std::path::PathBuf> {
+        let ns = self.namespace.read().unwrap();
+        let resolutions = ns.resolve(vfs_path);
+        resolutions.first().and_then(|(source, rel)| {
+            local_fs::safe_resolve(source, rel.trim_start_matches('/')).ok()
+        })
+    }
+
+    fn make_output_for_path(&self, path: &str, mode: FileWriteMode) -> Option<Output> {
+        if let Some(lp) = self.resolve_local_path(path) {
+            return Some(Output::LocalFile {
+                path: lp,
+                buffer: Vec::new(),
+                mode,
+            });
+        }
+        self.client.as_ref().map(|client| Output::File {
+            client: client.clone(),
+            path: path.to_string(),
+            buffer: Vec::new(),
+            mode,
+        })
+    }
+
     async fn execute_command(&mut self, cmd: &Command, ctx: &mut ExecContext) -> Sh9Result<i32> {
         let raw_name = self.expand_word(&cmd.name, ctx).await?;
         
@@ -365,20 +414,26 @@ impl Shell {
         
         for redir in &cmd.redirections {
             let target = self.expand_word(&redir.target, ctx).await?;
-            match &redir.kind {
-                RedirectKind::StdinRead => {
-                    let path = self.resolve_path(&target);
-                    if let Some(client) = &self.client {
-                        match client.read_file(&path).await {
-                            Ok(data) => ctx.stdin = Some(data.to_vec()),
-                            Err(e) => {
-                                ctx.write_err(&format!("sh9: {}: {}", target, e));
-                                return Ok(1);
-                            }
+            if redir.kind == RedirectKind::StdinRead {
+                let path = self.resolve_path(&target);
+                let local_path = self.resolve_local_path(&path);
+                if let Some(lp) = local_path {
+                    match std::fs::read(&lp) {
+                        Ok(data) => ctx.stdin = Some(data),
+                        Err(e) => {
+                            ctx.write_err(&format!("sh9: {}: {}", target, e));
+                            return Ok(1);
+                        }
+                    }
+                } else if let Some(client) = &self.client {
+                    match client.read_file(&path).await {
+                        Ok(data) => ctx.stdin = Some(data.to_vec()),
+                        Err(e) => {
+                            ctx.write_err(&format!("sh9: {}: {}", target, e));
+                            return Ok(1);
                         }
                     }
                 }
-                _ => {}
             }
         }
         
@@ -412,47 +467,31 @@ impl Shell {
         }
 
         let saved_stdout = if let Some((path, mode)) = stdout_redir_path {
-            if let Some(client) = &self.client {
-                Some(std::mem::replace(&mut ctx.stdout, Output::File {
-                    client: client.clone(),
-                    path,
-                    buffer: Vec::new(),
-                    mode,
-                }))
-            } else {
-                None
-            }
+            self.make_output_for_path(&path, mode).map(|output| {
+                std::mem::replace(&mut ctx.stdout, output)
+            })
         } else {
             None
         };
 
         let saved_stderr = if let Some((path, mode)) = stderr_redir_path {
-            if let Some(client) = &self.client {
-                Some(std::mem::replace(&mut ctx.stderr, Output::File {
-                    client: client.clone(),
-                    path,
-                    buffer: Vec::new(),
-                    mode,
-                }))
-            } else {
-                None
-            }
+            self.make_output_for_path(&path, mode).map(|output| {
+                std::mem::replace(&mut ctx.stderr, output)
+            })
         } else {
             None
         };
         
         let result = self.execute_builtin(&name, &args, ctx).await;
 
-        // Flush and restore stderr
-        if saved_stderr.is_some() {
+        if let Some(prev) = saved_stderr {
             ctx.stderr.flush().await.map_err(Sh9Error::Io)?;
-            ctx.stderr = saved_stderr.unwrap();
+            ctx.stderr = prev;
         }
 
-        // Flush and restore stdout
-        if saved_stdout.is_some() {
+        if let Some(prev) = saved_stdout {
             ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
-            ctx.stdout = saved_stdout.unwrap();
+            ctx.stdout = prev;
         }
         
         if let Ok(code) = &result {
@@ -565,5 +604,45 @@ mod tests {
         let script = crate::parser::parse("false").unwrap();
         let result = shell.execute_script(&script).await.unwrap();
         assert_eq!(result, 1);
+    }
+
+    #[tokio::test]
+    async fn test_local_file_output_write_flush() {
+        let dir = std::env::temp_dir().join(format!("sh9_test_lf_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file_path = dir.join("out.txt");
+
+        let mut output = Output::LocalFile {
+            path: file_path.clone(),
+            buffer: Vec::new(),
+            mode: FileWriteMode::Write,
+        };
+        output.write(b"hello").unwrap();
+        output.flush().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "hello");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_local_file_output_append_mode() {
+        let dir = std::env::temp_dir().join(format!("sh9_test_lf_append_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let file_path = dir.join("append.txt");
+
+        let mut output = Output::LocalFile {
+            path: file_path.clone(),
+            buffer: Vec::new(),
+            mode: FileWriteMode::Write,
+        };
+        output.write(b"first").unwrap();
+        output.flush().await.unwrap();
+
+        output.write(b" second").unwrap();
+        output.flush().await.unwrap();
+
+        assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "first second");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

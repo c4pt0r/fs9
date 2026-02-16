@@ -161,15 +161,14 @@ impl Shell {
             } else {
                 format!("/{}", parts[..parts.len() - 1].join("/"))
             }
+        } else if self.cwd == "/" {
+            format!("/{}", path)
         } else {
-            if self.cwd == "/" {
-                format!("/{}", path)
-            } else {
-                format!("{}/{}", self.cwd, path)
-            }
+            format!("{}/{}", self.cwd, path)
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn print_tree<'a>(
         &'a self,
         client: &'a fs9_client::Fs9Client,
@@ -248,8 +247,7 @@ impl Shell {
                     if let serde_json::Value::Array(arr) = val {
                         next.extend(arr);
                     }
-                } else if part.ends_with("[]") {
-                    let key = &part[..part.len() - 2];
+                } else if let Some(key) = part.strip_suffix("[]") {
                     if let serde_json::Value::Object(obj) = &val {
                         if let Some(serde_json::Value::Array(arr)) = obj.get(key) {
                             next.extend(arr.clone());

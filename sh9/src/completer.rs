@@ -3,6 +3,7 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Helper};
+use sh9::eval::namespace::Namespace;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -11,14 +12,20 @@ use fs9_client::Fs9Client;
 pub struct Sh9Helper {
     pub client: Option<Arc<Fs9Client>>,
     pub cwd: Arc<RwLock<String>>,
+    pub namespace: Arc<RwLock<Namespace>>,
     pub runtime: tokio::runtime::Handle,
 }
 
 impl Sh9Helper {
-    pub fn new(client: Option<Arc<Fs9Client>>, cwd: Arc<RwLock<String>>) -> Self {
+    pub fn new(
+        client: Option<Arc<Fs9Client>>,
+        cwd: Arc<RwLock<String>>,
+        namespace: Arc<RwLock<Namespace>>,
+    ) -> Self {
         Self {
             client,
             cwd,
+            namespace,
             runtime: tokio::runtime::Handle::current(),
         }
     }
@@ -66,39 +73,67 @@ impl Completer for Sh9Helper {
         }
         
         if word.starts_with('/') || word.starts_with('.') || word.contains('/') || !is_first_word {
-            if let Some(client) = &self.client {
-                let cwd = self.cwd.read().unwrap().clone();
-                
-                let (dir_path, partial_name) = if let Some(last_slash) = word.rfind('/') {
-                    let dir = &word[..=last_slash];
-                    let name = &word[last_slash + 1..];
-                    (resolve_path(&cwd, dir.trim_end_matches('/')), name)
+            let cwd = self.cwd.read().unwrap().clone();
+
+            let (dir_path, partial_name) = if let Some(last_slash) = word.rfind('/') {
+                let dir = &word[..=last_slash];
+                let name = &word[last_slash + 1..];
+                (resolve_path(&cwd, dir.trim_end_matches('/')), name)
+            } else {
+                (cwd.clone(), word)
+            };
+
+            let partial_owned = partial_name.to_string();
+
+            let local_completions = {
+                let ns = self.namespace.read().unwrap();
+                let resolutions = ns.resolve(&dir_path);
+                if resolutions.is_empty() {
+                    None
                 } else {
-                    (cwd.clone(), word)
-                };
-                
+                    let mut names = Vec::new();
+                    let mut seen = std::collections::HashSet::new();
+                    for (source, rel) in &resolutions {
+                        let local_dir = source.join(rel.trim_start_matches('/'));
+                        if let Ok(entries) = std::fs::read_dir(&local_dir) {
+                            for entry in entries.flatten() {
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                if name.starts_with(&*partial_owned) && seen.insert(name.clone()) {
+                                    let is_dir = entry.file_type().is_ok_and(|ft| ft.is_dir());
+                                    names.push(if is_dir { format!("{name}/") } else { name });
+                                }
+                            }
+                        }
+                    }
+                    Some(names)
+                }
+            };
+
+            let path_completions = if let Some(local) = local_completions {
+                local
+            } else if let Some(client) = &self.client {
                 let client = client.clone();
                 let dir_path_owned = dir_path.clone();
-                let partial_owned = partial_name.to_string();
-                
-                let path_completions = tokio::task::block_in_place(|| {
+                tokio::task::block_in_place(|| {
                     self.runtime.block_on(async {
                         complete_path(&client, &dir_path_owned, &partial_owned).await
                     })
+                })
+            } else {
+                vec![]
+            };
+
+            for name in path_completions {
+                let replacement = if word.contains('/') {
+                    let last_slash = word.rfind('/').unwrap();
+                    format!("{}{}", &word[..=last_slash], name)
+                } else {
+                    name.clone()
+                };
+                completions.push(Pair {
+                    display: name,
+                    replacement,
                 });
-                
-                for name in path_completions {
-                    let replacement = if word.contains('/') {
-                        let last_slash = word.rfind('/').unwrap();
-                        format!("{}{}", &word[..=last_slash], name)
-                    } else {
-                        name.clone()
-                    };
-                    completions.push(Pair {
-                        display: name,
-                        replacement,
-                    });
-                }
             }
         }
         
@@ -150,12 +185,10 @@ fn resolve_path(cwd: &str, path: &str) -> String {
         }
     } else if path.is_empty() {
         cwd.to_string()
+    } else if cwd == "/" {
+        format!("/{}", path)
     } else {
-        if cwd == "/" {
-            format!("/{}", path)
-        } else {
-            format!("{}/{}", cwd, path)
-        }
+        format!("{}/{}", cwd, path)
     }
 }
 

@@ -1,9 +1,11 @@
 //! Shell state and execution engine
 
 use crate::error::{Sh9Error, Sh9Result};
+use crate::eval::namespace::Namespace;
+use crate::eval::router::NamespaceRouter;
 use fs9_client::Fs9Client;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::task::JoinHandle;
 
 /// Function signature for custom built-in commands registered via [`Shell::register_builtin`] or [`ShellBuilder::builtin`].
@@ -42,6 +44,7 @@ pub struct Shell {
     pub jobs: Vec<BackgroundJob>,
     pub next_job_id: usize,
     pub custom_builtins: HashMap<String, Arc<Box<BuiltinFn>>>,
+    pub namespace: Arc<RwLock<Namespace>>,
 }
 
 impl Shell {
@@ -58,6 +61,7 @@ impl Shell {
             jobs: Vec::new(),
             next_job_id: 1,
             custom_builtins: HashMap::new(),
+            namespace: Arc::new(RwLock::new(Namespace::new())),
         }
     }
 
@@ -133,7 +137,13 @@ impl Shell {
             jobs: Vec::new(),
             next_job_id: 1,
             custom_builtins: self.custom_builtins.clone(),
+            namespace: self.namespace.clone(),
         }
+    }
+
+    pub fn router(&self) -> NamespaceRouter {
+        let ns = self.namespace.read().unwrap().clone();
+        NamespaceRouter::with_namespace(ns, self.client.clone())
     }
     
     pub fn add_job(&mut self, command: String, handle: JoinHandle<i32>) -> usize {
@@ -272,6 +282,7 @@ impl ShellBuilder {
             jobs: Vec::new(),
             next_job_id: 1,
             custom_builtins: self.builtins,
+            namespace: Arc::new(RwLock::new(Namespace::new())),
         }
     }
 }
@@ -378,5 +389,26 @@ mod tests {
         // Test Clone
         let cloned = output.clone();
         assert_eq!(cloned.exit_code, output.exit_code);
+    }
+
+    #[test]
+    fn test_shell_new_has_empty_namespace() {
+        let shell = Shell::new("http://localhost:8080");
+        let ns = shell.namespace.read().unwrap();
+        assert!(ns.list_mounts().is_empty());
+    }
+
+    #[test]
+    fn test_clone_for_subshell_shares_namespace_arc() {
+        let shell = Shell::new("http://localhost:8080");
+        let sub = shell.clone_for_subshell();
+        assert!(Arc::ptr_eq(&shell.namespace, &sub.namespace));
+    }
+
+    #[test]
+    fn test_shell_builder_has_empty_namespace() {
+        let shell = ShellBuilder::new("http://localhost:9999").build();
+        let ns = shell.namespace.read().unwrap();
+        assert!(ns.list_mounts().is_empty());
     }
 }

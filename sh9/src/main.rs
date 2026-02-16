@@ -106,7 +106,7 @@ async fn run_repl(shell: &mut Shell, prompt_template: &str) -> Result<(), Box<dy
         .build();
 
     let cwd = Arc::new(RwLock::new(shell.cwd.clone()));
-    let helper = Sh9Helper::new(shell.client.clone(), cwd.clone());
+    let helper = Sh9Helper::new(shell.client.clone(), cwd.clone(), shell.namespace.clone());
 
     let mut rl = Editor::with_config(rl_config)?;
     rl.set_helper(Some(helper));

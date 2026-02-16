@@ -255,11 +255,9 @@ impl Shell {
                         // Try to create, ignore "already exists" errors
                         let _ = client.mkdir(&current).await;
                     }
-                } else {
-                    if let Err(e) = client.mkdir(&full_path).await {
-                        ctx.write_err(&format!("mkdir: {}: {}", path, e));
-                        return Ok(1);
-                    }
+                } else if let Err(e) = client.mkdir(&full_path).await {
+                    ctx.write_err(&format!("mkdir: {}: {}", path, e));
+                    return Ok(1);
                 }
             } else {
                 ctx.write_err("mkdir: not connected to FS9 server");
@@ -366,12 +364,10 @@ impl Shell {
                             return Ok(1);
                         }
                     }
-                } else {
-                    if let Err(e) = client.remove(&full_path).await {
-                        if !force {
-                            ctx.write_err(&format!("rm: {}: {}", path, e));
-                            return Ok(1);
-                        }
+                } else if let Err(e) = client.remove(&full_path).await {
+                    if !force {
+                        ctx.write_err(&format!("rm: {}: {}", path, e));
+                        return Ok(1);
                     }
                 }
             } else {

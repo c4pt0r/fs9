@@ -893,7 +893,7 @@ impl Shell {
                 let parts: Vec<&str> = line.split(delimiter).collect();
                 f.iter()
                     .filter_map(|&i| parts.get(i.saturating_sub(1)))
-                    .map(|s| *s)
+                    .copied()
                     .collect::<Vec<_>>()
                     .join(&delimiter.to_string())
             } else if let Some((start, end)) = chars {

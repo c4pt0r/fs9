@@ -222,7 +222,7 @@ impl Shell {
             let job_index = self.jobs.iter().position(|j| j.id == id);
             if let Some(idx) = job_index {
                 let job = self.jobs.remove(idx);
-                ctx.stdout.writeln(&format!("{}", job.command)).map_err(Sh9Error::Io)?;
+                ctx.stdout.writeln(&job.command).map_err(Sh9Error::Io)?;
 
                 match job.handle.await {
                     Ok(code) => {
