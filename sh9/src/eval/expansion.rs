@@ -357,25 +357,22 @@ impl Shell {
             (self.cwd.clone(), pattern.to_string())
         };
         
-        let client = match &self.client {
-            Some(c) => c,
-            None => return vec![pattern.to_string()],
-        };
-        
-        let entries = match client.readdir(&dir).await {
+        let router = self.router();
+
+        let entries = match router.readdir(&dir).await {
             Ok(e) => e,
             Err(_) => return vec![pattern.to_string()],
         };
         
         let mut matches: Vec<String> = entries
             .iter()
-            .filter(|e| match_glob_pattern(&file_pattern, e.name()))
+            .filter(|e| match_glob_pattern(&file_pattern, &e.name))
             .map(|e| {
                 if pattern.contains('/') {
                     let last_slash = pattern.rfind('/').unwrap();
-                    format!("{}{}", &pattern[..=last_slash], e.name())
+                    format!("{}{}", &pattern[..=last_slash], e.name)
                 } else {
-                    e.name().to_string()
+                    e.name.clone()
                 }
             })
             .collect();
@@ -387,5 +384,107 @@ impl Shell {
         } else {
             matches
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::Shell;
+    use crate::eval::namespace::MountFlags;
+
+    struct TempDirGuard {
+        path: PathBuf,
+    }
+
+    impl TempDirGuard {
+        fn new(prefix: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "{}_{}_{}",
+                prefix,
+                std::process::id(),
+                unique
+            ));
+            fs::create_dir_all(&path).expect("failed to create temp test dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[tokio::test]
+    async fn expand_glob_uses_local_mount_for_matching_files() {
+        let tmp = TempDirGuard::new("sh9_glob_local");
+        fs::write(tmp.path().join("a.txt"), b"a").expect("write failed");
+        fs::write(tmp.path().join("b.txt"), b"b").expect("write failed");
+        fs::write(tmp.path().join("c.log"), b"c").expect("write failed");
+
+        let shell = Shell::new("http://localhost:8080");
+        {
+            let mut ns = shell.namespace.write().unwrap();
+            ns.bind(tmp.path(), "/mnt", MountFlags::MREPL);
+        }
+
+        let txt = shell.expand_glob("/mnt/*.txt").await;
+        assert_eq!(txt, vec!["/mnt/a.txt", "/mnt/b.txt"]);
+
+        let all = shell.expand_glob("/mnt/*").await;
+        assert_eq!(all, vec!["/mnt/a.txt", "/mnt/b.txt", "/mnt/c.log"]);
+    }
+
+    #[tokio::test]
+    async fn expand_glob_union_mount_merges_and_deduplicates() {
+        let lower = TempDirGuard::new("sh9_glob_union_lower");
+        let upper = TempDirGuard::new("sh9_glob_union_upper");
+        fs::write(lower.path().join("a.txt"), b"a").expect("write failed");
+        fs::write(lower.path().join("shared.txt"), b"lower").expect("write failed");
+        fs::write(upper.path().join("b.txt"), b"b").expect("write failed");
+        fs::write(upper.path().join("shared.txt"), b"upper").expect("write failed");
+
+        let shell = Shell::new("http://localhost:8080");
+        {
+            let mut ns = shell.namespace.write().unwrap();
+            ns.bind(lower.path(), "/union", MountFlags::MREPL);
+            ns.bind(upper.path(), "/union", MountFlags::MBEFORE);
+        }
+
+        let matches = shell.expand_glob("/union/*.txt").await;
+        assert_eq!(
+            matches,
+            vec!["/union/a.txt", "/union/b.txt", "/union/shared.txt"]
+        );
+    }
+
+    #[tokio::test]
+    async fn expand_glob_returns_pattern_when_no_match_or_no_client() {
+        let tmp = TempDirGuard::new("sh9_glob_nomatch");
+        fs::write(tmp.path().join("a.txt"), b"a").expect("write failed");
+
+        let shell = Shell::new("http://localhost:8080");
+        {
+            let mut ns = shell.namespace.write().unwrap();
+            ns.bind(tmp.path(), "/mnt", MountFlags::MREPL);
+        }
+
+        let no_match = shell.expand_glob("/mnt/*.xyz").await;
+        assert_eq!(no_match, vec!["/mnt/*.xyz"]);
+
+        let unmounted = shell.expand_glob("/remote/*.txt").await;
+        assert_eq!(unmounted, vec!["/remote/*.txt"]);
     }
 }
