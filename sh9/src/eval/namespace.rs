@@ -124,6 +124,37 @@ impl Namespace {
         !self.resolve(path).is_empty()
     }
 
+    /// Returns names of direct child mount points under `dir`.
+    /// E.g., if `/mnt` and `/mnt/sub` are mounted, `child_mount_names("/")` returns `["mnt"]`
+    /// and `child_mount_names("/mnt")` returns `["sub"]`.
+    #[must_use]
+    pub fn child_mount_names(&self, dir: &str) -> Vec<String> {
+        let dir = normalize_path(dir);
+        let prefix = if dir == "/" {
+            "/".to_string()
+        } else {
+            format!("{dir}/")
+        };
+
+        let mut names = std::collections::HashSet::new();
+        for target in self.mounts.keys() {
+            if target == &dir {
+                continue;
+            }
+            if let Some(rest) = target.strip_prefix(prefix.as_str()) {
+                if let Some(child_name) = rest.split('/').next() {
+                    if !child_name.is_empty() {
+                        names.insert(child_name.to_string());
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<String> = names.into_iter().collect();
+        result.sort();
+        result
+    }
+
     #[must_use]
     pub fn list_mounts(&self) -> Vec<MountInfo> {
         self.mounts
@@ -304,5 +335,24 @@ mod tests {
         assert!(mounts
             .iter()
             .any(|m| m.target == "/x" && m.source == PathBuf::from("/c")));
+    }
+
+    #[test]
+    fn child_mount_names_returns_direct_children() {
+        let mut ns = Namespace::new();
+        ns.bind(Path::new("/a"), "/mnt", MountFlags::MREPL);
+        ns.bind(Path::new("/b"), "/mnt/sub", MountFlags::MREPL);
+        ns.bind(Path::new("/c"), "/data", MountFlags::MREPL);
+
+        assert_eq!(ns.child_mount_names("/"), vec!["data", "mnt"]);
+        assert_eq!(ns.child_mount_names("/mnt"), vec!["sub"]);
+        assert_eq!(ns.child_mount_names("/data"), Vec::<String>::new());
+        assert_eq!(ns.child_mount_names("/nonexistent"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn child_mount_names_empty_namespace() {
+        let ns = Namespace::new();
+        assert_eq!(ns.child_mount_names("/"), Vec::<String>::new());
     }
 }

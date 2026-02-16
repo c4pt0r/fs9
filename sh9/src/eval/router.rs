@@ -143,6 +143,23 @@ impl NamespaceRouter {
 
             if had_success {
                 merged.sort_by(|left, right| left.name.cmp(&right.name));
+                // Inject synthetic entries for child mount points
+                let child_mounts = self.namespace.child_mount_names(&normalized);
+                for name in child_mounts {
+                    if seen.insert(name.clone()) {
+                        merged.push(RouteFileInfo {
+                            name: name.clone(),
+                            path: join_vfs_path(&normalized, &name),
+                            size: 0,
+                            is_dir: true,
+                            mode: 0o755,
+                            mtime: 0,
+                            uid: 0,
+                            gid: 0,
+                        });
+                    }
+                }
+                merged.sort_by(|left, right| left.name.cmp(&right.name));
                 return Ok(merged);
             }
 
@@ -150,12 +167,29 @@ impl NamespaceRouter {
         }
 
         let client = self.require_client()?;
-        let mut entries = client.readdir(&normalized).await.map_err(|e| e.to_string())?;
-        entries.sort_by(|left, right| left.name().cmp(right.name()));
-        Ok(entries
-            .iter()
-            .map(RouteFileInfo::from)
-            .collect::<Vec<RouteFileInfo>>())
+        let remote_entries = client.readdir(&normalized).await.map_err(|e| e.to_string())?;
+        let mut result: Vec<RouteFileInfo> = remote_entries.iter().map(RouteFileInfo::from).collect();
+
+        // Inject synthetic entries for child mount points
+        let mut seen: HashSet<String> = result.iter().map(|e| e.name.clone()).collect();
+        let child_mounts = self.namespace.child_mount_names(&normalized);
+        for name in child_mounts {
+            if seen.insert(name.clone()) {
+                result.push(RouteFileInfo {
+                    name: name.clone(),
+                    path: join_vfs_path(&normalized, &name),
+                    size: 0,
+                    is_dir: true,
+                    mode: 0o755,
+                    mtime: 0,
+                    uid: 0,
+                    gid: 0,
+                });
+            }
+        }
+
+        result.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(result)
     }
 
     pub async fn read_file(&self, path: &str) -> Result<Vec<u8>, String> {
@@ -857,5 +891,25 @@ mod tests {
             fs::read(dst_mount.path().join("file.txt")).expect("read failed"),
             b"copy-me"
         );
+    }
+
+    #[tokio::test]
+    async fn router_readdir_synthesizes_mount_points() {
+        let tmp = TempDirGuard::new();
+        let child = TempDirGuard::new();
+        fs::write(tmp.path().join("file.txt"), b"data").expect("write failed");
+
+        let mut router = NamespaceRouter::new(None);
+        router.namespace.bind(tmp.path(), "/mnt", MountFlags::MREPL);
+        router.namespace.bind(child.path(), "/mnt/sub", MountFlags::MREPL);
+
+        let entries = router.readdir("/mnt").await.expect("readdir failed");
+        let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+        assert!(names.contains(&"file.txt".to_string()));
+        assert!(names.contains(&"sub".to_string()));
+
+        let sub_entry = entries.iter().find(|e| e.name == "sub").unwrap();
+        assert!(sub_entry.is_dir);
+        assert_eq!(sub_entry.path, "/mnt/sub");
     }
 }
