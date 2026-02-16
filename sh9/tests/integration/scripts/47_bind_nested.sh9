@@ -1,0 +1,40 @@
+# Test 47: Nested bind mounts
+echo "=== bind nested ==="
+
+# Bootstrap host test data via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_47_main
+mkdir /host_tmp/sh9_test_47_sub
+echo "main" > /host_tmp/sh9_test_47_main/root.txt
+echo "nested" > /host_tmp/sh9_test_47_sub/sub.txt
+unmount /host_tmp
+
+bind /tmp/sh9_test_47_main /mnt
+bind /tmp/sh9_test_47_sub /mnt/sub
+
+echo "=== ls /mnt ==="
+ls /mnt
+
+echo "=== ls /mnt/sub ==="
+ls /mnt/sub
+
+echo "=== cat root ==="
+cat /mnt/root.txt
+
+echo "=== cat sub ==="
+cat /mnt/sub/sub.txt
+
+echo "=== ns ==="
+ns
+
+unmount /mnt/sub
+unmount /mnt
+
+# Cleanup
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_47_main/root.txt
+rm /host_tmp/sh9_test_47_sub/sub.txt
+rm /host_tmp/sh9_test_47_main
+rm /host_tmp/sh9_test_47_sub
+unmount /host_tmp
+echo "=== bind nested done ==="

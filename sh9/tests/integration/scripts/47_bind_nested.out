@@ -1,0 +1,21 @@
+=== bind nested ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+bind: /tmp/sh9_test_47_main -> /mnt
+bind: /tmp/sh9_test_47_sub -> /mnt/sub
+=== ls /mnt ===
+root.txt
+=== ls /mnt/sub ===
+sub.txt
+=== cat root ===
+main
+=== cat sub ===
+nested
+=== ns ===
+/mnt	/tmp/sh9_test_47_main	(replace)
+/mnt/sub	/tmp/sh9_test_47_sub	(replace)
+unmount: /mnt/sub
+unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+=== bind nested done ===

@@ -1,0 +1,13 @@
+=== bind source test ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+bind: /tmp/sh9_test_49 -> /mnt
+sourced-one
+sourced-two
+local_value
+file_yes
+dir_yes
+unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+=== bind source test done ===

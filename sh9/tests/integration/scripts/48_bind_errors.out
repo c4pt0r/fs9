@@ -1,0 +1,9 @@
+=== bind errors ===
+bind: /tmp -> /ok
+unmount: /ok
+after missing source
+after missing args
+after unmount missing
+after unmount usage
+after self bind
+=== bind errors done ===

@@ -1,0 +1,22 @@
+# Test 48: Error handling for bind/unmount
+echo "=== bind errors ==="
+
+bind /tmp /ok
+unmount /ok
+
+bind /tmp/sh9_test_48_missing /bad
+echo "after missing source"
+
+bind
+echo "after missing args"
+
+unmount /not_mounted
+echo "after unmount missing"
+
+unmount
+echo "after unmount usage"
+
+bind /tmp /tmp
+echo "after self bind"
+
+echo "=== bind errors done ==="

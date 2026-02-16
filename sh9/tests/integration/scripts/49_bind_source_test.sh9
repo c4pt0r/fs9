@@ -1,0 +1,28 @@
+# Test 49: source and test/[ on local bind mounts
+echo "=== bind source test ==="
+
+# Bootstrap host test data via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_49
+echo "payload" > /host_tmp/sh9_test_49/data.txt
+echo "echo sourced-one" > /host_tmp/sh9_test_49/script.sh9
+echo "echo sourced-two" >> /host_tmp/sh9_test_49/script.sh9
+echo "VALUE=local_value" >> /host_tmp/sh9_test_49/script.sh9
+unmount /host_tmp
+
+bind /tmp/sh9_test_49 /mnt
+
+source /mnt/script.sh9
+echo $VALUE
+
+test -f /mnt/data.txt && echo "file_yes"
+[ -d /mnt ] && echo "dir_yes"
+
+# Cleanup
+rm /mnt/data.txt
+rm /mnt/script.sh9
+unmount /mnt
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_49
+unmount /host_tmp
+echo "=== bind source test done ==="
