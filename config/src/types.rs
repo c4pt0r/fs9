@@ -305,7 +305,7 @@ impl Default for HistoryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            file: "~/.fs9_history".to_string(),
+            file: "~/.sh9_history".to_string(),
             max_entries: 10000,
         }
     }

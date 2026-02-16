@@ -90,19 +90,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         // Interactive REPL
-        run_repl(&mut shell, &config.shell.prompt).await?;
+        run_repl(&mut shell, &config.shell).await?;
     }
     
     Ok(())
 }
 
-async fn run_repl(shell: &mut Shell, prompt_template: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig) -> Result<(), Box<dyn std::error::Error>> {
     use rustyline::error::ReadlineError;
     use rustyline::{Config, Editor, CompletionType};
     use completer::Sh9Helper;
 
+    let max_history = shell_config.history.max_entries;
     let rl_config = Config::builder()
         .completion_type(CompletionType::List)
+        .max_history_size(max_history)?
+        .history_ignore_dups(true)?
+        .history_ignore_space(true)
         .build();
 
     let cwd = Arc::new(RwLock::new(shell.cwd.clone()));
@@ -111,7 +115,12 @@ async fn run_repl(shell: &mut Shell, prompt_template: &str) -> Result<(), Box<dy
     let mut rl = Editor::with_config(rl_config)?;
     rl.set_helper(Some(helper));
 
-    let history_path = dirs_home().join(".sh9_history");
+    let history_file = shell_config.history.file.clone();
+    let history_path = if history_file.starts_with("~/") {
+        dirs_home().join(&history_file[2..])
+    } else {
+        std::path::PathBuf::from(&history_file)
+    };
     let _ = rl.load_history(&history_path);
 
     println!("sh9 - FS9 Shell v{}", env!("CARGO_PKG_VERSION"));
@@ -127,7 +136,7 @@ async fn run_repl(shell: &mut Shell, prompt_template: &str) -> Result<(), Box<dy
             *cwd_guard = shell.cwd.clone();
         }
 
-        let prompt = prompt_template.replace("{cwd}", &shell.cwd);
+        let prompt = shell_config.prompt.replace("{cwd}", &shell.cwd);
         match rl.readline(&prompt) {
             Ok(line) => {
                 let line = line.trim();
