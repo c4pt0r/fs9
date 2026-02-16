@@ -162,22 +162,13 @@ impl Shell {
             return Ok(1);
         }
         let path = &args[0];
-        let content = if let Some(client) = &self.client {
-            let full_path = self.resolve_path(path);
-            match client.read_file(&full_path).await {
-                Ok(data) => String::from_utf8_lossy(&data).to_string(),
-                Err(e) => {
-                    ctx.write_err(&format!("source: {}: {}", path, e));
-                    return Ok(1);
-                }
-            }
-        } else {
-            match std::fs::read_to_string(path) {
-                Ok(s) => s,
-                Err(e) => {
-                    ctx.write_err(&format!("source: {}: {}", path, e));
-                    return Ok(1);
-                }
+        let full_path = self.resolve_path(path);
+        let router = self.router();
+        let content = match router.read_file(&full_path).await {
+            Ok(data) => String::from_utf8_lossy(&data).to_string(),
+            Err(e) => {
+                ctx.write_err(&format!("source: {}: {}", path, e));
+                return Ok(1);
             }
         };
         

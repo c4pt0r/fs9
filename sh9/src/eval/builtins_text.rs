@@ -193,11 +193,12 @@ impl Shell {
             
             for path in paths {
                 let full_path = self.resolve_path(path);
-                if let Some(client) = &self.client {
-                    match client.open(&full_path, OpenFlags::read()).await {
-                        Ok(handle) => {
-                            let mut offset = 0u64;
-                            if stream_mode {
+                if stream_mode {
+                    // Stream mode requires handle-based I/O (FS9 streaming filesystems)
+                    if let Some(client) = &self.client {
+                        match client.open(&full_path, OpenFlags::read()).await {
+                            Ok(handle) => {
+                                let mut offset = 0u64;
                                 loop {
                                     match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
                                         Ok(data) if data.is_empty() => {
@@ -215,32 +216,27 @@ impl Shell {
                                         }
                                     }
                                 }
-                            } else {
-                                loop {
-                                    match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
-                                        Ok(data) if data.is_empty() => break,
-                                        Ok(data) => {
-                                            ctx.stdout.write(&data).map_err(Sh9Error::Io)?;
-                                            offset += data.len() as u64;
-                                        }
-                                        Err(e) => {
-                                            let _ = client.close(handle).await;
-                                            ctx.write_err(&format!("cat: {}: {}", path, e));
-                                            return Ok(1);
-                                        }
-                                    }
-                                }
-                                let _ = client.close(handle).await;
                             }
+                            Err(e) => {
+                                ctx.write_err(&format!("cat: {}: {}", path, e));
+                                return Ok(1);
+                            }
+                        }
+                    } else {
+                        ctx.write_err("cat: --stream requires FS9 server connection");
+                        return Ok(1);
+                    }
+                } else {
+                    let router = self.router();
+                    match router.read_file(&full_path).await {
+                        Ok(data) => {
+                            ctx.stdout.write(&data).map_err(Sh9Error::Io)?;
                         }
                         Err(e) => {
                             ctx.write_err(&format!("cat: {}: {}", path, e));
                             return Ok(1);
                         }
                     }
-                } else {
-                    ctx.write_err("cat: not connected to FS9 server");
-                    return Ok(1);
                 }
             }
         }
@@ -306,19 +302,15 @@ impl Shell {
             String::from_utf8_lossy(&data).to_string()
         } else if !file_paths.is_empty() {
             let mut combined = String::new();
+            let router = self.router();
             for path in &file_paths {
                 let full_path = self.resolve_path(path);
-                if let Some(client) = &self.client {
-                    match client.read_file(&full_path).await {
-                        Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
-                        Err(e) => {
-                            ctx.write_err(&format!("grep: {}: {}", path, e));
-                            return Ok(2);
-                        }
+                match router.read_file(&full_path).await {
+                    Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
+                    Err(e) => {
+                        ctx.write_err(&format!("grep: {}: {}", path, e));
+                        return Ok(2);
                     }
-                } else {
-                    ctx.write_err("grep: not connected to FS9 server");
-                    return Ok(2);
                 }
             }
             combined
@@ -406,19 +398,15 @@ impl Shell {
             String::from_utf8_lossy(&data).to_string()
         } else if !file_paths.is_empty() {
             let mut combined = String::new();
+            let router = self.router();
             for path in &file_paths {
                 let full_path = self.resolve_path(path);
-                if let Some(client) = &self.client {
-                    match client.read_file(&full_path).await {
-                        Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
-                        Err(e) => {
-                            ctx.write_err(&format!("wc: {}: {}", path, e));
-                            return Ok(1);
-                        }
+                match router.read_file(&full_path).await {
+                    Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
+                    Err(e) => {
+                        ctx.write_err(&format!("wc: {}: {}", path, e));
+                        return Ok(1);
                     }
-                } else {
-                    ctx.write_err("wc: not connected to FS9 server");
-                    return Ok(1);
                 }
             }
             combined
@@ -472,19 +460,15 @@ impl Shell {
             String::from_utf8_lossy(&data).to_string()
         } else if !file_paths.is_empty() {
             let mut combined = String::new();
+            let router = self.router();
             for path in &file_paths {
                 let full_path = self.resolve_path(path);
-                if let Some(client) = &self.client {
-                    match client.read_file(&full_path).await {
-                        Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
-                        Err(e) => {
-                            ctx.write_err(&format!("head: {}: {}", path, e));
-                            return Ok(1);
-                        }
+                match router.read_file(&full_path).await {
+                    Ok(data) => combined.push_str(&String::from_utf8_lossy(&data)),
+                    Err(e) => {
+                        ctx.write_err(&format!("head: {}: {}", path, e));
+                        return Ok(1);
                     }
-                } else {
-                    ctx.write_err("head: not connected to FS9 server");
-                    return Ok(1);
                 }
             }
             combined
@@ -543,36 +527,52 @@ impl Shell {
 
         for path in &paths {
             let full_path = self.resolve_path(path);
-            if let Some(client) = &self.client {
-                match client.open(&full_path, OpenFlags::read()).await {
-                    Ok(handle) => {
-                        let mut content = Vec::new();
-                        let mut offset = 0u64;
+            let router = self.router();
 
-                        loop {
-                            match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
-                                Ok(data) if data.is_empty() => break,
-                                Ok(data) => {
-                                    content.extend_from_slice(&data);
-                                    offset += data.len() as u64;
-                                }
-                                Err(e) => {
-                                    let _ = client.close(handle).await;
-                                    ctx.write_err(&format!("tail: {}: {}", path, e));
-                                    return Ok(1);
+            let content = match router.read_file(&full_path).await {
+                Ok(data) => data,
+                Err(e) => {
+                    ctx.write_err(&format!("tail: {}: {}", path, e));
+                    return Ok(1);
+                }
+            };
+
+            let content_str = String::from_utf8_lossy(&content);
+            let all_lines: Vec<&str> = content_str.lines().collect();
+            let start = all_lines.len().saturating_sub(n);
+
+            for line in &all_lines[start..] {
+                ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
+            }
+
+            if follow {
+                if router.is_local(&full_path) {
+                    let mut last_size = content.len() as u64;
+                    loop {
+                        match router.stat(&full_path).await {
+                            Ok(info) => {
+                                if info.size > last_size {
+                                    match router.read_file(&full_path).await {
+                                        Ok(data) => {
+                                            if (last_size as usize) < data.len() {
+                                                ctx.stdout.write(&data[last_size as usize..]).map_err(Sh9Error::Io)?;
+                                                ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
+                                            }
+                                            last_size = data.len() as u64;
+                                        }
+                                        Err(_) => break,
+                                    }
                                 }
                             }
+                            Err(_) => break,
                         }
-
-                        let content_str = String::from_utf8_lossy(&content);
-                        let all_lines: Vec<&str> = content_str.lines().collect();
-                        let start = all_lines.len().saturating_sub(n);
-
-                        for line in &all_lines[start..] {
-                            ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
-                        }
-
-                        if follow {
+                        ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                } else if let Some(client) = &self.client {
+                    match client.open(&full_path, OpenFlags::read()).await {
+                        Ok(handle) => {
+                            let mut offset = content.len() as u64;
                             loop {
                                 match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
                                     Ok(data) if data.is_empty() => {
@@ -591,18 +591,13 @@ impl Shell {
                                     }
                                 }
                             }
-                        } else {
-                            let _ = client.close(handle).await;
+                        }
+                        Err(e) => {
+                            ctx.write_err(&format!("tail: {}: {}", path, e));
+                            return Ok(1);
                         }
                     }
-                    Err(e) => {
-                        ctx.write_err(&format!("tail: {}: {}", path, e));
-                        return Ok(1);
-                    }
                 }
-            } else {
-                ctx.write_err("tail: not connected to FS9 server");
-                return Ok(1);
             }
         }
         Ok(0)
@@ -629,17 +624,13 @@ impl Shell {
             String::from_utf8_lossy(&data).to_string()
         } else if let Some(path) = file_path {
             let full_path = self.resolve_path(path);
-            if let Some(client) = &self.client {
-                match client.read_file(&full_path).await {
-                    Ok(data) => String::from_utf8_lossy(&data).to_string(),
-                    Err(e) => {
-                        ctx.write_err(&format!("sort: {}: {}", path, e));
-                        return Ok(1);
-                    }
+            let router = self.router();
+            match router.read_file(&full_path).await {
+                Ok(data) => String::from_utf8_lossy(&data).to_string(),
+                Err(e) => {
+                    ctx.write_err(&format!("sort: {}: {}", path, e));
+                    return Ok(1);
                 }
-            } else {
-                ctx.write_err("sort: not connected to FS9 server");
-                return Ok(1);
             }
         } else {
             String::new()
@@ -685,17 +676,13 @@ impl Shell {
             String::from_utf8_lossy(&data).to_string()
         } else if let Some(path) = file_path {
             let full_path = self.resolve_path(path);
-            if let Some(client) = &self.client {
-                match client.read_file(&full_path).await {
-                    Ok(data) => String::from_utf8_lossy(&data).to_string(),
-                    Err(e) => {
-                        ctx.write_err(&format!("uniq: {}: {}", path, e));
-                        return Ok(1);
-                    }
+            let router = self.router();
+            match router.read_file(&full_path).await {
+                Ok(data) => String::from_utf8_lossy(&data).to_string(),
+                Err(e) => {
+                    ctx.write_err(&format!("uniq: {}: {}", path, e));
+                    return Ok(1);
                 }
-            } else {
-                ctx.write_err("uniq: not connected to FS9 server");
-                return Ok(1);
             }
         } else {
             String::new()
@@ -795,17 +782,13 @@ impl Shell {
             String::from_utf8_lossy(&data).to_string()
         } else if let Some(path) = args.first() {
             let full_path = self.resolve_path(path);
-            if let Some(client) = &self.client {
-                match client.read_file(&full_path).await {
-                    Ok(data) => String::from_utf8_lossy(&data).to_string(),
-                    Err(e) => {
-                        ctx.write_err(&format!("rev: {}: {}", path, e));
-                        return Ok(1);
-                    }
+            let router = self.router();
+            match router.read_file(&full_path).await {
+                Ok(data) => String::from_utf8_lossy(&data).to_string(),
+                Err(e) => {
+                    ctx.write_err(&format!("rev: {}: {}", path, e));
+                    return Ok(1);
                 }
-            } else {
-                ctx.write_err("rev: not connected to FS9 server");
-                return Ok(1);
             }
         } else {
             String::new()
@@ -876,13 +859,10 @@ impl Shell {
             String::from_utf8_lossy(&data).to_string()
         } else if let Some(path) = file_path {
             let full_path = self.resolve_path(path);
-            if let Some(client) = &self.client {
-                match client.read_file(&full_path).await {
-                    Ok(data) => String::from_utf8_lossy(&data).to_string(),
-                    Err(_) => String::new(),
-                }
-            } else {
-                String::new()
+            let router = self.router();
+            match router.read_file(&full_path).await {
+                Ok(data) => String::from_utf8_lossy(&data).to_string(),
+                Err(_) => String::new(),
             }
         } else {
             String::new()
@@ -922,15 +902,16 @@ impl Shell {
         
         ctx.stdout.write(&input).map_err(Sh9Error::Io)?;
         
-        if let Some(client) = &self.client {
-            for file in files {
-                let full_path = self.resolve_path(file);
-                let flags = if append { OpenFlags::append() } else { OpenFlags::create_truncate() };
-                if let Ok(handle) = client.open(&full_path, flags).await {
-                    let offset = if append { handle.size() } else { 0 };
-                    let _ = client.write(&handle, offset, &input).await;
-                    let _ = client.close(handle).await;
-                }
+        let router = self.router();
+        for file in files {
+            let full_path = self.resolve_path(file);
+            let result = if append {
+                router.append_file(&full_path, &input).await
+            } else {
+                router.write_file(&full_path, &input).await
+            };
+            if let Err(e) = result {
+                ctx.write_err(&format!("tee: {}: {}", file, e));
             }
         }
         Ok(0)

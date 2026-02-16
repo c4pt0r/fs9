@@ -416,22 +416,12 @@ impl Shell {
             let target = self.expand_word(&redir.target, ctx).await?;
             if redir.kind == RedirectKind::StdinRead {
                 let path = self.resolve_path(&target);
-                let local_path = self.resolve_local_path(&path);
-                if let Some(lp) = local_path {
-                    match std::fs::read(&lp) {
-                        Ok(data) => ctx.stdin = Some(data),
-                        Err(e) => {
-                            ctx.write_err(&format!("sh9: {}: {}", target, e));
-                            return Ok(1);
-                        }
-                    }
-                } else if let Some(client) = &self.client {
-                    match client.read_file(&path).await {
-                        Ok(data) => ctx.stdin = Some(data.to_vec()),
-                        Err(e) => {
-                            ctx.write_err(&format!("sh9: {}: {}", target, e));
-                            return Ok(1);
-                        }
+                let router = self.router();
+                match router.read_file(&path).await {
+                    Ok(data) => ctx.stdin = Some(data),
+                    Err(e) => {
+                        ctx.write_err(&format!("sh9: {}: {}", target, e));
+                        return Ok(1);
                     }
                 }
             }

@@ -60,27 +60,19 @@ impl Shell {
             }
             ["-n", s] => !s.is_empty(),
             ["-z", s] => s.is_empty(),
-            ["-e", path] | ["-f", path] | ["-d", path] => {
+            ["-e", path] | ["-f", path] | ["-d", path] | ["-s", path] => {
                 let op = args[0];
                 let full_path = self.resolve_path(path);
-                if let Some(client) = &self.client {
-                    match client.stat(&full_path).await {
-                        Ok(info) => match op {
-                            "-e" => true,
-                            "-f" => info.is_file(),
-                            "-d" => info.is_dir(),
-                            _ => false,
-                        },
-                        Err(_) => false,
-                    }
-                } else {
-                    let metadata = std::fs::metadata(path);
-                    match (op, metadata) {
-                        ("-e", Ok(_)) => true,
-                        ("-f", Ok(m)) => m.is_file(),
-                        ("-d", Ok(m)) => m.is_dir(),
+                let router = self.router();
+                match router.stat(&full_path).await {
+                    Ok(info) => match op {
+                        "-e" => true,
+                        "-f" => !info.is_dir,
+                        "-d" => info.is_dir,
+                        "-s" => info.size > 0,
                         _ => false,
-                    }
+                    },
+                    Err(_) => false,
                 }
             }
             [s] => !s.is_empty(),
