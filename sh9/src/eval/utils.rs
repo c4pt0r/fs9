@@ -172,7 +172,7 @@ pub(crate) fn match_glob_pattern(pattern: &str, name: &str) -> bool {
 
 impl Shell {
     pub fn resolve_path(&self, path: &str) -> String {
-        if path.starts_with('/') {
+        let resolved = if path.starts_with('/') {
             path.to_string()
         } else if path == "." {
             self.cwd.clone()
@@ -187,7 +187,20 @@ impl Shell {
             format!("/{}", path)
         } else {
             format!("{}/{}", self.cwd, path)
+        };
+
+        // Apply chroot prefix if set
+        if let Some(chroot) = self.get_var("FS9_CHROOT") {
+            if chroot != "/" {
+                let trimmed = chroot.trim_end_matches('/');
+                if resolved == "/" {
+                    return trimmed.to_string();
+                }
+                return format!("{trimmed}{resolved}");
+            }
         }
+
+        resolved
     }
 
     #[allow(clippy::too_many_arguments)]
