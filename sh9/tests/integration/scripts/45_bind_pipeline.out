@@ -1,0 +1,23 @@
+=== bind pipeline ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+bind: /tmp/sh9_test_45a -> /mnt/a
+bind: /tmp/sh9_test_45b -> /mnt/b
+=== cat | grep ===
+blue
+=== cat | sort | head ===
+blue
+green
+=== cat | tee | wc -l ===
+3
+=== copied file ===
+green
+blue
+red
+=== copied | grep ===
+red
+unmount: /mnt/a
+unmount: /mnt/b
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+=== bind pipeline done ===

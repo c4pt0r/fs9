@@ -1,0 +1,40 @@
+# Test 45: Pipelines across local bind mounts
+echo "=== bind pipeline ==="
+
+# Bootstrap host test data via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_45a
+mkdir /host_tmp/sh9_test_45b
+echo "green" > /host_tmp/sh9_test_45a/colors.txt
+echo "blue" >> /host_tmp/sh9_test_45a/colors.txt
+echo "red" >> /host_tmp/sh9_test_45a/colors.txt
+unmount /host_tmp
+
+bind /tmp/sh9_test_45a /mnt/a
+bind /tmp/sh9_test_45b /mnt/b
+
+echo "=== cat | grep ==="
+cat /mnt/a/colors.txt | grep blue
+
+echo "=== cat | sort | head ==="
+cat /mnt/a/colors.txt | sort | head -n 2
+
+echo "=== cat | tee | wc -l ==="
+cat /mnt/a/colors.txt | tee /mnt/b/copied.txt | wc -l
+
+echo "=== copied file ==="
+cat /mnt/b/copied.txt
+
+echo "=== copied | grep ==="
+cat /mnt/b/copied.txt | grep red
+
+# Cleanup
+rm /mnt/a/colors.txt
+rm /mnt/b/copied.txt
+unmount /mnt/a
+unmount /mnt/b
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_45a
+rm /host_tmp/sh9_test_45b
+unmount /host_tmp
+echo "=== bind pipeline done ==="

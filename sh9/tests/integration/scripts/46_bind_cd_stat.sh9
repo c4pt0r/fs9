@@ -1,0 +1,44 @@
+# Test 46: cd/stat/tree/touch/truncate on local bind mounts
+echo "=== bind cd stat ==="
+
+# Bootstrap host test data via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_46
+echo "note" > /host_tmp/sh9_test_46/note.txt
+unmount /host_tmp
+
+bind /tmp/sh9_test_46 /mnt
+
+cd /mnt
+echo "=== pwd in mount ==="
+pwd
+
+echo "=== stat note ==="
+stat note.txt
+
+touch empty.txt
+echo "=== stat empty ==="
+stat empty.txt
+
+echo "abcdef" > grow.txt
+truncate -s 3 grow.txt
+echo "=== cat grow ==="
+cat grow.txt
+echo ""
+
+echo "=== tree ==="
+tree /mnt
+
+cd /
+echo "=== pwd root ==="
+pwd
+
+# Cleanup
+rm /mnt/note.txt
+rm /mnt/empty.txt
+rm /mnt/grow.txt
+unmount /mnt
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_46
+unmount /host_tmp
+echo "=== bind cd stat done ==="

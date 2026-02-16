@@ -1,0 +1,27 @@
+=== bind cd stat ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+bind: /tmp/sh9_test_46 -> /mnt
+=== pwd in mount ===
+/mnt
+=== stat note ===
+file: note.txt
+size: 5
+type: file
+=== stat empty ===
+file: empty.txt
+size: 0
+type: file
+=== cat grow ===
+abc
+=== tree ===
+/mnt
+├── empty.txt
+├── grow.txt
+└── note.txt
+=== pwd root ===
+/
+unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+=== bind cd stat done ===

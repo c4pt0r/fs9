@@ -1,0 +1,40 @@
+=== bind text cmds ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+bind: /tmp/sh9_test_44 -> /mnt
+=== grep pear ===
+pear
+pear
+=== grep -c pear ===
+2
+=== wc -l ===
+4
+=== wc -c ===
+23
+=== head -n 2 ===
+pear
+apple
+=== tail -n 2 ===
+pear
+banana
+=== sort ===
+apple
+banana
+pear
+pear
+=== sort | uniq ===
+apple
+banana
+pear
+=== rev ===
+raep
+elppa
+raep
+ananab
+=== cut ===
+v1
+v2
+unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+=== bind text cmds done ===

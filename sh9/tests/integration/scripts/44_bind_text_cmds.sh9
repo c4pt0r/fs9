@@ -1,0 +1,54 @@
+# Test 44: Text commands on local bind mounts
+echo "=== bind text cmds ==="
+
+# Bootstrap host test data via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_44
+echo "pear" > /host_tmp/sh9_test_44/words.txt
+echo "apple" >> /host_tmp/sh9_test_44/words.txt
+echo "pear" >> /host_tmp/sh9_test_44/words.txt
+echo "banana" >> /host_tmp/sh9_test_44/words.txt
+echo "k1:v1" > /host_tmp/sh9_test_44/pairs.txt
+echo "k2:v2" >> /host_tmp/sh9_test_44/pairs.txt
+unmount /host_tmp
+
+bind /tmp/sh9_test_44 /mnt
+
+echo "=== grep pear ==="
+grep pear /mnt/words.txt
+
+echo "=== grep -c pear ==="
+grep -c pear /mnt/words.txt
+
+echo "=== wc -l ==="
+wc -l /mnt/words.txt
+
+echo "=== wc -c ==="
+wc -c /mnt/words.txt
+
+echo "=== head -n 2 ==="
+head -n 2 /mnt/words.txt
+
+echo "=== tail -n 2 ==="
+tail -n 2 /mnt/words.txt
+
+echo "=== sort ==="
+sort /mnt/words.txt
+
+echo "=== sort | uniq ==="
+sort /mnt/words.txt | uniq
+
+echo "=== rev ==="
+rev /mnt/words.txt
+
+echo "=== cut ==="
+cut -d: -f2 /mnt/pairs.txt
+
+# Cleanup
+rm /mnt/words.txt
+rm /mnt/pairs.txt
+unmount /mnt
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_44
+unmount /host_tmp
+echo "=== bind text cmds done ==="
