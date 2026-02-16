@@ -203,6 +203,30 @@ impl Shell {
         resolved
     }
 
+    pub fn resolve_virtual_path(&self, path: &str) -> String {
+        if path.starts_with('/') {
+            path.to_string()
+        } else if path == "." {
+            self.cwd.clone()
+        } else if path == ".." {
+            let parts: Vec<&str> = self.cwd.split('/').filter(|s| !s.is_empty()).collect();
+            if parts.is_empty() {
+                "/".to_string()
+            } else {
+                let parent = parts[..parts.len() - 1].join("/");
+                if parent.is_empty() {
+                    "/".to_string()
+                } else {
+                    format!("/{parent}")
+                }
+            }
+        } else if self.cwd == "/" {
+            format!("/{path}")
+        } else {
+            format!("{}/{path}", self.cwd)
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn print_tree<'a>(
         &'a self,
@@ -459,5 +483,83 @@ impl Shell {
 
             Ok(count)
         })
+    }
+}
+
+#[cfg(test)]
+mod chroot_tests {
+    use crate::shell::Shell;
+
+    #[test]
+    fn resolve_path_no_chroot() {
+        let mut sh = Shell::new("http://localhost:8080");
+        sh.cwd = "/home".to_string();
+        assert_eq!(sh.resolve_path("file.txt"), "/home/file.txt");
+        assert_eq!(sh.resolve_path("/abs/path"), "/abs/path");
+        assert_eq!(sh.resolve_path(".."), "/");
+        assert_eq!(sh.resolve_path("."), "/home");
+    }
+
+    #[test]
+    fn resolve_path_with_chroot() {
+        let mut sh = Shell::new("http://localhost:8080");
+        sh.cwd = "/".to_string();
+        sh.set_var("FS9_CHROOT", "/jail");
+        assert_eq!(sh.resolve_path("file.txt"), "/jail/file.txt");
+        assert_eq!(sh.resolve_path("/abs"), "/jail/abs");
+        assert_eq!(sh.resolve_path(".."), "/jail");
+        assert_eq!(sh.resolve_path("."), "/jail");
+    }
+
+    #[test]
+    fn resolve_path_with_chroot_nested_cwd() {
+        let mut sh = Shell::new("http://localhost:8080");
+        sh.cwd = "/sub/dir".to_string();
+        sh.set_var("FS9_CHROOT", "/jail");
+        assert_eq!(sh.resolve_path("file.txt"), "/jail/sub/dir/file.txt");
+        assert_eq!(sh.resolve_path("/abs"), "/jail/abs");
+        assert_eq!(sh.resolve_path(".."), "/jail/sub");
+        assert_eq!(sh.resolve_path("."), "/jail/sub/dir");
+    }
+
+    #[test]
+    fn resolve_virtual_path_ignores_chroot() {
+        let mut sh = Shell::new("http://localhost:8080");
+        sh.cwd = "/sub/dir".to_string();
+        sh.set_var("FS9_CHROOT", "/jail");
+        assert_eq!(sh.resolve_virtual_path("file.txt"), "/sub/dir/file.txt");
+        assert_eq!(sh.resolve_virtual_path("/abs"), "/abs");
+        assert_eq!(sh.resolve_virtual_path(".."), "/sub");
+        assert_eq!(sh.resolve_virtual_path("."), "/sub/dir");
+    }
+
+    #[test]
+    fn resolve_virtual_path_at_root() {
+        let mut sh = Shell::new("http://localhost:8080");
+        sh.cwd = "/".to_string();
+        sh.set_var("FS9_CHROOT", "/jail");
+        assert_eq!(sh.resolve_virtual_path("file.txt"), "/file.txt");
+        assert_eq!(sh.resolve_virtual_path(".."), "/");
+        assert_eq!(sh.resolve_virtual_path("."), "/");
+        assert_eq!(sh.resolve_virtual_path("/abs"), "/abs");
+    }
+
+    #[test]
+    fn chroot_no_double_slash() {
+        let mut sh = Shell::new("http://localhost:8080");
+        sh.cwd = "/".to_string();
+        sh.set_var("FS9_CHROOT", "/jail/");
+        let result = sh.resolve_path("file.txt");
+        assert!(!result.contains("//"), "Double slash in path: {result}");
+    }
+
+    #[test]
+    fn resolve_virtual_path_no_chroot() {
+        let mut sh = Shell::new("http://localhost:8080");
+        sh.cwd = "/home".to_string();
+        assert_eq!(sh.resolve_virtual_path("file.txt"), "/home/file.txt");
+        assert_eq!(sh.resolve_virtual_path("/abs/path"), "/abs/path");
+        assert_eq!(sh.resolve_virtual_path(".."), "/");
+        assert_eq!(sh.resolve_virtual_path("."), "/home");
     }
 }

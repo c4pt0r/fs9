@@ -70,26 +70,27 @@ impl Shell {
 
     async fn cmd_cd(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let path = args.first().map(|s| s.as_str()).unwrap_or("/");
-        let new_cwd = self.resolve_path(path);
+        let virtual_cwd = self.resolve_virtual_path(path);
+        let server_cwd = self.resolve_path(path);
 
         let router = self.router();
-        if router.has_client() || router.is_local(&new_cwd) {
-            match router.stat(&new_cwd).await {
+        if router.has_client() || router.is_local(&server_cwd) {
+            match router.stat(&server_cwd).await {
                 Ok(info) if info.is_dir => {
-                    self.cwd = new_cwd;
+                    self.cwd = virtual_cwd;
                     Ok(0)
                 }
                 Ok(_) => {
-                    ctx.write_err(&format!("cd: {}: Not a directory", path));
+                    ctx.write_err(&format!("cd: {path}: Not a directory"));
                     Ok(1)
                 }
                 Err(_) => {
-                    ctx.write_err(&format!("cd: {}: No such file or directory", path));
+                    ctx.write_err(&format!("cd: {path}: No such file or directory"));
                     Ok(1)
                 }
             }
         } else {
-            self.cwd = new_cwd;
+            self.cwd = virtual_cwd;
             Ok(0)
         }
     }
