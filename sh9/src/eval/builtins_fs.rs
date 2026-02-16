@@ -2,6 +2,7 @@ use crate::error::{Sh9Error, Sh9Result};
 use crate::shell::Shell;
 use fs9_client::OpenFlags;
 use super::{ExecContext, STREAM_CHUNK_SIZE};
+use super::namespace::MountFlags;
 use super::utils::format_mtime;
 
 impl Shell {
@@ -14,7 +15,8 @@ impl Shell {
         match name {
             "ls" | "mkdir" | "touch" | "truncate" | "rm" | "mv" | "cp" | "stat"
             | "mount" | "lsfs" | "tree" | "plugin" | "chmod" | "chroot"
-            | "basename" | "dirname" | "pwd" | "cd" => {
+            | "basename" | "dirname" | "pwd" | "cd"
+            | "bind" | "unmount" | "ns" => {
                 Some(self.dispatch_fs_builtin(name, args, ctx).await)
             }
             _ => None,
@@ -54,6 +56,9 @@ impl Shell {
             "chroot" => self.cmd_chroot(args, ctx).await,
             "basename" => self.cmd_basename(args, ctx),
             "dirname" => self.cmd_dirname(args, ctx),
+            "bind" => self.cmd_bind(args, ctx),
+            "unmount" => self.cmd_unmount(args, ctx),
+            "ns" => self.cmd_ns(args, ctx),
             _ => unreachable!(),
         }
     }
@@ -692,4 +697,187 @@ impl Shell {
         ctx.stdout.writeln(result).map_err(Sh9Error::Io)?;
         Ok(0)
     }
+
+    fn cmd_bind(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+        let mut flags = MountFlags::MREPL;
+        let mut positional: Vec<&str> = Vec::new();
+
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        'b' => flags |= MountFlags::MBEFORE,
+                        'a' => flags |= MountFlags::MAFTER,
+                        'c' => flags |= MountFlags::MCREATE,
+                        _ => {
+                            ctx.write_err(&format!("bind: unknown option: -{c}"));
+                            return Ok(1);
+                        }
+                    }
+                }
+            } else {
+                positional.push(arg);
+            }
+        }
+
+        if positional.len() != 2 {
+            ctx.write_err("bind: usage: bind [-b|-a] [-c] source target");
+            return Ok(1);
+        }
+
+        let source_arg = positional[0];
+        let target = positional[1];
+
+        let metadata = match std::fs::metadata(source_arg) {
+            Ok(m) => m,
+            Err(_) => {
+                ctx.write_err(&format!("bind: {source_arg}: No such file or directory"));
+                return Ok(1);
+            }
+        };
+
+        if !metadata.is_dir() {
+            ctx.write_err(&format!("bind: {source_arg}: Not a directory"));
+            return Ok(1);
+        }
+
+        let source = match std::fs::canonicalize(source_arg) {
+            Ok(p) => p,
+            Err(_) => {
+                ctx.write_err(&format!("bind: {source_arg}: No such file or directory"));
+                return Ok(1);
+            }
+        };
+
+        let source_str = source.to_string_lossy();
+        let target_normalized = super::namespace::normalize_path(target);
+        if *source_str == target_normalized {
+            ctx.write_err("bind: cannot bind a path to itself");
+            return Ok(1);
+        }
+
+        self.namespace
+            .write()
+            .unwrap()
+            .bind(&source, &target_normalized, flags);
+        ctx.stdout
+            .writeln(&format!(
+                "bind: {} -> {target_normalized}",
+                source.display()
+            ))
+            .map_err(Sh9Error::Io)?;
+        Ok(0)
+    }
+
+    fn cmd_unmount(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+        let positional: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .collect();
+
+        match positional.len() {
+            1 => {
+                let target = positional[0];
+                let target_normalized = super::namespace::normalize_path(target);
+
+                let is_mounted = self
+                    .namespace
+                    .read()
+                    .unwrap()
+                    .list_mounts()
+                    .iter()
+                    .any(|m| m.target == target_normalized);
+
+                if !is_mounted {
+                    ctx.write_err(&format!("unmount: {target}: not mounted"));
+                    return Ok(1);
+                }
+
+                self.namespace
+                    .write()
+                    .unwrap()
+                    .unbind(None, &target_normalized);
+                ctx.stdout
+                    .writeln(&format!("unmount: {target_normalized}"))
+                    .map_err(Sh9Error::Io)?;
+                Ok(0)
+            }
+            2 => {
+                let source = positional[0];
+                let target = positional[1];
+                let target_normalized = super::namespace::normalize_path(target);
+
+                let source_path = std::fs::canonicalize(source)
+                    .unwrap_or_else(|_| std::path::PathBuf::from(source));
+
+                let exists = self
+                    .namespace
+                    .read()
+                    .unwrap()
+                    .list_mounts()
+                    .iter()
+                    .any(|m| m.target == target_normalized && m.source == source_path);
+
+                if !exists {
+                    ctx.write_err(&format!("unmount: {source}: not mounted at {target}"));
+                    return Ok(1);
+                }
+
+                self.namespace
+                    .write()
+                    .unwrap()
+                    .unbind(Some(&source_path), &target_normalized);
+                ctx.stdout
+                    .writeln(&format!(
+                        "unmount: {} from {target_normalized}",
+                        source_path.display()
+                    ))
+                    .map_err(Sh9Error::Io)?;
+                Ok(0)
+            }
+            _ => {
+                ctx.write_err("unmount: usage: unmount [source] target");
+                Ok(1)
+            }
+        }
+    }
+
+    fn cmd_ns(&mut self, _args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+        let mounts = self.namespace.read().unwrap().list_mounts();
+
+        if mounts.is_empty() {
+            ctx.stdout
+                .writeln("(no bindings)")
+                .map_err(Sh9Error::Io)?;
+            return Ok(0);
+        }
+
+        for mount in &mounts {
+            let flags_str = format_mount_flags(mount.flags);
+            ctx.stdout
+                .writeln(&format!(
+                    "{}\t{}\t({flags_str})",
+                    mount.target,
+                    mount.source.display(),
+                ))
+                .map_err(Sh9Error::Io)?;
+        }
+        Ok(0)
+    }
+}
+
+fn format_mount_flags(flags: MountFlags) -> String {
+    let mut parts = Vec::new();
+    if flags.contains(MountFlags::MBEFORE) {
+        parts.push("before");
+    } else if flags.contains(MountFlags::MAFTER) {
+        parts.push("after");
+    } else {
+        parts.push("replace");
+    }
+    if flags.contains(MountFlags::MCREATE) {
+        parts.push("create");
+    }
+    parts.join(",")
 }
