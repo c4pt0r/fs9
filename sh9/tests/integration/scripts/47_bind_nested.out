@@ -5,6 +5,7 @@ bind: /tmp/sh9_test_47_main -> /mnt
 bind: /tmp/sh9_test_47_sub -> /mnt/sub
 === ls /mnt ===
 root.txt
+sub
 === ls /mnt/sub ===
 sub.txt
 === cat root ===
