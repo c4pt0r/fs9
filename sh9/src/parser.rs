@@ -5,6 +5,7 @@
 use crate::ast::*;
 use crate::lexer::Token;
 use chumsky::prelude::*;
+use std::collections::VecDeque;
 
 /// Parse a token stream into a Script AST
 pub fn parser() -> impl Parser<Token, Script, Error = Simple<Token>> {
@@ -189,13 +190,13 @@ fn case_statement(
         .then(stmt.clone().repeated())
         .then_ignore(just(Token::Semicolon))
         .then_ignore(just(Token::Semicolon))
-        .then_ignore(newline_sep.clone())
+        .then_ignore(newline_sep)
         .map(|(patterns, body)| CaseArm { patterns, body });
 
     just(Token::Case)
         .ignore_then(word())
         .then_ignore(just(Token::In))
-        .then_ignore(newline_sep.clone())
+        .then_ignore(newline_sep)
         .then(case_arm.repeated())
         .then_ignore(just(Token::Esac))
         .map(|(word, arms)| Statement::Case(CaseStatement { word, arms }))
@@ -206,12 +207,15 @@ fn function_def(
     stmt: impl Parser<Token, Statement, Error = Simple<Token>> + Clone,
 ) -> impl Parser<Token, Statement, Error = Simple<Token>> + Clone {
     // name() { body } or function name { body }
+    let left_brace = just(Token::Word("{".to_string()));
+    let right_brace = just(Token::Word("}".to_string()));
+
     let paren_style = word()
         .then_ignore(just(Token::LeftParen))
         .then_ignore(just(Token::RightParen))
-        .then_ignore(just(Token::LeftBrace))
+        .then_ignore(left_brace.clone())
         .then(stmt.clone().repeated())
-        .then_ignore(just(Token::RightBrace))
+        .then_ignore(right_brace.clone())
         .map(|(name, body)| {
             Statement::FunctionDef(FunctionDef {
                 name: word_to_string(&name),
@@ -226,9 +230,9 @@ fn function_def(
                 .then(just(Token::RightParen))
                 .or_not(),
         )
-        .then_ignore(just(Token::LeftBrace))
+        .then_ignore(left_brace)
         .then(stmt.repeated())
-        .then_ignore(just(Token::RightBrace))
+        .then_ignore(right_brace)
         .map(|(name, body)| {
             Statement::FunctionDef(FunctionDef {
                 name: word_to_string(&name),
@@ -337,7 +341,27 @@ fn redirection() -> impl Parser<Token, Redirection, Error = Simple<Token>> + Clo
             target,
         });
 
+    let heredoc_redir = just(Token::HereDoc)
+        .ignore_then(word())
+        .ignore_then(filter_map(|span, tok| match tok {
+            Token::HereDocBody(content, expand) => Ok((content, expand)),
+            _ => Err(Simple::expected_input_found(span, None, Some(tok))),
+        }))
+        .map(|(content, expand)| Redirection {
+            kind: RedirectKind::HereDoc { content, expand },
+            target: Word::empty(),
+        });
+
+    let herestring_redir = just(Token::HereString)
+        .ignore_then(word())
+        .map(|target| Redirection {
+            kind: RedirectKind::HereString,
+            target,
+        });
+
     choice((
+        heredoc_redir,
+        herestring_redir,
         redirect_append,     // Must come before redirect_out
         redirect_err_append, // Must come before redirect_err
         redirect_out,
@@ -392,10 +416,19 @@ fn word() -> impl Parser<Token, Word, Error = Simple<Token>> + Clone {
 
     let braced_var = just(Token::DollarBrace)
         .ignore_then(filter_map(|span, tok| match tok {
-            Token::Word(s) => Ok(s),
+            Token::Word(s) => {
+                if let Some(inner) = s.strip_suffix('}') {
+                    Ok(inner.to_string())
+                } else {
+                    Err(Simple::expected_input_found(
+                        span,
+                        None,
+                        Some(Token::Word(s)),
+                    ))
+                }
+            }
             _ => Err(Simple::expected_input_found(span, None, Some(tok))),
         }))
-        .then_ignore(just(Token::RightBrace))
         .map(|s| Word {
             parts: vec![WordPart::BracedVariable(s)],
         });
@@ -677,18 +710,166 @@ fn word_to_string(word: &Word) -> String {
         .collect()
 }
 
+fn preprocess_heredocs(input: &str) -> Result<(String, Vec<(String, bool)>), String> {
+    let mut source = String::new();
+    let mut heredocs: Vec<(String, bool)> = Vec::new();
+    let lines: Vec<&str> = input.split('\n').collect();
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = lines[i];
+        source.push_str(line);
+        if i + 1 < lines.len() {
+            source.push('\n');
+        }
+
+        let markers = parse_heredoc_markers(line);
+        i += 1;
+
+        for (delimiter, expand) in markers {
+            let mut body_lines = Vec::new();
+            let mut found = false;
+
+            while i < lines.len() {
+                let current = lines[i];
+                if current == delimiter {
+                    found = true;
+                    i += 1;
+                    break;
+                }
+                body_lines.push(current);
+                i += 1;
+            }
+
+            if !found {
+                return Err(format!(
+                    "unterminated heredoc: missing delimiter {}",
+                    delimiter
+                ));
+            }
+
+            let content = if body_lines.is_empty() {
+                String::new()
+            } else {
+                let mut joined = body_lines.join("\n");
+                joined.push('\n');
+                joined
+            };
+            heredocs.push((content, expand));
+        }
+    }
+
+    Ok((source, heredocs))
+}
+
+fn parse_heredoc_markers(line: &str) -> Vec<(String, bool)> {
+    let bytes = line.as_bytes();
+    let mut markers = Vec::new();
+    let mut i = 0usize;
+
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'<' && bytes[i + 1] == b'<' {
+            if i + 2 < bytes.len() && bytes[i + 2] == b'<' {
+                i += 3;
+                continue;
+            }
+
+            i += 2;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+
+            if i >= bytes.len() {
+                break;
+            }
+
+            if bytes[i] == b'\'' || bytes[i] == b'"' {
+                let quote = bytes[i];
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+                if start < i {
+                    markers.push((line[start..i].to_string(), false));
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+                continue;
+            }
+
+            let start = i;
+            while i < bytes.len()
+                && !bytes[i].is_ascii_whitespace()
+                && !matches!(bytes[i], b';' | b'<' | b'>' | b'|' | b'&')
+            {
+                i += 1;
+            }
+
+            if start < i {
+                markers.push((line[start..i].to_string(), true));
+            }
+            continue;
+        }
+        i += 1;
+    }
+
+    markers
+}
+
+fn inject_heredoc_tokens(
+    tokens: Vec<Token>,
+    heredocs: Vec<(String, bool)>,
+) -> Result<Vec<Token>, String> {
+    let mut pending: VecDeque<(String, bool)> = heredocs.into();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+
+    while i < tokens.len() {
+        let tok = tokens[i].clone();
+        out.push(tok.clone());
+
+        if tok == Token::HereDoc {
+            i += 1;
+            if i >= tokens.len() {
+                return Err("heredoc missing delimiter token".to_string());
+            }
+            out.push(tokens[i].clone());
+
+            if let Some((content, expand)) = pending.pop_front() {
+                out.push(Token::HereDocBody(content, expand));
+            } else {
+                return Err("heredoc body missing for << operator".to_string());
+            }
+        }
+
+        i += 1;
+    }
+
+    if !pending.is_empty() {
+        return Err("extra heredoc bodies with no << operator".to_string());
+    }
+
+    Ok(out)
+}
+
 /// Parse input string directly to AST
 pub fn parse(input: &str) -> Result<Script, Vec<Simple<Token>>> {
     use crate::lexer::lexer;
 
-    // First, lex the input
-    let tokens = lexer().parse(input).map_err(|errs| {
+    let (preprocessed, heredocs) =
+        preprocess_heredocs(input).map_err(|msg| vec![Simple::custom(0..0, msg)])?;
+
+    let tokens = lexer().parse(preprocessed.as_str()).map_err(|errs| {
         errs.into_iter()
             .map(|e| Simple::custom(0..0, e.to_string()))
             .collect::<Vec<_>>()
     })?;
 
-    // Then parse the tokens
+    let tokens =
+        inject_heredoc_tokens(tokens, heredocs).map_err(|msg| vec![Simple::custom(0..0, msg)])?;
+
     parser().parse(tokens)
 }
 
@@ -755,5 +936,38 @@ mod tests {
             .filter(|s| !matches!(s, Statement::Empty))
             .collect();
         assert_eq!(stmts.len(), 2);
+    }
+
+    #[test]
+    fn test_preprocess_heredoc_collects_expected_body() {
+        let (source, heredocs) = preprocess_heredocs("cat <<EOF\nhello\nworld\nEOF").unwrap();
+        assert_eq!(source, "cat <<EOF\n");
+        assert_eq!(heredocs, vec![("hello\nworld\n".to_string(), true)]);
+    }
+
+    #[test]
+    fn test_preprocess_quoted_heredoc_disables_expansion() {
+        let (source, heredocs) = preprocess_heredocs("cat <<'EOF'\n$X\nEOF").unwrap();
+        assert_eq!(source, "cat <<'EOF'\n");
+        assert_eq!(heredocs, vec![("$X\n".to_string(), false)]);
+    }
+
+    #[test]
+    fn test_parse_heredoc_redirection_content() {
+        let script = parse("cat <<EOF\nhello\nworld\nEOF").unwrap();
+        let Statement::Pipeline(pipeline) = &script.statements[0] else {
+            panic!("expected pipeline");
+        };
+        let PipelineElement::Simple(cmd) = &pipeline.elements[0] else {
+            panic!("expected simple command");
+        };
+        assert_eq!(cmd.redirections.len(), 1);
+        match &cmd.redirections[0].kind {
+            RedirectKind::HereDoc { content, expand } => {
+                assert_eq!(content, "hello\nworld\n");
+                assert!(*expand);
+            }
+            other => panic!("expected heredoc, got {:?}", other),
+        }
     }
 }

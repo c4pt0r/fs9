@@ -252,6 +252,8 @@ impl Shell {
                                         RedirectKind::StderrWrite => format!(" 2> {}", target),
                                         RedirectKind::StderrAppend => format!(" 2>> {}", target),
                                         RedirectKind::BothWrite => format!(" &> {}", target),
+                                        RedirectKind::HereDoc { .. } => " <<HEREDOC".to_string(),
+                                        RedirectKind::HereString => format!(" <<< {}", target),
                                     };
                                     cmd.push_str(&redir_str);
                                 }
@@ -439,17 +441,35 @@ impl Shell {
         }
         
         for redir in &cmd.redirections {
-            let target = self.expand_word(&redir.target, ctx).await?;
-            if redir.kind == RedirectKind::StdinRead {
-                let path = self.resolve_path(&target);
-                let router = self.router();
-                match router.read_file(&path).await {
-                    Ok(data) => ctx.stdin = Some(data),
-                    Err(e) => {
-                        ctx.write_err(&format!("sh9: {}: {}", target, e));
-                        return Ok(1);
+            match &redir.kind {
+                RedirectKind::StdinRead => {
+                    let target = self.expand_word(&redir.target, ctx).await?;
+                    let path = self.resolve_path(&target);
+                    let router = self.router();
+                    match router.read_file(&path).await {
+                        Ok(data) => ctx.stdin = Some(data),
+                        Err(e) => {
+                            ctx.write_err(&format!("sh9: {}: {}", target, e));
+                            return Ok(1);
+                        }
                     }
                 }
+                RedirectKind::HereDoc { content, expand } => {
+                    let body = if *expand {
+                        let word = Word {
+                            parts: vec![WordPart::DoubleQuoted(content.clone())],
+                        };
+                        self.expand_word(&word, ctx).await?
+                    } else {
+                        content.clone()
+                    };
+                    ctx.stdin = Some(body.into_bytes());
+                }
+                RedirectKind::HereString => {
+                    let expanded = self.expand_word(&redir.target, ctx).await?;
+                    ctx.stdin = Some(format!("{expanded}\n").into_bytes());
+                }
+                _ => {}
             }
         }
         
@@ -766,6 +786,66 @@ mod tests {
         assert_eq!(
             fs::read_to_string(create_layer.path().join("new.txt")).expect("read failed"),
             "x\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_heredoc_basic() {
+        let mut shell = Shell::new("http://localhost:8080");
+        let output = shell
+            .execute_capture("cat <<EOF\nhello\nworld\nEOF")
+            .await
+            .expect("heredoc failed");
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "hello\nworld\n");
+    }
+
+    #[tokio::test]
+    async fn test_heredoc_variable_expansion() {
+        let mut shell = Shell::new("http://localhost:8080");
+        shell.set_var("NAME", "Alice");
+        let output = shell
+            .execute_capture("cat <<EOF\nHello $NAME\nEOF")
+            .await
+            .expect("heredoc failed");
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "Hello Alice\n");
+    }
+
+    #[tokio::test]
+    async fn test_heredoc_quoted_no_expansion() {
+        let mut shell = Shell::new("http://localhost:8080");
+        shell.set_var("NAME", "Alice");
+        let output = shell
+            .execute_capture("cat <<'EOF'\nHello $NAME\nEOF")
+            .await
+            .expect("heredoc failed");
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "Hello $NAME\n");
+    }
+
+    #[tokio::test]
+    async fn test_herestring() {
+        let mut shell = Shell::new("http://localhost:8080");
+        let output = shell
+            .execute_capture("cat <<<hello")
+            .await
+            .expect("herestring failed");
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_herestring_quoted() {
+        let mut shell = Shell::new("http://localhost:8080");
+        let output = shell
+            .execute_capture("cat <<<\"hello world\"")
+            .await
+            .expect("herestring failed");
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "hello world\n"
         );
     }
 }

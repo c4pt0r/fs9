@@ -1,0 +1,22 @@
+# Basic heredoc
+cat <<EOF
+hello
+world
+EOF
+
+# Heredoc with variable expansion
+NAME=Alice
+cat <<EOF
+Hello $NAME
+EOF
+
+# Quoted heredoc (no expansion)
+cat <<'EOF'
+Hello $NAME
+EOF
+
+# Here string
+cat <<<hello
+
+# Here string with quotes
+cat <<<"hello world"

@@ -154,6 +154,10 @@ pub enum RedirectKind {
     StderrAppend,
     /// &> file (stdout and stderr to file)
     BothWrite,
+    /// <<EOF ... EOF (here document)
+    HereDoc { content: String, expand: bool },
+    /// <<< word (here string)
+    HereString,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

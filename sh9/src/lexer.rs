@@ -77,6 +77,10 @@ pub enum Token {
     // Compound word: adjacent bare/quoted segments merged
     // Vec<(quote_type, content)>
     CompoundWord(Vec<(QuoteType, String)>),
+
+    HereDocBody(String, bool),
+    HereDoc,
+    HereString,
 }
 
 impl std::fmt::Display for Token {
@@ -139,6 +143,9 @@ impl std::fmt::Display for Token {
                 }
                 Ok(())
             }
+            Token::HereDocBody(_, _) => write!(f, "<<HEREDOC"),
+            Token::HereDoc => write!(f, "<<"),
+            Token::HereString => write!(f, "<<<"),
         }
     }
 }
@@ -209,6 +216,8 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         just("${").to(Token::DollarBrace),
         just("&&").to(Token::AndAnd),
         just("||").to(Token::OrOr),
+        just("<<<").to(Token::HereString),
+        just("<<").to(Token::HereDoc),
         just(">>").to(Token::RedirectAppend),
         just("2>>").to(Token::RedirectErrAppend),
         just("2>").to(Token::RedirectErr),
@@ -225,8 +234,6 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         just('<').to(Token::RedirectIn),
         just('(').to(Token::LeftParen),
         just(')').to(Token::RightParen),
-        just('{').to(Token::LeftBrace),
-        just('}').to(Token::RightBrace),
         just('[').to(Token::Word("[".to_string())),
         just(']').to(Token::Word("]".to_string())),
         just("==").to(Token::Word("==".to_string())),
@@ -241,21 +248,7 @@ pub fn lexer() -> impl Parser<char, Vec<Token>, Error = Simple<char>> {
         !c.is_whitespace()
             && !matches!(
                 c,
-                '|' | '&'
-                    | ';'
-                    | '<'
-                    | '>'
-                    | '('
-                    | ')'
-                    | '{'
-                    | '}'
-                    | '$'
-                    | '"'
-                    | '\''
-                    | '#'
-                    | '='
-                    | '\\'
-                    | '`'
+                '|' | '&' | ';' | '<' | '>' | '(' | ')' | '$' | '"' | '\'' | '#' | '=' | '\\' | '`'
             )
     });
 
@@ -486,11 +479,7 @@ mod tests {
         let tokens = lex("${foo}");
         assert_eq!(
             tokens,
-            vec![
-                Token::DollarBrace,
-                Token::Word("foo".to_string()),
-                Token::RightBrace,
-            ]
+            vec![Token::DollarBrace, Token::Word("foo}".to_string()),]
         );
     }
 
