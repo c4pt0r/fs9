@@ -1,0 +1,36 @@
+# Test set -x (xtrace)
+set -x
+echo hello
+set +x
+echo world
+
+# Test set -e behavior around successful command
+set -e
+true
+echo after true
+set +e
+
+# Test set -e exception in if condition
+set -e
+if false; then
+  echo no
+fi
+echo after if false
+set +e
+
+# Test set -u (nounset)
+set -u
+x=hello
+echo $x
+set +u
+
+# Test set -o pipefail
+set -o pipefail
+false | true
+echo $?
+set +o pipefail
+
+# Test combined flags
+set -ex
+echo combined
+set +ex

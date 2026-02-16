@@ -25,11 +25,11 @@ impl Shell {
                     result.push_str(&expanded);
                 }
                 WordPart::Variable(name) => {
-                    let value = self.get_variable_value(name, ctx);
+                    let value = self.get_variable_value(name, ctx)?;
                     result.push_str(&value);
                 }
                 WordPart::BracedVariable(name) => {
-                    let value = self.get_variable_value(name, ctx);
+                    let value = self.get_variable_value(name, ctx)?;
                     result.push_str(&value);
                 }
                 WordPart::Arithmetic(expr) => {
@@ -99,12 +99,12 @@ impl Shell {
                             }
                         }
                     }
-                    let value = self.get_variable_value(&name, ctx);
+                    let value = self.get_variable_value(&name, ctx)?;
                     result.push_str(&value);
                 } else if chars.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
                     let first_char = chars.next().unwrap();
                     let name = first_char.to_string();
-                    let value = self.get_variable_value(&name, ctx);
+                    let value = self.get_variable_value(&name, ctx)?;
                     result.push_str(&value);
                 } else {
                     result.push('$');
@@ -119,14 +119,14 @@ impl Shell {
 
     fn expand_tilde(&self, s: &str, ctx: &ExecContext) -> String {
         if s.starts_with("~/") {
-            let home = self.get_variable_value("HOME", ctx);
+            let home = self.lookup_variable_value("HOME", ctx).unwrap_or_default();
             if home.is_empty() {
                 s.to_string()
             } else {
                 format!("{}{}", home, &s[1..])
             }
         } else if s == "~" {
-            let home = self.get_variable_value("HOME", ctx);
+            let home = self.lookup_variable_value("HOME", ctx).unwrap_or_default();
             if home.is_empty() {
                 s.to_string()
             } else {
@@ -140,7 +140,7 @@ impl Shell {
     async fn expand_braced_param(&mut self, content: &str, ctx: &mut ExecContext) -> Sh9Result<String> {
         // ${#var} — string length
         if let Some(var_name) = content.strip_prefix('#') {
-            let value = self.get_variable_value(var_name, ctx);
+            let value = self.get_variable_value(var_name, ctx)?;
             return Ok(value.len().to_string());
         }
 
@@ -159,8 +159,9 @@ impl Shell {
                     continue;
                 }
 
-                let value = self.get_variable_value(var_name, ctx);
-                let is_set = !value.is_empty() || self.has_variable(var_name, ctx);
+                let value_opt = self.lookup_variable_value(var_name, ctx);
+                let value = value_opt.clone().unwrap_or_default();
+                let is_set = value_opt.is_some();
 
                 match *op {
                     ":-" => {
@@ -235,20 +236,7 @@ impl Shell {
         }
 
         // No operator found — simple variable reference
-        Ok(self.get_variable_value(content, ctx))
-    }
-
-    fn has_variable(&self, name: &str, ctx: &ExecContext) -> bool {
-        match name {
-            "?" | "0" | "PWD" => return true,
-            _ => {}
-        }
-        if let Ok(n) = name.parse::<usize>() {
-            return n > 0 && n <= ctx.positional.len();
-        }
-        ctx.locals.contains_key(name)
-            || self.get_var(name).is_some()
-            || std::env::var(name).is_ok()
+        self.get_variable_value(content, ctx)
     }
 
     fn remove_prefix(value: &str, pattern: &str, greedy: bool) -> String {
@@ -313,34 +301,49 @@ impl Shell {
         result
     }
 
-    pub(crate) fn get_variable_value(&self, name: &str, ctx: &ExecContext) -> String {
+    fn lookup_variable_value(&self, name: &str, ctx: &ExecContext) -> Option<String> {
         match name {
-            "?" => return self.last_exit_code.to_string(),
-            "0" => return "sh9".to_string(),
-            "PWD" => return self.cwd.clone(),
+            "?" => return Some(self.last_exit_code.to_string()),
+            "0" => return Some("sh9".to_string()),
+            "PWD" => return Some(self.cwd.clone()),
             _ => {}
         }
-        
+
         if let Ok(n) = name.parse::<usize>() {
             if n > 0 && n <= ctx.positional.len() {
-                return ctx.positional[n - 1].clone();
+                return Some(ctx.positional[n - 1].clone());
             }
-            return String::new();
+            return None;
         }
-        
+
         if let Some(value) = ctx.locals.get(name) {
-            return value.clone();
+            return Some(value.clone());
         }
-        
+
         if let Some(value) = self.get_var(name) {
-            return value.to_string();
+            return Some(value.to_string());
         }
-        
+
         if let Ok(value) = std::env::var(name) {
-            return value;
+            return Some(value);
         }
-        
-        String::new()
+
+        None
+    }
+
+    pub(crate) fn get_variable_value(&self, name: &str, ctx: &ExecContext) -> Sh9Result<String> {
+        if let Some(value) = self.lookup_variable_value(name, ctx) {
+            return Ok(value);
+        }
+
+        if self.options.nounset {
+            return Err(Sh9Error::Runtime(format!(
+                "sh9: {}: unbound variable",
+                name
+            )));
+        }
+
+        Ok(String::new())
     }
 
     async fn execute_command_sub(&mut self, cmd: &str, ctx: &mut ExecContext) -> Sh9Result<String> {

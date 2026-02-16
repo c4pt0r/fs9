@@ -1,10 +1,13 @@
+use chumsky::Parser;
 use rustyline::completion::{Completer, Pair};
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Helper};
 use sh9::eval::namespace::Namespace;
+use sh9::lexer::{lexer, Token, QuoteType};
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::RwLock;
 use fs9_client::Fs9Client;
@@ -14,6 +17,9 @@ pub struct Sh9Helper {
     pub cwd: Arc<RwLock<String>>,
     pub namespace: Arc<RwLock<Namespace>>,
     pub runtime: tokio::runtime::Handle,
+    pub env: Arc<RwLock<HashMap<String, String>>>,
+    pub aliases: Arc<RwLock<HashMap<String, String>>>,
+    pub functions: Arc<RwLock<HashSet<String>>>,
 }
 
 impl Sh9Helper {
@@ -21,12 +27,18 @@ impl Sh9Helper {
         client: Option<Arc<Fs9Client>>,
         cwd: Arc<RwLock<String>>,
         namespace: Arc<RwLock<Namespace>>,
+        env: Arc<RwLock<HashMap<String, String>>>,
+        aliases: Arc<RwLock<HashMap<String, String>>>,
+        functions: Arc<RwLock<HashSet<String>>>,
     ) -> Self {
         Self {
             client,
             cwd,
             namespace,
             runtime: tokio::runtime::Handle::current(),
+            env,
+            aliases,
+            functions,
         }
     }
 }
@@ -57,16 +69,57 @@ impl Completer for Sh9Helper {
             return Ok((pos, vec![]));
         }
         
+        // Variable completion: $VAR
+        if let Some(var_prefix) = word.strip_prefix('$') {
+            let env = self.env.read().unwrap();
+            let mut completions = Vec::new();
+            
+            for var_name in env.keys() {
+                if var_name.starts_with(var_prefix) {
+                    completions.push(Pair {
+                        display: format!("{}  (env)", var_name),
+                        replacement: format!("${}", var_name),
+                    });
+                }
+            }
+            
+            completions.sort_by(|a, b| a.replacement.cmp(&b.replacement));
+            return Ok((start, completions));
+        }
+        
         let is_first_word = !line_to_cursor[..start].contains(|c: char| !c.is_whitespace());
         
         let mut completions = Vec::new();
         
         if is_first_word {
+            // Builtin commands
             for &builtin in BUILTINS {
                 if builtin.starts_with(word) {
                     completions.push(Pair {
-                        display: builtin.to_string(),
+                        display: format!("{}  (builtin)", builtin),
                         replacement: builtin.to_string(),
+                    });
+                }
+            }
+            
+            // Aliases
+            let aliases = self.aliases.read().unwrap();
+            for alias_name in aliases.keys() {
+                if alias_name.starts_with(word) {
+                    completions.push(Pair {
+                        display: format!("{}  (alias)", alias_name),
+                        replacement: alias_name.clone(),
+                    });
+                }
+            }
+            
+            // Functions
+            let functions = self.functions.read().unwrap();
+            for func_name in functions.iter() {
+                if func_name.starts_with(word) {
+                    completions.push(Pair {
+                        display: format!("{}  (function)", func_name),
+                        replacement: func_name.clone(),
                     });
                 }
             }
@@ -130,8 +183,15 @@ impl Completer for Sh9Helper {
                 } else {
                     name.clone()
                 };
+                
+                let display = if name.ends_with('/') {
+                    format!("{}  (dir)", name)
+                } else {
+                    name.clone()
+                };
+                
                 completions.push(Pair {
-                    display: name,
+                    display,
                     replacement,
                 });
             }
@@ -215,6 +275,121 @@ impl Hinter for Sh9Helper {
 }
 
 impl Highlighter for Sh9Helper {
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+        // Empty input - no highlighting
+        if line.is_empty() {
+            return Cow::Borrowed(line);
+        }
+
+        // Try to tokenize the input
+        let tokens = match lexer().parse(line) {
+            Ok(tokens) => tokens,
+            Err(_) => return Cow::Borrowed(line), // Partial input - no highlighting
+        };
+
+        // If no tokens, return unchanged
+        if tokens.is_empty() {
+            return Cow::Borrowed(line);
+        }
+
+        // Build highlighted string by walking through the original input
+        let mut result = String::with_capacity(line.len() + 100); // Extra space for ANSI codes
+        let mut pos = 0;
+        let mut is_first_word = true;
+
+        for token in &tokens {
+            // Get the token's text representation
+            let token_text = token.to_string();
+            
+            // Skip newlines in highlighting (they're not visible)
+            if matches!(token, Token::Newline) {
+                continue;
+            }
+
+            // Find the token in the remaining input
+            if let Some(token_start) = line[pos..].find(&token_text) {
+                // Add any whitespace/characters before the token
+                result.push_str(&line[pos..pos + token_start]);
+                pos += token_start;
+
+                // Determine color based on token type
+                let (color_start, color_end) = match token {
+                    // First word: check if it's a builtin command
+                    Token::Word(w) if is_first_word => {
+                        is_first_word = false;
+                        if BUILTINS.contains(&w.as_str()) {
+                            ("\x1b[32m", "\x1b[0m") // Green for known commands
+                        } else {
+                            ("\x1b[31m", "\x1b[0m") // Red for unknown commands
+                        }
+                    }
+                    // Strings
+                    Token::SingleQuoted(_) => ("\x1b[33m", "\x1b[0m"), // Yellow
+                    Token::CompoundWord(segments) => {
+                        // Check if it contains quoted parts
+                        let has_quotes = segments.iter().any(|(qt, _)| {
+                            !matches!(qt, QuoteType::Bare)
+                        });
+                        if has_quotes {
+                            ("\x1b[33m", "\x1b[0m") // Yellow for quoted parts
+                        } else {
+                            ("", "") // No color for bare compound words
+                        }
+                    }
+                    // Variables
+                    Token::Dollar
+                    | Token::DollarBrace
+                    | Token::DollarParen
+                    | Token::DollarDoubleParen => ("\x1b[36m", "\x1b[0m"), // Cyan
+                    // Operators
+                    Token::Pipe
+                    | Token::AndAnd
+                    | Token::OrOr
+                    | Token::Semicolon
+                    | Token::Ampersand => ("\x1b[1m", "\x1b[0m"), // Bold
+                    // Redirections
+                    Token::RedirectOut
+                    | Token::RedirectAppend
+                    | Token::RedirectIn
+                    | Token::RedirectErr
+                    | Token::RedirectErrAppend
+                    | Token::RedirectBoth
+                    | Token::HereDoc
+                    | Token::HereString => ("\x1b[1m", "\x1b[0m"), // Bold
+                    // Everything else (keywords, brackets, etc.)
+                    _ => {
+                        // After first word, subsequent words are not commands
+                        if matches!(token, Token::Word(_)) {
+                            is_first_word = false;
+                        }
+                        ("", "")
+                    }
+                };
+
+                // Add colored token
+                result.push_str(color_start);
+                result.push_str(&token_text);
+                result.push_str(color_end);
+                pos += token_text.len();
+            } else {
+                // Token not found in expected position - fallback to no highlighting
+                return Cow::Borrowed(line);
+            }
+        }
+
+        // Add any remaining characters
+        if pos < line.len() {
+            result.push_str(&line[pos..]);
+        }
+
+        Cow::Owned(result)
+    }
+
+    fn highlight_char(&self, _line: &str, _pos: usize, _forced: bool) -> bool {
+        // Enable highlighting on every keystroke
+        true
+    }
+
     fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
         Cow::Owned(format!("\x1b[90m{hint}\x1b[0m"))
     }

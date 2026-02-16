@@ -33,7 +33,7 @@ impl Shell {
             ":" => Ok(0),
             "exit" => self.cmd_exit(args),
             "export" => self.cmd_export(args),
-            "set" => self.cmd_set(ctx),
+            "set" => self.cmd_set(args, ctx),
             "unset" => self.cmd_unset(args),
             "env" => self.cmd_env(ctx),
             "local" => self.cmd_local(args, ctx),
@@ -80,10 +80,57 @@ impl Shell {
         Ok(0)
     }
 
-    fn cmd_set(&mut self, ctx: &mut ExecContext) -> Sh9Result<i32> {
-        for (name, value) in &self.env {
-            ctx.stdout.writeln(&format!("{}={}", name, value)).map_err(Sh9Error::Io)?;
+    fn cmd_set(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+        if args.is_empty() {
+            for (name, value) in &self.env {
+                ctx.stdout.writeln(&format!("{}={}", name, value)).map_err(Sh9Error::Io)?;
+            }
+            return Ok(0);
         }
+
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+
+            if arg == "-o" || arg == "+o" {
+                if i + 1 >= args.len() {
+                    ctx.write_err("set: option name required for -o/+o");
+                    return Ok(1);
+                }
+                let name = &args[i + 1];
+                let enabled = arg == "-o";
+                match name.as_str() {
+                    "pipefail" => self.options.pipefail = enabled,
+                    _ => {
+                        ctx.write_err(&format!("set: unsupported option: {}", name));
+                        return Ok(1);
+                    }
+                }
+                i += 2;
+                continue;
+            }
+
+            if arg.len() > 1 && (arg.starts_with('-') || arg.starts_with('+')) {
+                let enabled = arg.starts_with('-');
+                for opt in arg[1..].chars() {
+                    match opt {
+                        'e' => self.options.errexit = enabled,
+                        'x' => self.options.xtrace = enabled,
+                        'u' => self.options.nounset = enabled,
+                        _ => {
+                            ctx.write_err(&format!("set: invalid option: {}", opt));
+                            return Ok(1);
+                        }
+                    }
+                }
+                i += 1;
+                continue;
+            }
+
+            ctx.write_err(&format!("set: unsupported argument: {}", arg));
+            return Ok(1);
+        }
+
         Ok(0)
     }
 

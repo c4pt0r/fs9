@@ -291,9 +291,28 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "set",
-        summary: "Display all shell variables",
-        usage: "set",
-        options: &[],
+        summary: "Display variables or set shell options",
+        usage: "set [+-exu] [-o pipefail] [+o pipefail]",
+        options: &[
+            ("(no args)", "Display all shell variables"),
+            (
+                "-e / +e",
+                "Enable/disable errexit (exit on command failure)",
+            ),
+            (
+                "-x / +x",
+                "Enable/disable xtrace (print commands before running)",
+            ),
+            (
+                "-u / +u",
+                "Enable/disable nounset (error on unset variables)",
+            ),
+            (
+                "-o pipefail",
+                "Pipeline returns rightmost non-zero exit status",
+            ),
+            ("+o pipefail", "Disable pipefail behavior"),
+        ],
     },
     CommandHelp {
         name: "sleep",

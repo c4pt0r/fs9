@@ -1,6 +1,7 @@
 use clap::Parser;
 use fs9_config::Fs9Config;
 use sh9::{Shell, Sh9Error};
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -200,7 +201,18 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig, ser
         .build();
 
     let cwd = Arc::new(RwLock::new(shell.cwd.clone()));
-    let helper = Sh9Helper::new(shell.client.clone(), cwd.clone(), shell.namespace.clone());
+    let env = Arc::new(RwLock::new(HashMap::new()));
+    let aliases = Arc::new(RwLock::new(HashMap::new()));
+    let functions = Arc::new(RwLock::new(HashSet::new()));
+    
+    let helper = Sh9Helper::new(
+        shell.client.clone(),
+        cwd.clone(),
+        shell.namespace.clone(),
+        env.clone(),
+        aliases.clone(),
+        functions.clone(),
+    );
 
     let mut rl = Editor::with_config(rl_config)?;
     rl.set_helper(Some(helper));
@@ -226,6 +238,21 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig, ser
         {
             let mut cwd_guard = cwd.write().unwrap();
             *cwd_guard = shell.cwd.clone();
+        }
+        
+        {
+            let mut env_guard = env.write().unwrap();
+            *env_guard = shell.env.clone();
+        }
+        
+        {
+            let mut aliases_guard = aliases.write().unwrap();
+            *aliases_guard = shell.aliases.clone();
+        }
+        
+        {
+            let mut functions_guard = functions.write().unwrap();
+            *functions_guard = shell.functions.keys().cloned().collect();
         }
 
         let prompt = shell_config.prompt

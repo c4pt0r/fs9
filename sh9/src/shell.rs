@@ -32,6 +32,14 @@ pub struct BackgroundJob {
     pub status: JobStatus,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ShellOptions {
+    pub errexit: bool,
+    pub xtrace: bool,
+    pub nounset: bool,
+    pub pipefail: bool,
+}
+
 pub struct Shell {
     pub cwd: String,
     pub env: HashMap<String, String>,
@@ -45,6 +53,7 @@ pub struct Shell {
     pub next_job_id: usize,
     pub custom_builtins: HashMap<String, Arc<Box<BuiltinFn>>>,
     pub namespace: Arc<RwLock<Namespace>>,
+    pub options: ShellOptions,
 }
 
 impl Shell {
@@ -62,6 +71,7 @@ impl Shell {
             next_job_id: 1,
             custom_builtins: HashMap::new(),
             namespace: Arc::new(RwLock::new(Namespace::new())),
+            options: ShellOptions::default(),
         }
     }
 
@@ -138,6 +148,7 @@ impl Shell {
             next_job_id: 1,
             custom_builtins: self.custom_builtins.clone(),
             namespace: self.namespace.clone(),
+            options: self.options.clone(),
         }
     }
 
@@ -283,6 +294,7 @@ impl ShellBuilder {
             next_job_id: 1,
             custom_builtins: self.builtins,
             namespace: Arc::new(RwLock::new(Namespace::new())),
+            options: ShellOptions::default(),
         }
     }
 }

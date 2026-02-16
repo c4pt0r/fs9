@@ -24,7 +24,7 @@ impl Shell {
                         break;
                     }
                 }
-                let value = self.get_variable_value(&name, ctx);
+                let value = self.get_variable_value(&name, ctx)?;
                 result.push_str(&value);
             } else if c.is_alphabetic() || c == '_' {
                 let mut name = String::from(c);
@@ -36,7 +36,7 @@ impl Shell {
                         break;
                     }
                 }
-                let value = self.get_variable_value(&name, ctx);
+                let value = self.get_variable_value(&name, ctx)?;
                 if !value.is_empty() {
                     result.push_str(&value);
                 } else {

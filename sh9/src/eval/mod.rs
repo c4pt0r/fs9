@@ -132,6 +132,7 @@ pub struct ExecContext {
     pub should_break: bool,
     pub should_continue: bool,
     pub return_value: Option<i32>,
+    pub suppress_errexit: usize,
 }
 
 impl Default for ExecContext {
@@ -145,6 +146,7 @@ impl Default for ExecContext {
             should_break: false,
             should_continue: false,
             return_value: None,
+            suppress_errexit: 0,
         }
     }
 }
@@ -171,9 +173,50 @@ impl ExecContext {
             }
         }
     }
+
+    pub fn push_errexit_suppression(&mut self) {
+        self.suppress_errexit += 1;
+    }
+
+    pub fn pop_errexit_suppression(&mut self) {
+        if self.suppress_errexit > 0 {
+            self.suppress_errexit -= 1;
+        }
+    }
 }
 
 impl Shell {
+    fn should_trigger_errexit(&self, exit_code: i32, ctx: &ExecContext) -> bool {
+        self.options.errexit && exit_code != 0 && ctx.suppress_errexit == 0
+    }
+
+    async fn execute_pipeline_with_errexit_control(
+        &mut self,
+        pipeline: &Pipeline,
+        ctx: &mut ExecContext,
+        suppress_errexit: bool,
+    ) -> Sh9Result<i32> {
+        if suppress_errexit {
+            ctx.push_errexit_suppression();
+        }
+
+        let result = self.execute_pipeline(pipeline, ctx).await;
+
+        if suppress_errexit {
+            ctx.pop_errexit_suppression();
+        }
+
+        let exit_code = result?;
+        if self.should_trigger_errexit(exit_code, ctx) {
+            return Err(Sh9Error::Runtime(format!(
+                "sh9: errexit: command exited with status {}",
+                exit_code
+            )));
+        }
+
+        Ok(exit_code)
+    }
+
     pub async fn execute_script(&mut self, script: &Script) -> Sh9Result<i32> {
         let mut ctx = ExecContext::default();
         let mut last_exit = 0;
@@ -213,19 +256,34 @@ impl Shell {
             }
             
             Statement::CommandList { first, rest } => {
-                let mut exit_code = self.execute_pipeline(first, ctx).await?;
+                let mut exit_code = self
+                    .execute_pipeline_with_errexit_control(first, ctx, !rest.is_empty())
+                    .await?;
                 self.last_exit_code = exit_code;
-                for (op, pipeline) in rest {
+                for (idx, (op, pipeline)) in rest.iter().enumerate() {
+                    let suppress_errexit = idx < rest.len() - 1;
                     match op {
                         ListOp::And => {
                             if exit_code == 0 {
-                                exit_code = self.execute_pipeline(pipeline, ctx).await?;
+                                exit_code = self
+                                    .execute_pipeline_with_errexit_control(
+                                        pipeline,
+                                        ctx,
+                                        suppress_errexit,
+                                    )
+                                    .await?;
                                 self.last_exit_code = exit_code;
                             }
                         }
                         ListOp::Or => {
                             if exit_code != 0 {
-                                exit_code = self.execute_pipeline(pipeline, ctx).await?;
+                                exit_code = self
+                                    .execute_pipeline_with_errexit_control(
+                                        pipeline,
+                                        ctx,
+                                        suppress_errexit,
+                                    )
+                                    .await?;
                                 self.last_exit_code = exit_code;
                             }
                         }
@@ -285,7 +343,8 @@ impl Shell {
                     ctx.write_err(&format!("[{}] Started", job_id));
                     Ok(0)
                 } else {
-                    self.execute_pipeline(pipeline, ctx).await
+                    self.execute_pipeline_with_errexit_control(pipeline, ctx, false)
+                        .await
                 }
             }
             
@@ -352,6 +411,8 @@ impl Shell {
         let mut original_stdout = Some(std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new())));
         let mut input: Option<Vec<u8>> = ctx.stdin.take();
 
+        let mut exit_codes = Vec::with_capacity(pipeline.elements.len());
+
         for (i, elem) in pipeline.elements.iter().enumerate() {
             let is_last = i == pipeline.elements.len() - 1;
 
@@ -359,19 +420,43 @@ impl Shell {
 
             if is_last {
                 ctx.stdout = original_stdout.take().unwrap_or(Output::Stdout);
-                return self.execute_pipeline_element(elem, ctx).await;
             } else {
                 ctx.stdout = Output::Buffer(Vec::new());
             }
 
-            self.execute_pipeline_element(elem, ctx).await?;
+            if !is_last {
+                ctx.push_errexit_suppression();
+            }
 
-            if let Output::Buffer(buf) = std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new())) {
-                input = Some(buf);
+            let result = self.execute_pipeline_element(elem, ctx).await;
+            if !is_last {
+                ctx.pop_errexit_suppression();
+            }
+
+            let exit_code = result?;
+            exit_codes.push(exit_code);
+
+            if !is_last {
+                if let Output::Buffer(buf) =
+                    std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new()))
+                {
+                    input = Some(buf);
+                }
             }
         }
 
-        Ok(0)
+        let exit_code = if self.options.pipefail {
+            exit_codes
+                .iter()
+                .rev()
+                .copied()
+                .find(|code| *code != 0)
+                .unwrap_or(0)
+        } else {
+            *exit_codes.last().unwrap_or(&0)
+        };
+
+        Ok(exit_code)
     }
 
     async fn execute_pipeline_element(&mut self, elem: &PipelineElement, ctx: &mut ExecContext) -> Sh9Result<i32> {
@@ -449,6 +534,13 @@ impl Shell {
                 let glob_expanded = self.expand_glob(&be).await;
                 args.extend(glob_expanded);
             }
+        }
+
+        if self.options.xtrace {
+            let mut trace_parts = Vec::with_capacity(args.len() + 1);
+            trace_parts.push(name.clone());
+            trace_parts.extend(args.iter().cloned());
+            ctx.write_err(&format!("+ {}", trace_parts.join(" ")));
         }
         
         for redir in &cmd.redirections {
@@ -599,6 +691,7 @@ impl Shell {
                 should_break: false,
                 should_continue: false,
                 return_value: None,
+                suppress_errexit: ctx.suppress_errexit,
             };
             
             let mut result = 0;

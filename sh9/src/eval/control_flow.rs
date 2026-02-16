@@ -85,7 +85,10 @@ impl Shell {
     }
 
     pub(crate) async fn execute_if(&mut self, if_stmt: &IfStatement, ctx: &mut ExecContext) -> Sh9Result<i32> {
-        let cond_result = self.execute_pipeline(&if_stmt.condition, ctx).await?;
+        ctx.push_errexit_suppression();
+        let cond_result = self.execute_pipeline(&if_stmt.condition, ctx).await;
+        ctx.pop_errexit_suppression();
+        let cond_result = cond_result?;
         
         if cond_result == 0 {
             let mut result = 0;
@@ -98,7 +101,10 @@ impl Shell {
             Ok(result)
         } else {
             for elif in &if_stmt.elif_clauses {
-                let elif_result = self.execute_pipeline(&elif.condition, ctx).await?;
+                ctx.push_errexit_suppression();
+                let elif_result = self.execute_pipeline(&elif.condition, ctx).await;
+                ctx.pop_errexit_suppression();
+                let elif_result = elif_result?;
                 if elif_result == 0 {
                     let mut result = 0;
                     for stmt in &elif.body {
@@ -167,7 +173,10 @@ impl Shell {
         let mut result = 0;
         
         loop {
-            let cond_result = self.execute_pipeline(&while_loop.condition, ctx).await?;
+            ctx.push_errexit_suppression();
+            let cond_result = self.execute_pipeline(&while_loop.condition, ctx).await;
+            ctx.pop_errexit_suppression();
+            let cond_result = cond_result?;
             if cond_result != 0 {
                 break;
             }
@@ -196,7 +205,10 @@ impl Shell {
         let mut result = 0;
         
         loop {
-            let cond_result = self.execute_pipeline(&until_loop.condition, ctx).await?;
+            ctx.push_errexit_suppression();
+            let cond_result = self.execute_pipeline(&until_loop.condition, ctx).await;
+            ctx.pop_errexit_suppression();
+            let cond_result = cond_result?;
             if cond_result == 0 {
                 break;
             }
