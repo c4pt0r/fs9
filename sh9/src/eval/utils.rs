@@ -4,6 +4,7 @@ use fs9_client::OpenFlags;
 use std::pin::Pin;
 use std::future::Future;
 use super::{ExecContext, STREAM_CHUNK_SIZE};
+use super::router::NamespaceRouter;
 
 pub(crate) fn format_mtime(mtime: u64) -> String {
     let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -171,7 +172,7 @@ impl Shell {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn print_tree<'a>(
         &'a self,
-        client: &'a fs9_client::Fs9Client,
+        router: &'a NamespaceRouter,
         path: &'a str,
         prefix: &'a str,
         _is_last: bool,
@@ -187,46 +188,45 @@ impl Shell {
                     return Ok(());
                 }
             }
-            
-            let entries = match client.readdir(path).await {
+
+            let entries = match router.readdir(path).await {
                 Ok(e) => e,
                 Err(_) => return Ok(()),
             };
-            
+
             let mut filtered: Vec<_> = entries
                 .into_iter()
                 .filter(|e| {
-                    let name = e.name();
-                    let is_hidden = name.starts_with('.');
+                    let is_hidden = e.name.starts_with('.');
                     if is_hidden && !show_hidden {
                         return false;
                     }
-                    if dirs_only && !e.is_dir() {
+                    if dirs_only && !e.is_dir {
                         return false;
                     }
                     true
                 })
                 .collect();
-            
-            filtered.sort_by(|a, b| a.name().cmp(b.name()));
-            
+
+            filtered.sort_by(|a, b| a.name.cmp(&b.name));
+
             for (i, entry) in filtered.iter().enumerate() {
                 let is_last_entry = i == filtered.len() - 1;
                 let connector = if is_last_entry { "└── " } else { "├── " };
-                let line = format!("{}{}{}", prefix, connector, entry.name());
+                let line = format!("{}{}{}", prefix, connector, entry.name);
                 ctx.stdout.writeln(&line).map_err(Sh9Error::Io)?;
-                
-                if entry.is_dir() {
+
+                if entry.is_dir {
                     let new_prefix = format!("{}{}", prefix, if is_last_entry { "    " } else { "│   " });
                     let child_path = if path == "/" {
-                        format!("/{}", entry.name())
+                        format!("/{}", entry.name)
                     } else {
-                        format!("{}/{}", path, entry.name())
+                        format!("{}/{}", path, entry.name)
                     };
-                    self.print_tree(client, &child_path, &new_prefix, is_last_entry, depth + 1, max_depth, dirs_only, show_hidden, ctx).await?;
+                    self.print_tree(router, &child_path, &new_prefix, is_last_entry, depth + 1, max_depth, dirs_only, show_hidden, ctx).await?;
                 }
             }
-            
+
             Ok(())
         })
     }
