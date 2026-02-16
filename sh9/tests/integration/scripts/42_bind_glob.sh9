@@ -1,0 +1,28 @@
+# Test 42: Glob expansion on local mounts
+echo "=== glob ==="
+
+mkdir /tmp/sh9_test_42
+echo "aaa" > /tmp/sh9_test_42/alpha.txt
+echo "bbb" > /tmp/sh9_test_42/beta.txt
+echo "ccc" > /tmp/sh9_test_42/gamma.log
+bind /tmp/sh9_test_42 /mnt
+
+# Glob *.txt
+echo "=== echo txt ==="
+echo /mnt/*.txt
+
+# Glob *.log
+echo "=== echo log ==="
+echo /mnt/*.log
+
+# Glob all
+echo "=== echo all ==="
+echo /mnt/*
+
+# Cleanup
+rm /mnt/alpha.txt
+rm /mnt/beta.txt
+rm /mnt/gamma.log
+unmount /mnt
+rm /tmp/sh9_test_42
+echo "=== glob done ==="

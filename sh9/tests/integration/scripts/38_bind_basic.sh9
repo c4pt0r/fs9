@@ -1,0 +1,30 @@
+# Test 38: Basic bind/unmount/ns operations
+echo "=== bind basic ==="
+
+# Test ns with no mounts
+ns
+
+# Bind a local directory
+mkdir /tmp/sh9_test_38
+echo "hello" > /tmp/sh9_test_38/test.txt
+bind /tmp/sh9_test_38 /mnt
+
+# Verify ns shows the binding
+echo "=== ns after bind ==="
+ns
+
+# Verify ls works on mount
+echo "=== ls mount ==="
+ls /mnt
+
+# Unmount
+unmount /mnt
+
+# Verify ns is empty again
+echo "=== ns after unmount ==="
+ns
+
+# Cleanup
+rm /tmp/sh9_test_38/test.txt
+rm /tmp/sh9_test_38
+echo "=== bind basic done ==="

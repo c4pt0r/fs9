@@ -1,0 +1,10 @@
+=== glob ===
+bind: /tmp/sh9_test_42 -> /mnt
+=== echo txt ===
+/mnt/alpha.txt /mnt/beta.txt
+=== echo log ===
+/mnt/gamma.log
+=== echo all ===
+/mnt/alpha.txt /mnt/beta.txt /mnt/gamma.log
+unmount: /mnt
+=== glob done ===

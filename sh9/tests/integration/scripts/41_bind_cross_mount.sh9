@@ -1,0 +1,34 @@
+# Test 41: Cross-mount cp/mv between two local mounts
+echo "=== cross mount ==="
+
+mkdir /tmp/sh9_test_41a
+mkdir /tmp/sh9_test_41b
+bind /tmp/sh9_test_41a /mnt/a
+bind /tmp/sh9_test_41b /mnt/b
+
+# Copy across mounts
+echo "file_a" > /mnt/a/data.txt
+cp /mnt/a/data.txt /mnt/b/copied.txt
+echo "=== cat copied ==="
+cat /mnt/b/copied.txt
+
+# Move across mounts
+echo "moveme" > /mnt/a/move.txt
+mv /mnt/a/move.txt /mnt/b/moved.txt
+echo "=== cat moved ==="
+cat /mnt/b/moved.txt
+
+echo "=== ls a ==="
+ls /mnt/a
+echo "=== ls b ==="
+ls /mnt/b
+
+# Cleanup
+rm /mnt/a/data.txt
+rm /mnt/b/copied.txt
+rm /mnt/b/moved.txt
+unmount /mnt/a
+unmount /mnt/b
+rm /tmp/sh9_test_41a
+rm /tmp/sh9_test_41b
+echo "=== cross mount done ==="

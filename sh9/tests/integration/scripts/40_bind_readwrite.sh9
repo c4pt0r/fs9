@@ -1,0 +1,34 @@
+# Test 40: Read/write/mkdir/rm on local mounts
+echo "=== readwrite ==="
+
+mkdir /tmp/sh9_test_40
+bind /tmp/sh9_test_40 /mnt
+
+# Write and read a file
+echo "hello world" > /mnt/file.txt
+echo "=== cat ==="
+cat /mnt/file.txt
+
+# Create subdirectory and nested file
+mkdir /mnt/subdir
+echo "nested" > /mnt/subdir/inner.txt
+echo "=== cat nested ==="
+cat /mnt/subdir/inner.txt
+
+# List directory contents
+echo "=== ls ==="
+ls /mnt
+echo "=== ls subdir ==="
+ls /mnt/subdir
+
+# Remove nested content
+rm /mnt/subdir/inner.txt
+rm /mnt/subdir
+echo "=== ls after rm ==="
+ls /mnt
+
+# Cleanup
+rm /mnt/file.txt
+unmount /mnt
+rm /tmp/sh9_test_40
+echo "=== readwrite done ==="

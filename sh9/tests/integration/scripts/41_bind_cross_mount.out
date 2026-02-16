@@ -1,0 +1,15 @@
+=== cross mount ===
+bind: /tmp/sh9_test_41a -> /mnt/a
+bind: /tmp/sh9_test_41b -> /mnt/b
+=== cat copied ===
+file_a
+=== cat moved ===
+moveme
+=== ls a ===
+data.txt
+=== ls b ===
+copied.txt
+moved.txt
+unmount: /mnt/a
+unmount: /mnt/b
+=== cross mount done ===

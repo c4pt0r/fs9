@@ -1,0 +1,53 @@
+# Test 39: Union directory operations (MBEFORE/MAFTER)
+echo "=== union before ==="
+
+# Create two directories with overlapping files
+mkdir /tmp/sh9_test_39a
+mkdir /tmp/sh9_test_39b
+echo "from_a" > /tmp/sh9_test_39a/a.txt
+echo "from_b" > /tmp/sh9_test_39b/b.txt
+echo "overlay_b" > /tmp/sh9_test_39b/a.txt
+
+# Bind base, then prepend (-b = MBEFORE)
+bind /tmp/sh9_test_39a /mnt
+bind -b /tmp/sh9_test_39b /mnt
+
+echo "=== ns ==="
+ns
+
+# ls should show merged entries
+echo "=== ls ==="
+ls /mnt
+
+# cat a.txt should show overlay_b (before layer wins)
+echo "=== cat a.txt ==="
+cat /mnt/a.txt
+
+echo "=== cat b.txt ==="
+cat /mnt/b.txt
+
+# Unmount the overlay
+unmount /tmp/sh9_test_39b /mnt
+unmount /mnt
+
+# Now test MAFTER (append)
+echo "=== union after ==="
+bind /tmp/sh9_test_39a /mnt
+bind -a /tmp/sh9_test_39b /mnt
+
+echo "=== ns ==="
+ns
+
+# cat a.txt should show from_a (base layer wins)
+echo "=== cat a.txt ==="
+cat /mnt/a.txt
+
+unmount /mnt
+
+# Cleanup
+rm /tmp/sh9_test_39a/a.txt
+rm /tmp/sh9_test_39b/b.txt
+rm /tmp/sh9_test_39b/a.txt
+rm /tmp/sh9_test_39a
+rm /tmp/sh9_test_39b
+echo "=== union done ==="

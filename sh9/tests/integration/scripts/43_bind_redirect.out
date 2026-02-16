@@ -1,0 +1,12 @@
+=== redirect ===
+bind: /tmp/sh9_test_43 -> /mnt
+=== cat out ===
+line1
+line2
+=== read input ===
+line1
+line2
+=== wc ===
+1
+unmount: /mnt
+=== redirect done ===

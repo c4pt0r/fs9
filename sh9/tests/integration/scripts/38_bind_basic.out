@@ -1,0 +1,11 @@
+=== bind basic ===
+(no bindings)
+bind: /tmp/sh9_test_38 -> /mnt
+=== ns after bind ===
+/mnt	/tmp/sh9_test_38	(replace)
+=== ls mount ===
+test.txt
+unmount: /mnt
+=== ns after unmount ===
+(no bindings)
+=== bind basic done ===

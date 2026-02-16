@@ -1,0 +1,25 @@
+=== union before ===
+bind: /tmp/sh9_test_39a -> /mnt
+bind: /tmp/sh9_test_39b -> /mnt
+=== ns ===
+/mnt	/tmp/sh9_test_39b	(before)
+/mnt	/tmp/sh9_test_39a	(replace)
+=== ls ===
+a.txt
+b.txt
+=== cat a.txt ===
+overlay_b
+=== cat b.txt ===
+from_b
+unmount: /tmp/sh9_test_39b from /mnt
+unmount: /mnt
+=== union after ===
+bind: /tmp/sh9_test_39a -> /mnt
+bind: /tmp/sh9_test_39b -> /mnt
+=== ns ===
+/mnt	/tmp/sh9_test_39a	(replace)
+/mnt	/tmp/sh9_test_39b	(after)
+=== cat a.txt ===
+from_a
+unmount: /mnt
+=== union done ===

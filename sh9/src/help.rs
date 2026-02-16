@@ -19,6 +19,21 @@ pub const COMMANDS: &[CommandHelp] = &[
         options: &[],
     },
     CommandHelp {
+        name: "bind",
+        summary: "Bind a local directory into the session namespace (Plan 9 style)",
+        usage: "bind [-b|-a] [-c] SOURCE TARGET",
+        options: &[
+            (
+                "-b",
+                "Union mount: prepend (search this layer first, MBEFORE)",
+            ),
+            ("-a", "Union mount: append (search this layer last, MAFTER)"),
+            ("-c", "Allow file creation in this layer (MCREATE)"),
+            ("SOURCE", "Local directory path to bind"),
+            ("TARGET", "Mount point in the namespace"),
+        ],
+    },
+    CommandHelp {
         name: "cat",
         summary: "Concatenate and print files",
         usage: "cat [OPTIONS] [FILE]...",
@@ -164,7 +179,10 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "bg",
         summary: "Resume a stopped job in background",
         usage: "bg [JOB_ID]",
-        options: &[("(not implemented)", "sh9 doesn't support job control (Ctrl+Z)")],
+        options: &[(
+            "(not implemented)",
+            "sh9 doesn't support job control (Ctrl+Z)",
+        )],
     },
     CommandHelp {
         name: "kill",
@@ -223,6 +241,12 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "mv",
         summary: "Move or rename files",
         usage: "mv SOURCE DEST",
+        options: &[],
+    },
+    CommandHelp {
+        name: "ns",
+        summary: "List all current namespace bindings",
+        usage: "ns",
         options: &[],
     },
     CommandHelp {
@@ -296,7 +320,10 @@ pub const COMMANDS: &[CommandHelp] = &[
         options: &[
             ("-n NUM", "Print last NUM lines (default 10)"),
             ("-NUM", "Same as -n NUM (e.g., -20)"),
-            ("-f, --follow", "Keep reading file for new data (useful for PubSubFS)"),
+            (
+                "-f, --follow",
+                "Keep reading file for new data (useful for PubSubFS)",
+            ),
         ],
     },
     CommandHelp {
@@ -370,6 +397,15 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Report or omit repeated lines",
         usage: "uniq [FILE]",
         options: &[],
+    },
+    CommandHelp {
+        name: "unmount",
+        summary: "Remove a binding from the namespace",
+        usage: "unmount [SOURCE] TARGET",
+        options: &[
+            ("SOURCE", "If given, remove only this specific binding"),
+            ("TARGET", "Mount point to unbind"),
+        ],
     },
     CommandHelp {
         name: "unset",

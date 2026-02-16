@@ -1,0 +1,15 @@
+=== readwrite ===
+bind: /tmp/sh9_test_40 -> /mnt
+=== cat ===
+hello world
+=== cat nested ===
+nested
+=== ls ===
+file.txt
+subdir
+=== ls subdir ===
+inner.txt
+=== ls after rm ===
+file.txt
+unmount: /mnt
+=== readwrite done ===
