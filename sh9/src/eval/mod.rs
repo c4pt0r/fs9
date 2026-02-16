@@ -2,7 +2,7 @@
 
 use crate::ast::*;
 use crate::error::{Sh9Error, Sh9Result};
-use crate::help::{wants_help, get_help, format_help};
+use crate::help::{format_help, get_help, wants_help};
 use crate::shell::Shell;
 use fs9_client::Fs9Client;
 use std::collections::HashMap;
@@ -366,16 +366,29 @@ impl Shell {
         }
     }
     
-    fn resolve_local_path(&self, vfs_path: &str) -> Option<std::path::PathBuf> {
+    fn resolve_local_write_path(&self, vfs_path: &str) -> Option<std::path::PathBuf> {
+        let normalized = namespace::normalize_path(vfs_path);
         let ns = self.namespace.read().unwrap();
-        let resolutions = ns.resolve(vfs_path);
-        resolutions.first().and_then(|(source, rel)| {
-            local_fs::safe_resolve(source, rel.trim_start_matches('/')).ok()
-        })
+        let mounts = ns.list_mounts();
+
+        let mount_target = mounts
+            .iter()
+            .filter(|mount| mount_matches_path(&mount.target, &normalized))
+            .map(|mount| mount.target.as_str())
+            .max_by_key(|target| target.len())?;
+
+        let selected_mount = mounts
+            .iter()
+            .filter(|mount| mount.target == mount_target)
+            .find(|mount| mount.flags.contains(namespace::MountFlags::MCREATE))
+            .or_else(|| mounts.iter().find(|mount| mount.target == mount_target))?;
+
+        let relative = relative_path_for_mount(&normalized, mount_target);
+        local_fs::safe_resolve(&selected_mount.source, relative.trim_start_matches('/')).ok()
     }
 
     fn make_output_for_path(&self, path: &str, mode: FileWriteMode) -> Option<Output> {
-        if let Some(lp) = self.resolve_local_path(path) {
+        if let Some(lp) = self.resolve_local_write_path(path) {
             return Some(Output::LocalFile {
                 path: lp,
                 buffer: Vec::new(),
@@ -563,9 +576,62 @@ impl Shell {
     }
 }
 
+fn mount_matches_path(target: &str, path: &str) -> bool {
+    if target == "/" {
+        return true;
+    }
+
+    path == target
+        || (path.starts_with(target) && path.as_bytes().get(target.len()) == Some(&b'/'))
+}
+
+fn relative_path_for_mount(path: &str, target: &str) -> String {
+    if path == target {
+        "/".to_string()
+    } else if target == "/" {
+        path.to_string()
+    } else {
+        path[target.len()..].to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eval::namespace::MountFlags;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempDirGuard {
+        path: PathBuf,
+    }
+
+    impl TempDirGuard {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "sh9_eval_test_{}_{}",
+                std::process::id(),
+                unique
+            ));
+            fs::create_dir_all(&path).expect("failed to create temp test dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
     
     #[tokio::test]
     async fn test_echo() {
@@ -634,5 +700,59 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "first second");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_mv_cross_mount_fallback_copies_then_deletes() {
+        let src = TempDirGuard::new();
+        let dst = TempDirGuard::new();
+        fs::write(src.path().join("file.txt"), b"cross-mount").expect("write failed");
+
+        let mut shell = Shell::new("http://localhost:8080");
+        {
+            let mut ns = shell.namespace.write().unwrap();
+            ns.bind(src.path(), "/src", MountFlags::MREPL);
+            ns.bind(dst.path(), "/dst", MountFlags::MREPL);
+        }
+
+        let output = shell
+            .execute_capture("mv /src/file.txt /dst/file.txt")
+            .await
+            .expect("mv command failed");
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stderr.is_empty());
+        assert!(!src.path().join("file.txt").exists());
+        assert_eq!(
+            fs::read(dst.path().join("file.txt")).expect("read failed"),
+            b"cross-mount"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_redirection_uses_mcreate_layer() {
+        let base = TempDirGuard::new();
+        let create_layer = TempDirGuard::new();
+
+        let mut shell = Shell::new("http://localhost:8080");
+        {
+            let mut ns = shell.namespace.write().unwrap();
+            ns.bind(base.path(), "/mnt", MountFlags::MREPL);
+            ns.bind(
+                create_layer.path(),
+                "/mnt",
+                MountFlags::MAFTER | MountFlags::MCREATE,
+            );
+        }
+
+        let output = shell
+            .execute_capture("echo x > /mnt/new.txt")
+            .await
+            .expect("echo command failed");
+        assert_eq!(output.exit_code, 0);
+        assert!(!base.path().join("new.txt").exists());
+        assert_eq!(
+            fs::read_to_string(create_layer.path().join("new.txt")).expect("read failed"),
+            "x\n"
+        );
     }
 }

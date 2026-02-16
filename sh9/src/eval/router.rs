@@ -751,6 +751,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn router_union_read_file_prefers_first_layer() {
+        let lower = TempDirGuard::new();
+        let upper = TempDirGuard::new();
+        fs::write(lower.path().join("shared.txt"), b"lower").expect("write failed");
+        fs::write(upper.path().join("shared.txt"), b"upper").expect("write failed");
+
+        let mut router = NamespaceRouter::new(None);
+        router
+            .namespace
+            .bind(lower.path(), "/union", MountFlags::MREPL);
+        router
+            .namespace
+            .bind(upper.path(), "/union", MountFlags::MBEFORE);
+
+        let data = router
+            .read_file("/union/shared.txt")
+            .await
+            .expect("read failed");
+        assert_eq!(data, b"upper");
+    }
+
+    #[tokio::test]
+    async fn router_write_file_prefers_mcreate_layer() {
+        let base = TempDirGuard::new();
+        let create_layer = TempDirGuard::new();
+
+        let mut router = NamespaceRouter::new(None);
+        router
+            .namespace
+            .bind(base.path(), "/mnt", MountFlags::MREPL);
+        router
+            .namespace
+            .bind(
+                create_layer.path(),
+                "/mnt",
+                MountFlags::MAFTER | MountFlags::MCREATE,
+            );
+
+        router
+            .write_file("/mnt/new.txt", b"from-create")
+            .await
+            .expect("write failed");
+
+        assert!(
+            !base.path().join("new.txt").exists(),
+            "base layer should not receive create"
+        );
+        assert_eq!(
+            fs::read(create_layer.path().join("new.txt")).expect("read failed"),
+            b"from-create"
+        );
+    }
+
+    #[tokio::test]
     async fn router_rename_detects_cross_mount() {
         let left = TempDirGuard::new();
         let right = TempDirGuard::new();
