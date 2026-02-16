@@ -195,14 +195,28 @@ fn resolve_path(cwd: &str, path: &str) -> String {
 impl Hinter for Sh9Helper {
     type Hint = String;
 
-    fn hint(&self, _line: &str, _pos: usize, _ctx: &Context<'_>) -> Option<String> {
+    fn hint(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Option<String> {
+        // Only show hints when cursor is at end of line
+        if pos < line.len() || line.is_empty() {
+            return None;
+        }
+        
+        // Search history backwards for entries starting with current line
+        let history = ctx.history();
+        for i in (0..history.len()).rev() {
+            if let Ok(Some(entry)) = history.get(i, rustyline::history::SearchDirection::Reverse) {
+                if entry.entry.starts_with(line) && entry.entry.len() > line.len() {
+                    return Some(entry.entry[line.len()..].to_string());
+                }
+            }
+        }
         None
     }
 }
 
 impl Highlighter for Sh9Helper {
     fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
-        Cow::Borrowed(hint)
+        Cow::Owned(format!("\x1b[90m{hint}\x1b[0m"))
     }
 }
 
