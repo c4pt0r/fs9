@@ -380,10 +380,17 @@ impl Shell {
         let dst = self.resolve_path(&args[1]);
 
         let router = self.router();
-        match router.rename(&src, &dst).await {
+        let effective_dst = match router.stat(&dst).await {
+            Ok(info) if info.is_dir => {
+                let basename = src.rsplit('/').next().unwrap_or(&src);
+                format!("{}/{}", dst.trim_end_matches('/'), basename)
+            }
+            _ => dst.clone(),
+        };
+        match router.rename(&src, &effective_dst).await {
             Ok(()) => Ok(0),
             Err(e) if e.contains("cross-mount rename") => {
-                if let Err(e) = router.copy(&src, &dst).await {
+                if let Err(e) = router.copy(&src, &effective_dst).await {
                     ctx.write_err(&format!("mv: {}", e));
                     return Ok(1);
                 }
@@ -437,7 +444,14 @@ impl Shell {
                 Ok(0)
             }
             Ok(_) => {
-                if let Err(e) = router.copy(&src, &dst).await {
+                let effective_dst = match router.stat(&dst).await {
+                    Ok(info) if info.is_dir => {
+                        let basename = src.rsplit('/').next().unwrap_or(&src);
+                        format!("{}/{}", dst.trim_end_matches('/'), basename)
+                    }
+                    _ => dst.clone(),
+                };
+                if let Err(e) = router.copy(&src, &effective_dst).await {
                     ctx.write_err(&format!("cp: {}", e));
                     return Ok(1);
                 }
