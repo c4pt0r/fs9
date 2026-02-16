@@ -6,9 +6,9 @@ use crate::help::{format_help, get_help, wants_help};
 use crate::shell::Shell;
 use fs9_client::Fs9Client;
 use std::collections::HashMap;
+use std::future::Future;
 use std::io::Write;
 use std::pin::Pin;
-use std::future::Future;
 use std::sync::Arc;
 
 mod arithmetic;
@@ -17,11 +17,11 @@ mod builtins_shell;
 mod builtins_text;
 mod control_flow;
 mod expansion;
-mod utils;
 #[allow(dead_code)]
 mod local_fs;
 pub mod namespace;
 pub mod router;
+mod utils;
 
 pub(crate) const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 
@@ -43,8 +43,8 @@ pub enum Output {
 
 #[derive(Clone, Copy)]
 pub enum FileWriteMode {
-    Write,   // Overwrite
-    Append,  // Append
+    Write,  // Overwrite
+    Append, // Append
 }
 
 impl Output {
@@ -74,7 +74,12 @@ impl Output {
         match self {
             Output::Stdout => std::io::stdout().flush(),
             Output::Buffer(_) => Ok(()),
-            Output::File { client, path, buffer, mode } => {
+            Output::File {
+                client,
+                path,
+                buffer,
+                mode,
+            } => {
                 if !buffer.is_empty() {
                     let to_write = std::mem::take(buffer);
                     if let Err(e) = match mode {
@@ -84,7 +89,8 @@ impl Output {
                             result
                         }
                         FileWriteMode::Append => {
-                            let existing: bytes::Bytes = client.read_file(path).await.unwrap_or_default();
+                            let existing: bytes::Bytes =
+                                client.read_file(path).await.unwrap_or_default();
                             let mut combined = existing.to_vec();
                             combined.extend_from_slice(&to_write);
                             client.write_file(path, &combined).await
@@ -100,17 +106,17 @@ impl Output {
                 if !buffer.is_empty() {
                     let to_write = std::mem::take(buffer);
                     let result = match mode {
-                        FileWriteMode::Write => {
-                            std::fs::write(&*path, &to_write)
-                                .map_err(|e| e.to_string())
-                                .map(|()| { *mode = FileWriteMode::Append; })
-                        }
-                        FileWriteMode::Append => {
-                            std::fs::OpenOptions::new()
-                                .create(true).append(true).open(&*path)
-                                .and_then(|mut f| f.write_all(&to_write))
-                                .map_err(|e| e.to_string())
-                        }
+                        FileWriteMode::Write => std::fs::write(&*path, &to_write)
+                            .map_err(|e| e.to_string())
+                            .map(|()| {
+                                *mode = FileWriteMode::Append;
+                            }),
+                        FileWriteMode::Append => std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&*path)
+                            .and_then(|mut f| f.write_all(&to_write))
+                            .map_err(|e| e.to_string()),
                     };
                     if let Err(e) = result {
                         let msg = format!("Error flushing to {}: {}\n", path.display(), e);
@@ -220,19 +226,19 @@ impl Shell {
     pub async fn execute_script(&mut self, script: &Script) -> Sh9Result<i32> {
         let mut ctx = ExecContext::default();
         let mut last_exit = 0;
-        
+
         for stmt in &script.statements {
             last_exit = self.execute_statement_boxed(stmt, &mut ctx).await?;
             self.last_exit_code = last_exit;
-            
+
             if ctx.should_break || ctx.should_continue || ctx.return_value.is_some() {
                 break;
             }
         }
-        
+
         Ok(last_exit)
     }
-    
+
     pub(crate) fn execute_statement_boxed<'a>(
         &'a mut self,
         stmt: &'a Statement,
@@ -240,11 +246,15 @@ impl Shell {
     ) -> Pin<Box<dyn Future<Output = Sh9Result<i32>> + Send + 'a>> {
         Box::pin(self.execute_statement(stmt, ctx))
     }
-    
-    async fn execute_statement(&mut self, stmt: &Statement, ctx: &mut ExecContext) -> Sh9Result<i32> {
+
+    async fn execute_statement(
+        &mut self,
+        stmt: &Statement,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         match stmt {
             Statement::Empty => Ok(0),
-            
+
             Statement::Assignment(assign) => {
                 let value = self.expand_word(&assign.value, ctx).await?;
                 if ctx.locals.contains_key(&assign.name) {
@@ -254,7 +264,7 @@ impl Shell {
                 }
                 Ok(0)
             }
-            
+
             Statement::CommandList { first, rest } => {
                 let mut exit_code = self
                     .execute_pipeline_with_errexit_control(first, ctx, !rest.is_empty())
@@ -295,12 +305,23 @@ impl Shell {
             Statement::Pipeline(pipeline) => {
                 if pipeline.background {
                     // Format command string
-                    let cmd_str = pipeline.elements.iter()
+                    let cmd_str = pipeline
+                        .elements
+                        .iter()
                         .map(|elem| match elem {
                             PipelineElement::Simple(c) => {
                                 let name = format!("{}", c.name);
-                                let args = c.args.iter().map(|a| format!("{}", a)).collect::<Vec<_>>().join(" ");
-                                let mut cmd = if args.is_empty() { name } else { format!("{} {}", name, args) };
+                                let args = c
+                                    .args
+                                    .iter()
+                                    .map(|a| format!("{}", a))
+                                    .collect::<Vec<_>>()
+                                    .join(" ");
+                                let mut cmd = if args.is_empty() {
+                                    name
+                                } else {
+                                    format!("{} {}", name, args)
+                                };
                                 for redir in &c.redirections {
                                     let target = format!("{}", redir.target);
                                     let redir_str = match redir.kind {
@@ -328,7 +349,10 @@ impl Shell {
                     let handle = tokio::spawn(async move {
                         let mut shell = shell_copy;
                         let mut ctx = ExecContext::default();
-                        let pipeline = Pipeline { elements, background: false };
+                        let pipeline = Pipeline {
+                            elements,
+                            background: false,
+                        };
                         match shell.execute_pipeline(&pipeline, &mut ctx).await {
                             Ok(code) => code,
                             Err(e) => {
@@ -347,36 +371,31 @@ impl Shell {
                         .await
                 }
             }
-            
-            Statement::If(if_stmt) => {
-                self.execute_if(if_stmt, ctx).await
-            }
-            
-            Statement::For(for_loop) => {
-                self.execute_for(for_loop, ctx).await
-            }
-            
-            Statement::While(while_loop) => {
-                self.execute_while(while_loop, ctx).await
-            }
-            
+
+            Statement::If(if_stmt) => self.execute_if(if_stmt, ctx).await,
+
+            Statement::For(for_loop) => self.execute_for(for_loop, ctx).await,
+
+            Statement::While(while_loop) => self.execute_while(while_loop, ctx).await,
+
             Statement::FunctionDef(func) => {
-                let body_str = serde_json::to_string(&func.body)
-                    .map_err(|e| Sh9Error::Runtime(format!("Failed to serialize function: {}", e)))?;
+                let body_str = serde_json::to_string(&func.body).map_err(|e| {
+                    Sh9Error::Runtime(format!("Failed to serialize function: {}", e))
+                })?;
                 self.define_function(&func.name, &body_str);
                 Ok(0)
             }
-            
+
             Statement::Break => {
                 ctx.should_break = true;
                 Ok(0)
             }
-            
+
             Statement::Continue => {
                 ctx.should_continue = true;
                 Ok(0)
             }
-            
+
             Statement::Return(value) => {
                 let code = if let Some(word) = value {
                     let expanded = self.expand_word(word, ctx).await?;
@@ -387,28 +406,33 @@ impl Shell {
                 ctx.return_value = Some(code);
                 Ok(code)
             }
-            
-            Statement::Case(case_stmt) => {
-                self.execute_case(case_stmt, ctx).await
-            }
-            
-            Statement::Until(until_loop) => {
-                self.execute_until(until_loop, ctx).await
-            }
+
+            Statement::Case(case_stmt) => self.execute_case(case_stmt, ctx).await,
+
+            Statement::Until(until_loop) => self.execute_until(until_loop, ctx).await,
         }
     }
-    
-    async fn execute_pipeline(&mut self, pipeline: &Pipeline, ctx: &mut ExecContext) -> Sh9Result<i32> {
+
+    async fn execute_pipeline(
+        &mut self,
+        pipeline: &Pipeline,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         if pipeline.elements.is_empty() {
             return Ok(0);
         }
 
         if pipeline.elements.len() == 1 {
-            return self.execute_pipeline_element(&pipeline.elements[0], ctx).await;
+            return self
+                .execute_pipeline_element(&pipeline.elements[0], ctx)
+                .await;
         }
 
         // Save the original stdout so the last element writes to the correct destination
-        let mut original_stdout = Some(std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new())));
+        let mut original_stdout = Some(std::mem::replace(
+            &mut ctx.stdout,
+            Output::Buffer(Vec::new()),
+        ));
         let mut input: Option<Vec<u8>> = ctx.stdin.take();
 
         let mut exit_codes = Vec::with_capacity(pipeline.elements.len());
@@ -459,13 +483,17 @@ impl Shell {
         Ok(exit_code)
     }
 
-    async fn execute_pipeline_element(&mut self, elem: &PipelineElement, ctx: &mut ExecContext) -> Sh9Result<i32> {
+    async fn execute_pipeline_element(
+        &mut self,
+        elem: &PipelineElement,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         match elem {
             PipelineElement::Simple(cmd) => self.execute_command(cmd, ctx).await,
             PipelineElement::Compound(stmt) => self.execute_statement_boxed(stmt, ctx).await,
         }
     }
-    
+
     fn resolve_local_write_path(&self, vfs_path: &str) -> Option<std::path::PathBuf> {
         let normalized = namespace::normalize_path(vfs_path);
         let ns = self.namespace.read().unwrap();
@@ -505,7 +533,7 @@ impl Shell {
 
     async fn execute_command(&mut self, cmd: &Command, ctx: &mut ExecContext) -> Sh9Result<i32> {
         let raw_name = self.expand_word(&cmd.name, ctx).await?;
-        
+
         let (name, mut args) = if let Some(alias_value) = self.aliases.get(&raw_name) {
             let parts: Vec<&str> = alias_value.split_whitespace().collect();
             if parts.is_empty() {
@@ -518,18 +546,21 @@ impl Shell {
         } else {
             (raw_name, Vec::new())
         };
-        
+
         for arg in &cmd.args {
             let expanded = self.expand_word(arg, ctx).await?;
             let should_expand_braces = arg.parts.iter().any(|p| matches!(p, WordPart::Literal(_)));
-            let is_fully_quoted = arg.parts.iter().all(|p| matches!(p, WordPart::SingleQuoted(_) | WordPart::DoubleQuoted(_)));
-            
+            let is_fully_quoted = arg
+                .parts
+                .iter()
+                .all(|p| matches!(p, WordPart::SingleQuoted(_) | WordPart::DoubleQuoted(_)));
+
             let brace_expanded = if is_fully_quoted || !should_expand_braces {
                 vec![expanded]
             } else {
                 expansion::expand_braces_in_string(&expanded)
             };
-            
+
             for be in brace_expanded {
                 let glob_expanded = self.expand_glob(&be).await;
                 args.extend(glob_expanded);
@@ -542,7 +573,7 @@ impl Shell {
             trace_parts.extend(args.iter().cloned());
             ctx.write_err(&format!("+ {}", trace_parts.join(" ")));
         }
-        
+
         for redir in &cmd.redirections {
             match &redir.kind {
                 RedirectKind::StdinRead => {
@@ -575,7 +606,7 @@ impl Shell {
                 _ => {}
             }
         }
-        
+
         // Set up output redirections
         let mut stdout_redir_path: Option<(String, FileWriteMode)> = None;
         let mut stderr_redir_path: Option<(String, FileWriteMode)> = None;
@@ -606,21 +637,19 @@ impl Shell {
         }
 
         let saved_stdout = if let Some((path, mode)) = stdout_redir_path {
-            self.make_output_for_path(&path, mode).map(|output| {
-                std::mem::replace(&mut ctx.stdout, output)
-            })
+            self.make_output_for_path(&path, mode)
+                .map(|output| std::mem::replace(&mut ctx.stdout, output))
         } else {
             None
         };
 
         let saved_stderr = if let Some((path, mode)) = stderr_redir_path {
-            self.make_output_for_path(&path, mode).map(|output| {
-                std::mem::replace(&mut ctx.stderr, output)
-            })
+            self.make_output_for_path(&path, mode)
+                .map(|output| std::mem::replace(&mut ctx.stderr, output))
         } else {
             None
         };
-        
+
         let result = self.execute_builtin(&name, &args, ctx).await;
 
         if let Some(prev) = saved_stderr {
@@ -632,15 +661,19 @@ impl Shell {
             ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
             ctx.stdout = prev;
         }
-        
+
         if let Ok(code) = &result {
             self.last_exit_code = *code;
         }
-        
+
         result
     }
-    
-    fn show_help_if_requested(name: &str, args: &[String], ctx: &mut ExecContext) -> Option<Sh9Result<i32>> {
+
+    fn show_help_if_requested(
+        name: &str,
+        args: &[String],
+        ctx: &mut ExecContext,
+    ) -> Option<Sh9Result<i32>> {
         if wants_help(args) {
             if let Some(cmd_help) = get_help(name) {
                 let _ = ctx.stdout.write(format_help(cmd_help).as_bytes());
@@ -649,22 +682,27 @@ impl Shell {
         }
         None
     }
-    
-    async fn execute_builtin(&mut self, name: &str, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+
+    async fn execute_builtin(
+        &mut self,
+        name: &str,
+        args: &[String],
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         if let Some(result) = Self::show_help_if_requested(name, args, ctx) {
             return result;
         }
-        
+
         // Try text builtins
         if let Some(result) = self.try_execute_text_builtin(name, args, ctx).await {
             return result;
         }
-        
+
         // Try fs builtins
         if let Some(result) = self.try_execute_fs_builtin(name, args, ctx).await {
             return result;
         }
-        
+
         // Try shell builtins
         if let Some(result) = self.try_execute_shell_builtin(name, args, ctx).await {
             return result;
@@ -674,12 +712,12 @@ impl Shell {
         if let Some(handler) = self.custom_builtins.get(name).cloned() {
             return handler(args, self);
         }
-        
+
         // Try as user-defined function
         if let Some(body_str) = self.get_function(name).map(|s| s.to_string()) {
             let body: Vec<Statement> = serde_json::from_str(&body_str)
                 .map_err(|e| Sh9Error::Runtime(format!("Failed to parse function: {}", e)))?;
-            
+
             let inherited_stdout = std::mem::replace(&mut ctx.stdout, Output::Stdout);
             let inherited_stderr = std::mem::replace(&mut ctx.stderr, Output::Stdout);
             let mut func_ctx = ExecContext {
@@ -693,7 +731,7 @@ impl Shell {
                 return_value: None,
                 suppress_errexit: ctx.suppress_errexit,
             };
-            
+
             let mut result = 0;
             for stmt in &body {
                 result = self.execute_statement_boxed(stmt, &mut func_ctx).await?;
@@ -703,7 +741,7 @@ impl Shell {
                     return Ok(func_ctx.return_value.unwrap());
                 }
             }
-            
+
             ctx.stdout = func_ctx.stdout;
             ctx.stderr = func_ctx.stderr;
             Ok(result)
@@ -718,8 +756,7 @@ fn mount_matches_path(target: &str, path: &str) -> bool {
         return true;
     }
 
-    path == target
-        || (path.starts_with(target) && path.as_bytes().get(target.len()) == Some(&b'/'))
+    path == target || (path.starts_with(target) && path.as_bytes().get(target.len()) == Some(&b'/'))
 }
 
 fn relative_path_for_mount(path: &str, target: &str) -> String {
@@ -769,7 +806,7 @@ mod tests {
             let _ = fs::remove_dir_all(&self.path);
         }
     }
-    
+
     #[tokio::test]
     async fn test_echo() {
         let mut shell = Shell::new("http://localhost:8080");
@@ -777,7 +814,7 @@ mod tests {
         let result = shell.execute_script(&script).await.unwrap();
         assert_eq!(result, 0);
     }
-    
+
     #[tokio::test]
     async fn test_variable_assignment() {
         let mut shell = Shell::new("http://localhost:8080");
@@ -785,15 +822,15 @@ mod tests {
         shell.execute_script(&script).await.unwrap();
         assert_eq!(shell.get_var("x"), Some("5"));
     }
-    
+
     #[tokio::test]
     async fn test_true_false() {
         let mut shell = Shell::new("http://localhost:8080");
-        
+
         let script = crate::parser::parse("true").unwrap();
         let result = shell.execute_script(&script).await.unwrap();
         assert_eq!(result, 0);
-        
+
         let script = crate::parser::parse("false").unwrap();
         let result = shell.execute_script(&script).await.unwrap();
         assert_eq!(result, 1);
@@ -947,9 +984,6 @@ mod tests {
             .await
             .expect("herestring failed");
         assert_eq!(output.exit_code, 0);
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            "hello world\n"
-        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "hello world\n");
     }
 }

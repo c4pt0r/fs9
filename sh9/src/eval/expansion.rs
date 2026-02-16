@@ -1,19 +1,21 @@
+use super::utils::{contains_glob_chars, match_glob_pattern};
+use super::{ExecContext, Output};
 use crate::ast::*;
 use crate::error::{Sh9Error, Sh9Result};
 use crate::shell::Shell;
-use super::{ExecContext, Output};
-use super::utils::{contains_glob_chars, match_glob_pattern};
 
 impl Shell {
     pub async fn expand_word(&mut self, word: &Word, ctx: &mut ExecContext) -> Sh9Result<String> {
         let mut result = String::new();
-        
+
         for part in &word.parts {
             match part {
                 WordPart::Literal(s) => {
                     // Tilde expansion: ~ or ~/path → $HOME or $HOME/path
                     let tilde_expanded = self.expand_tilde(s, ctx);
-                    let expanded = self.expand_variables_in_string(&tilde_expanded, ctx).await?;
+                    let expanded = self
+                        .expand_variables_in_string(&tilde_expanded, ctx)
+                        .await?;
                     result.push_str(&expanded);
                 }
                 WordPart::SingleQuoted(s) => {
@@ -42,14 +44,18 @@ impl Shell {
                 }
             }
         }
-        
+
         Ok(result)
     }
 
-    async fn expand_variables_in_string(&mut self, s: &str, ctx: &mut ExecContext) -> Sh9Result<String> {
+    async fn expand_variables_in_string(
+        &mut self,
+        s: &str,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<String> {
         let mut result = String::new();
         let mut chars = s.chars().peekable();
-        
+
         while let Some(c) = chars.next() {
             if c == '$' {
                 if chars.peek() == Some(&'(') {
@@ -83,7 +89,11 @@ impl Shell {
                     }
                     let expanded = Box::pin(self.expand_braced_param(&content, ctx)).await?;
                     result.push_str(&expanded);
-                } else if chars.peek().map(|c| c.is_alphabetic() || *c == '_' || *c == '?').unwrap_or(false) {
+                } else if chars
+                    .peek()
+                    .map(|c| c.is_alphabetic() || *c == '_' || *c == '?')
+                    .unwrap_or(false)
+                {
                     let mut name = String::new();
                     let first_char = *chars.peek().unwrap();
                     if first_char == '?' {
@@ -113,7 +123,7 @@ impl Shell {
                 result.push(c);
             }
         }
-        
+
         Ok(result)
     }
 
@@ -137,7 +147,11 @@ impl Shell {
         }
     }
 
-    async fn expand_braced_param(&mut self, content: &str, ctx: &mut ExecContext) -> Sh9Result<String> {
+    async fn expand_braced_param(
+        &mut self,
+        content: &str,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<String> {
         // ${#var} — string length
         if let Some(var_name) = content.strip_prefix('#') {
             let value = self.get_variable_value(var_name, ctx)?;
@@ -279,10 +293,13 @@ impl Shell {
         value.to_string()
     }
 
-    pub(crate) fn collect_balanced_parens(chars: &mut std::iter::Peekable<std::str::Chars>, initial_depth: usize) -> String {
+    pub(crate) fn collect_balanced_parens(
+        chars: &mut std::iter::Peekable<std::str::Chars>,
+        initial_depth: usize,
+    ) -> String {
         let mut result = String::new();
         let mut depth = initial_depth;
-        
+
         for c in chars.by_ref() {
             if c == '(' {
                 depth += 1;
@@ -297,7 +314,7 @@ impl Shell {
                 result.push(c);
             }
         }
-        
+
         result
     }
 
@@ -348,23 +365,24 @@ impl Shell {
 
     async fn execute_command_sub(&mut self, cmd: &str, ctx: &mut ExecContext) -> Sh9Result<String> {
         use crate::parser::parse;
-        
-        let script = parse(cmd).map_err(|e| {
-            Sh9Error::Parse(format!("Command substitution parse error: {:?}", e))
-        })?;
-        
+
+        let script = parse(cmd)
+            .map_err(|e| Sh9Error::Parse(format!("Command substitution parse error: {:?}", e)))?;
+
         let saved_stdout = std::mem::replace(&mut ctx.stdout, Output::Buffer(Vec::new()));
-        
+
         for stmt in &script.statements {
             self.execute_statement_boxed(stmt, ctx).await?;
         }
-        
+
         let output = if let Output::Buffer(buf) = std::mem::replace(&mut ctx.stdout, saved_stdout) {
-            String::from_utf8_lossy(&buf).trim_end_matches('\n').to_string()
+            String::from_utf8_lossy(&buf)
+                .trim_end_matches('\n')
+                .to_string()
         } else {
             String::new()
         };
-        
+
         Ok(output)
     }
 
@@ -372,28 +390,31 @@ impl Shell {
         if !contains_glob_chars(pattern) {
             return vec![pattern.to_string()];
         }
-        
+
         let (dir, file_pattern) = if pattern.contains('/') {
             let last_slash = pattern.rfind('/').unwrap();
             let dir_part = &pattern[..=last_slash];
             let file_part = &pattern[last_slash + 1..];
-            
+
             if contains_glob_chars(dir_part) {
                 return vec![pattern.to_string()];
             }
-            
-            (self.resolve_path(dir_part.trim_end_matches('/')), file_part.to_string())
+
+            (
+                self.resolve_path(dir_part.trim_end_matches('/')),
+                file_part.to_string(),
+            )
         } else {
             (self.cwd.clone(), pattern.to_string())
         };
-        
+
         let router = self.router();
 
         let entries = match router.readdir(&dir).await {
             Ok(e) => e,
             Err(_) => return vec![pattern.to_string()],
         };
-        
+
         let mut matches: Vec<String> = entries
             .iter()
             .filter(|e| match_glob_pattern(&file_pattern, &e.name))
@@ -406,9 +427,9 @@ impl Shell {
                 }
             })
             .collect();
-        
+
         matches.sort();
-        
+
         if matches.is_empty() {
             vec![pattern.to_string()]
         } else {
@@ -442,9 +463,13 @@ fn expand_range(content: &str) -> Option<Vec<String>> {
                 if start_char.is_ascii_alphabetic() && end_char.is_ascii_alphabetic() {
                     let mut result = Vec::new();
                     if start_char <= end_char {
-                        for c in start_char..=end_char { result.push(c.to_string()); }
+                        for c in start_char..=end_char {
+                            result.push(c.to_string());
+                        }
                     } else {
-                        for c in (end_char..=start_char).rev() { result.push(c.to_string()); }
+                        for c in (end_char..=start_char).rev() {
+                            result.push(c.to_string());
+                        }
                     }
                     return Some(result);
                 }
@@ -456,14 +481,26 @@ fn expand_range(content: &str) -> Option<Vec<String>> {
             let start = parts[0];
             let end = parts[1];
             let step_str = parts[2];
-            if let (Ok(s), Ok(e), Ok(step)) = (start.parse::<i32>(), end.parse::<i32>(), step_str.parse::<i32>()) {
-                if step == 0 { return None; }
+            if let (Ok(s), Ok(e), Ok(step)) = (
+                start.parse::<i32>(),
+                end.parse::<i32>(),
+                step_str.parse::<i32>(),
+            ) {
+                if step == 0 {
+                    return None;
+                }
                 let mut result = Vec::new();
                 let mut current = s;
                 if step > 0 {
-                    while current <= e { result.push(current.to_string()); current += step; }
+                    while current <= e {
+                        result.push(current.to_string());
+                        current += step;
+                    }
                 } else {
-                    while current >= e { result.push(current.to_string()); current += step; }
+                    while current >= e {
+                        result.push(current.to_string());
+                        current += step;
+                    }
                 }
                 return Some(result);
             }
@@ -478,31 +515,38 @@ fn expand_range(content: &str) -> Option<Vec<String>> {
 /// And prefix/suffix: pre{a,b}suf -> vec!["preasuf", "prebsuf"]
 pub(super) fn expand_braces_in_string(s: &str) -> Vec<String> {
     // Find first unquoted '{'
-    let brace_start = s.chars().enumerate().find_map(|(i, c)| if c == '{' { Some(i) } else { None });
+    let brace_start = s
+        .chars()
+        .enumerate()
+        .find_map(|(i, c)| if c == '{' { Some(i) } else { None });
     let start = match brace_start {
         Some(i) => i,
         None => return vec![s.to_string()],
     };
-    
+
     // Find matching '}'
     let mut depth = 1;
     let mut brace_end = None;
     for (i, c) in s[start + 1..].chars().enumerate() {
-        if c == '{' { depth += 1; }
-        else if c == '}' {
+        if c == '{' {
+            depth += 1;
+        } else if c == '}' {
             depth -= 1;
-            if depth == 0 { brace_end = Some(start + 1 + i); break; }
+            if depth == 0 {
+                brace_end = Some(start + 1 + i);
+                break;
+            }
         }
     }
     let end = match brace_end {
         Some(i) => i,
         None => return vec![s.to_string()],
     };
-    
+
     let prefix = &s[..start];
     let content = &s[start + 1..end];
     let suffix = &s[end + 1..];
-    
+
     // Try range expansion first
     if let Some(alternatives) = expand_range(content) {
         let mut results = Vec::new();
@@ -512,11 +556,13 @@ pub(super) fn expand_braces_in_string(s: &str) -> Vec<String> {
         }
         return results;
     }
-    
+
     // Try comma-separated alternatives
     if content.contains(',') {
         let alternatives: Vec<&str> = content.split(',').collect();
-        if alternatives.len() == 1 { return vec![s.to_string()]; }
+        if alternatives.len() == 1 {
+            return vec![s.to_string()];
+        }
         let mut results = Vec::new();
         for alt in alternatives {
             let expanded = format!("{}{}{}", prefix, alt, suffix);
@@ -524,7 +570,7 @@ pub(super) fn expand_braces_in_string(s: &str) -> Vec<String> {
         }
         return results;
     }
-    
+
     // No expansion
     vec![s.to_string()]
 }
@@ -548,12 +594,8 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("time went backwards")
                 .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "{}_{}_{}",
-                prefix,
-                std::process::id(),
-                unique
-            ));
+            let path =
+                std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), unique));
             fs::create_dir_all(&path).expect("failed to create temp test dir");
             Self { path }
         }

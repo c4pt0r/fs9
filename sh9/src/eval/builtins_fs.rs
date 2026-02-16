@@ -1,9 +1,9 @@
-use crate::error::{Sh9Error, Sh9Result};
-use crate::shell::Shell;
-use super::{ExecContext, Output};
 use super::namespace::MountFlags;
 use super::router::NamespaceRouter;
 use super::utils::format_mtime;
+use super::{ExecContext, Output};
+use crate::error::{Sh9Error, Sh9Result};
+use crate::shell::Shell;
 
 impl Shell {
     pub(crate) async fn try_execute_fs_builtin(
@@ -13,10 +13,9 @@ impl Shell {
         ctx: &mut ExecContext,
     ) -> Option<Sh9Result<i32>> {
         match name {
-            "ls" | "mkdir" | "touch" | "truncate" | "rm" | "mv" | "cp" | "stat"
-            | "mount" | "lsfs" | "tree" | "plugin" | "chmod" | "chroot"
-            | "basename" | "dirname" | "pwd" | "cd"
-            | "bind" | "unmount" | "ns" => {
+            "ls" | "mkdir" | "touch" | "truncate" | "rm" | "mv" | "cp" | "stat" | "mount"
+            | "lsfs" | "tree" | "plugin" | "chmod" | "chroot" | "basename" | "dirname" | "pwd"
+            | "cd" | "bind" | "unmount" | "ns" => {
                 Some(self.dispatch_fs_builtin(name, args, ctx).await)
             }
             _ => None,
@@ -43,16 +42,16 @@ impl Shell {
             "mount" => {
                 ctx.write_err("mount: command disabled for security reasons");
                 Ok(1)
-            },
+            }
             "lsfs" => {
                 ctx.write_err("lsfs: command disabled for security reasons");
                 Ok(1)
-            },
+            }
             "tree" => self.cmd_tree(args, ctx).await,
             "plugin" => {
                 ctx.write_err("plugin: command disabled for security reasons");
                 Ok(1)
-            },
+            }
             "chmod" => self.cmd_chmod(args, ctx).await,
             "chroot" => self.cmd_chroot(args, ctx).await,
             "basename" => self.cmd_basename(args, ctx),
@@ -105,7 +104,10 @@ impl Shell {
                 "-l" => long_format = true,
                 "-la" | "-al" => long_format = true,
                 "-R" => recursive = true,
-                "-lR" | "-Rl" => { long_format = true; recursive = true; }
+                "-lR" | "-Rl" => {
+                    long_format = true;
+                    recursive = true;
+                }
                 s if s.starts_with('-') => {
                     for c in s[1..].chars() {
                         match c {
@@ -127,7 +129,8 @@ impl Shell {
         match router.stat(&full_path).await {
             Ok(info) if !info.is_dir => {
                 // It's a file — show it as a single entry
-                let colorize = matches!(&ctx.stdout, Output::Stdout) && unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
+                let colorize = matches!(&ctx.stdout, Output::Stdout)
+                    && unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
                 if long_format {
                     let type_char = '-';
                     let mode = info.mode;
@@ -171,7 +174,8 @@ impl Shell {
             _ => {} // It's a directory, continue below
         }
 
-        self.ls_dir(&router, &full_path, path, long_format, recursive, ctx).await
+        self.ls_dir(&router, &full_path, path, long_format, recursive, ctx)
+            .await
     }
 
     async fn ls_dir(
@@ -186,7 +190,8 @@ impl Shell {
         match router.readdir(full_path).await {
             Ok(entries) => {
                 let mut subdirs = Vec::new();
-                let colorize = matches!(&ctx.stdout, Output::Stdout) && unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
+                let colorize = matches!(&ctx.stdout, Output::Stdout)
+                    && unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
                 for entry in &entries {
                     if long_format {
                         let type_char = if entry.is_dir { 'd' } else { '-' };
@@ -251,8 +256,18 @@ impl Shell {
                 // Recurse into subdirectories
                 for (sub_full, sub_display) in subdirs {
                     ctx.stdout.writeln("").map_err(Sh9Error::Io)?;
-                    ctx.stdout.writeln(&format!("{}:", sub_display)).map_err(Sh9Error::Io)?;
-                    Box::pin(self.ls_dir(router, &sub_full, &sub_display, long_format, recursive, ctx)).await?;
+                    ctx.stdout
+                        .writeln(&format!("{}:", sub_display))
+                        .map_err(Sh9Error::Io)?;
+                    Box::pin(self.ls_dir(
+                        router,
+                        &sub_full,
+                        &sub_display,
+                        long_format,
+                        recursive,
+                        ctx,
+                    ))
+                    .await?;
                 }
                 Ok(0)
             }
@@ -273,7 +288,9 @@ impl Shell {
                 s if s.starts_with('-') => {
                     // Handle combined flags like -pv
                     for c in s[1..].chars() {
-                        if c == 'p' { create_parents = true; }
+                        if c == 'p' {
+                            create_parents = true;
+                        }
                     }
                 }
                 s => paths.push(s),
@@ -363,7 +380,10 @@ impl Shell {
             match arg.as_str() {
                 "-r" | "-R" => recursive = true,
                 "-f" => force = true,
-                "-rf" | "-fr" | "-Rf" | "-fR" => { recursive = true; force = true; }
+                "-rf" | "-fr" | "-Rf" | "-fR" => {
+                    recursive = true;
+                    force = true;
+                }
                 s if s.starts_with('-') => {
                     for c in s[1..].chars() {
                         match c {
@@ -384,7 +404,10 @@ impl Shell {
             // Check if the path is a mount point
             let mounts = router.namespace.list_mounts();
             if mounts.iter().any(|m| m.target == full_path) {
-                ctx.write_err(&format!("rm: {}: cannot remove mount point; use unmount", path));
+                ctx.write_err(&format!(
+                    "rm: {}: cannot remove mount point; use unmount",
+                    path
+                ));
                 return Ok(1);
             }
 
@@ -450,7 +473,9 @@ impl Shell {
                 "-r" | "-R" => recursive = true,
                 s if s.starts_with('-') => {
                     for c in s[1..].chars() {
-                        if c == 'r' || c == 'R' { recursive = true; }
+                        if c == 'r' || c == 'R' {
+                            recursive = true;
+                        }
                     }
                 }
                 s => paths.push(s),
@@ -468,7 +493,10 @@ impl Shell {
         match router.stat(&src).await {
             Ok(info) if info.is_dir => {
                 if !recursive {
-                    ctx.write_err(&format!("cp: -r not specified; omitting directory '{}'", paths[0]));
+                    ctx.write_err(&format!(
+                        "cp: -r not specified; omitting directory '{}'",
+                        paths[0]
+                    ));
                     return Ok(1);
                 }
                 if let Err(e) = self.cp_recursive_via_router(&router, &src, &dst).await {
@@ -534,9 +562,18 @@ impl Shell {
             let full_path = self.resolve_path(path);
             match router.stat(&full_path).await {
                 Ok(info) => {
-                    ctx.stdout.writeln(&format!("file: {}", path)).map_err(Sh9Error::Io)?;
-                    ctx.stdout.writeln(&format!("size: {}", info.size)).map_err(Sh9Error::Io)?;
-                    ctx.stdout.writeln(&format!("type: {}", if info.is_dir { "directory" } else { "file" })).map_err(Sh9Error::Io)?;
+                    ctx.stdout
+                        .writeln(&format!("file: {}", path))
+                        .map_err(Sh9Error::Io)?;
+                    ctx.stdout
+                        .writeln(&format!("size: {}", info.size))
+                        .map_err(Sh9Error::Io)?;
+                    ctx.stdout
+                        .writeln(&format!(
+                            "type: {}",
+                            if info.is_dir { "directory" } else { "file" }
+                        ))
+                        .map_err(Sh9Error::Io)?;
                 }
                 Err(e) => {
                     ctx.write_err(&format!("stat: {}: {}", path, e));
@@ -582,7 +619,18 @@ impl Shell {
         ctx.stdout.writeln(&full_path).map_err(Sh9Error::Io)?;
 
         let router = self.router();
-        self.print_tree(&router, &full_path, "", true, 0, max_depth, dirs_only, show_hidden, ctx).await?;
+        self.print_tree(
+            &router,
+            &full_path,
+            "",
+            true,
+            0,
+            max_depth,
+            dirs_only,
+            show_hidden,
+            ctx,
+        )
+        .await?;
         Ok(0)
     }
 
@@ -616,7 +664,12 @@ impl Shell {
 
     async fn cmd_chroot(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if args.is_empty() {
-            ctx.stdout.writeln(&format!("Current root: {}", self.get_var("FS9_CHROOT").unwrap_or("/"))).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .writeln(&format!(
+                    "Current root: {}",
+                    self.get_var("FS9_CHROOT").unwrap_or("/")
+                ))
+                .map_err(Sh9Error::Io)?;
         } else if args.first().map(|s| s.as_str()) == Some("--exit") {
             self.env.remove("FS9_CHROOT");
             ctx.stdout.writeln("Exited chroot").map_err(Sh9Error::Io)?;
@@ -627,7 +680,9 @@ impl Shell {
                 Ok(info) if info.is_dir => {
                     self.set_var("FS9_CHROOT", &new_root);
                     self.cwd = "/".to_string();
-                    ctx.stdout.writeln(&format!("Changed root to {}", new_root)).map_err(Sh9Error::Io)?;
+                    ctx.stdout
+                        .writeln(&format!("Changed root to {}", new_root))
+                        .map_err(Sh9Error::Io)?;
                 }
                 Ok(_) => {
                     ctx.write_err(&format!("chroot: {}: Not a directory", args[0]));
@@ -826,9 +881,7 @@ impl Shell {
         let mounts = self.namespace.read().unwrap().list_mounts();
 
         if mounts.is_empty() {
-            ctx.stdout
-                .writeln("(no bindings)")
-                .map_err(Sh9Error::Io)?;
+            ctx.stdout.writeln("(no bindings)").map_err(Sh9Error::Io)?;
             return Ok(0);
         }
 

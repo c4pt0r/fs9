@@ -22,7 +22,7 @@ pub struct CapturedOutput {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JobStatus {
     Running,
-    Done(i32),  // exit code
+    Done(i32), // exit code
 }
 
 pub struct BackgroundJob {
@@ -86,23 +86,22 @@ impl Shell {
         if let Some(ref token) = self.token {
             builder = builder.token(token);
         }
-        let client = builder.build()
-            .map_err(|e| Sh9Error::Fs9(e.to_string()))?;
+        let client = builder.build().map_err(|e| Sh9Error::Fs9(e.to_string()))?;
         self.client = Some(Arc::new(client));
         Ok(())
     }
 
     /// Execute a command string
     pub async fn execute(&mut self, input: &str) -> Sh9Result<i32> {
-        let script = crate::parser::parse(input)
-            .map_err(|errs| {
-                let msg = errs.into_iter()
-                    .map(|e| e.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                Sh9Error::Parse(msg)
-            })?;
-        
+        let script = crate::parser::parse(input).map_err(|errs| {
+            let msg = errs
+                .into_iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Sh9Error::Parse(msg)
+        })?;
+
         self.execute_script(&script).await
     }
 
@@ -156,7 +155,7 @@ impl Shell {
         let ns = self.namespace.read().unwrap().clone();
         NamespaceRouter::with_namespace(ns, self.client.clone())
     }
-    
+
     pub fn add_job(&mut self, command: String, handle: JoinHandle<i32>) -> usize {
         let id = self.next_job_id;
         self.next_job_id += 1;
@@ -397,7 +396,7 @@ mod tests {
         assert_eq!(output.exit_code, 0);
         assert_eq!(output.stdout, b"hello\n");
         assert!(output.stderr.is_empty());
-        
+
         // Test Clone
         let cloned = output.clone();
         assert_eq!(cloned.exit_code, output.exit_code);

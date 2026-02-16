@@ -1,12 +1,17 @@
+use super::utils::match_glob_pattern;
+use super::ExecContext;
 use crate::ast::*;
 use crate::error::Sh9Result;
 use crate::shell::Shell;
-use super::ExecContext;
-use super::utils::match_glob_pattern;
 
 impl Shell {
-    pub(crate) async fn execute_test(&self, args: &[String], _ctx: &mut ExecContext) -> Sh9Result<i32> {
-        let args: Vec<&str> = args.iter()
+    pub(crate) async fn execute_test(
+        &self,
+        args: &[String],
+        _ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
+        let args: Vec<&str> = args
+            .iter()
             .map(|s| s.as_str())
             .filter(|s| *s != "]")
             .collect();
@@ -84,12 +89,16 @@ impl Shell {
         Ok(if result { 0 } else { 1 })
     }
 
-    pub(crate) async fn execute_if(&mut self, if_stmt: &IfStatement, ctx: &mut ExecContext) -> Sh9Result<i32> {
+    pub(crate) async fn execute_if(
+        &mut self,
+        if_stmt: &IfStatement,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         ctx.push_errexit_suppression();
         let cond_result = self.execute_pipeline(&if_stmt.condition, ctx).await;
         ctx.pop_errexit_suppression();
         let cond_result = cond_result?;
-        
+
         if cond_result == 0 {
             let mut result = 0;
             for stmt in &if_stmt.then_body {
@@ -116,7 +125,7 @@ impl Shell {
                     return Ok(result);
                 }
             }
-            
+
             if let Some(else_body) = &if_stmt.else_body {
                 let mut result = 0;
                 for stmt in else_body {
@@ -132,9 +141,13 @@ impl Shell {
         }
     }
 
-    pub(crate) async fn execute_for(&mut self, for_loop: &ForLoop, ctx: &mut ExecContext) -> Sh9Result<i32> {
+    pub(crate) async fn execute_for(
+        &mut self,
+        for_loop: &ForLoop,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         let mut result = 0;
-        
+
         let mut all_items = Vec::new();
         for item in &for_loop.items {
             let expanded = self.expand_word(item, ctx).await?;
@@ -145,13 +158,13 @@ impl Shell {
                 }
             }
         }
-        
+
         for value in all_items {
             self.set_var(&for_loop.variable, &value);
-            
+
             for stmt in &for_loop.body {
                 result = self.execute_statement_boxed(stmt, ctx).await?;
-                
+
                 if ctx.should_break {
                     ctx.should_break = false;
                     return Ok(result);
@@ -165,13 +178,17 @@ impl Shell {
                 }
             }
         }
-        
+
         Ok(result)
     }
 
-    pub(crate) async fn execute_while(&mut self, while_loop: &WhileLoop, ctx: &mut ExecContext) -> Sh9Result<i32> {
+    pub(crate) async fn execute_while(
+        &mut self,
+        while_loop: &WhileLoop,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         let mut result = 0;
-        
+
         loop {
             ctx.push_errexit_suppression();
             let cond_result = self.execute_pipeline(&while_loop.condition, ctx).await;
@@ -180,10 +197,10 @@ impl Shell {
             if cond_result != 0 {
                 break;
             }
-            
+
             for stmt in &while_loop.body {
                 result = self.execute_statement_boxed(stmt, ctx).await?;
-                
+
                 if ctx.should_break {
                     ctx.should_break = false;
                     return Ok(result);
@@ -197,13 +214,17 @@ impl Shell {
                 }
             }
         }
-        
+
         Ok(result)
     }
-    
-    pub(crate) async fn execute_until(&mut self, until_loop: &crate::ast::UntilLoop, ctx: &mut ExecContext) -> Sh9Result<i32> {
+
+    pub(crate) async fn execute_until(
+        &mut self,
+        until_loop: &crate::ast::UntilLoop,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         let mut result = 0;
-        
+
         loop {
             ctx.push_errexit_suppression();
             let cond_result = self.execute_pipeline(&until_loop.condition, ctx).await;
@@ -212,10 +233,10 @@ impl Shell {
             if cond_result == 0 {
                 break;
             }
-            
+
             for stmt in &until_loop.body {
                 result = self.execute_statement_boxed(stmt, ctx).await?;
-                
+
                 if ctx.should_break {
                     ctx.should_break = false;
                     return Ok(result);
@@ -229,13 +250,17 @@ impl Shell {
                 }
             }
         }
-        
+
         Ok(result)
     }
 
-    pub(crate) async fn execute_case(&mut self, case_stmt: &CaseStatement, ctx: &mut ExecContext) -> Sh9Result<i32> {
+    pub(crate) async fn execute_case(
+        &mut self,
+        case_stmt: &CaseStatement,
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         let word_value = self.expand_word(&case_stmt.word, ctx).await?;
-        
+
         for arm in &case_stmt.arms {
             for pattern in &arm.patterns {
                 let pattern_value = self.expand_word(pattern, ctx).await?;
@@ -251,7 +276,7 @@ impl Shell {
                 }
             }
         }
-        
+
         Ok(0)
     }
 }

@@ -1,16 +1,16 @@
 use chumsky::Parser;
+use fs9_client::Fs9Client;
 use rustyline::completion::{Completer, Pair};
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Context, Helper};
 use sh9::eval::namespace::Namespace;
-use sh9::lexer::{lexer, Token, QuoteType};
+use sh9::lexer::{lexer, QuoteType, Token};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::RwLock;
-use fs9_client::Fs9Client;
 
 pub struct Sh9Helper {
     pub client: Option<Arc<Fs9Client>>,
@@ -44,12 +44,11 @@ impl Sh9Helper {
 }
 
 const BUILTINS: &[&str] = &[
-    "alias", "basename", "bind", "break", "cat", "cd", "chroot", "continue", "cp", "cut",
-    "date", "dirname", "download", "echo", "env", "exit", "export", "false", "grep",
-    "head", "help", "http", "jobs", "jq", "local", "ls", "mkdir", "mount",
-    "mv", "ns", "plugin", "pwd", "return", "rev", "rm", "set", "sleep", "sort", "source",
-    "stat", "tail", "tee", "test", "touch", "tr", "tree", "true", "truncate",
-    "unalias", "uniq", "unmount", "unset", "upload", "wait", "wc",
+    "alias", "basename", "bind", "break", "cat", "cd", "chroot", "continue", "cp", "cut", "date",
+    "dirname", "download", "echo", "env", "exit", "export", "false", "grep", "head", "help",
+    "http", "jobs", "jq", "local", "ls", "mkdir", "mount", "mv", "ns", "plugin", "pwd", "return",
+    "rev", "rm", "set", "sleep", "sort", "source", "stat", "tail", "tee", "test", "touch", "tr",
+    "tree", "true", "truncate", "unalias", "uniq", "unmount", "unset", "upload", "wait", "wc",
 ];
 
 impl Completer for Sh9Helper {
@@ -62,18 +61,18 @@ impl Completer for Sh9Helper {
         _ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
         let line_to_cursor = &line[..pos];
-        
+
         let (start, word) = find_word_start(line_to_cursor);
-        
+
         if word.is_empty() {
             return Ok((pos, vec![]));
         }
-        
+
         // Variable completion: $VAR
         if let Some(var_prefix) = word.strip_prefix('$') {
             let env = self.env.read().unwrap();
             let mut completions = Vec::new();
-            
+
             for var_name in env.keys() {
                 if var_name.starts_with(var_prefix) {
                     completions.push(Pair {
@@ -82,15 +81,15 @@ impl Completer for Sh9Helper {
                     });
                 }
             }
-            
+
             completions.sort_by(|a, b| a.replacement.cmp(&b.replacement));
             return Ok((start, completions));
         }
-        
+
         let is_first_word = !line_to_cursor[..start].contains(|c: char| !c.is_whitespace());
-        
+
         let mut completions = Vec::new();
-        
+
         if is_first_word {
             // Builtin commands
             for &builtin in BUILTINS {
@@ -101,7 +100,7 @@ impl Completer for Sh9Helper {
                     });
                 }
             }
-            
+
             // Aliases
             let aliases = self.aliases.read().unwrap();
             for alias_name in aliases.keys() {
@@ -112,7 +111,7 @@ impl Completer for Sh9Helper {
                     });
                 }
             }
-            
+
             // Functions
             let functions = self.functions.read().unwrap();
             for func_name in functions.iter() {
@@ -124,7 +123,7 @@ impl Completer for Sh9Helper {
                 }
             }
         }
-        
+
         if word.starts_with('/') || word.starts_with('.') || word.contains('/') || !is_first_word {
             let cwd = self.cwd.read().unwrap().clone();
 
@@ -183,39 +182,37 @@ impl Completer for Sh9Helper {
                 } else {
                     name.clone()
                 };
-                
+
                 let display = if name.ends_with('/') {
                     format!("{}  (dir)", name)
                 } else {
                     name.clone()
                 };
-                
+
                 completions.push(Pair {
                     display,
                     replacement,
                 });
             }
         }
-        
+
         Ok((start, completions))
     }
 }
 
 async fn complete_path(client: &Fs9Client, dir: &str, partial: &str) -> Vec<String> {
     match client.readdir(dir).await {
-        Ok(entries) => {
-            entries
-                .into_iter()
-                .filter(|e| e.name().starts_with(partial))
-                .map(|e| {
-                    if e.is_dir() {
-                        format!("{}/", e.name())
-                    } else {
-                        e.name().to_string()
-                    }
-                })
-                .collect()
-        }
+        Ok(entries) => entries
+            .into_iter()
+            .filter(|e| e.name().starts_with(partial))
+            .map(|e| {
+                if e.is_dir() {
+                    format!("{}/", e.name())
+                } else {
+                    e.name().to_string()
+                }
+            })
+            .collect(),
         Err(_) => vec![],
     }
 }
@@ -260,7 +257,7 @@ impl Hinter for Sh9Helper {
         if pos < line.len() || line.is_empty() {
             return None;
         }
-        
+
         // Search history backwards for entries starting with current line
         let history = ctx.history();
         for i in (0..history.len()).rev() {
@@ -300,7 +297,7 @@ impl Highlighter for Sh9Helper {
         for token in &tokens {
             // Get the token's text representation
             let token_text = token.to_string();
-            
+
             // Skip newlines in highlighting (they're not visible)
             if matches!(token, Token::Newline) {
                 continue;
@@ -327,9 +324,9 @@ impl Highlighter for Sh9Helper {
                     Token::SingleQuoted(_) => ("\x1b[33m", "\x1b[0m"), // Yellow
                     Token::CompoundWord(segments) => {
                         // Check if it contains quoted parts
-                        let has_quotes = segments.iter().any(|(qt, _)| {
-                            !matches!(qt, QuoteType::Bare)
-                        });
+                        let has_quotes = segments
+                            .iter()
+                            .any(|(qt, _)| !matches!(qt, QuoteType::Bare));
                         if has_quotes {
                             ("\x1b[33m", "\x1b[0m") // Yellow for quoted parts
                         } else {
@@ -395,6 +392,154 @@ impl Highlighter for Sh9Helper {
     }
 }
 
-impl Validator for Sh9Helper {}
+impl Validator for Sh9Helper {
+    fn validate(
+        &self,
+        ctx: &mut rustyline::validate::ValidationContext,
+    ) -> Result<rustyline::validate::ValidationResult, rustyline::error::ReadlineError> {
+        let input = ctx.input();
+
+        // Check if input is incomplete
+        if is_incomplete_input(input) {
+            Ok(rustyline::validate::ValidationResult::Incomplete)
+        } else {
+            Ok(rustyline::validate::ValidationResult::Valid(None))
+        }
+    }
+}
+
+/// Lightweight validation to detect incomplete shell input.
+/// Returns true if input is incomplete and needs continuation.
+fn is_incomplete_input(input: &str) -> bool {
+    if input.is_empty() {
+        return false;
+    }
+
+    // Check for trailing backslash (line continuation)
+    if input.ends_with('\\') && !input.ends_with("\\\\") {
+        return true;
+    }
+
+    // Track quote state and keyword depth
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escape_next = false;
+    let mut if_depth: i32 = 0;
+    let mut for_depth: i32 = 0;
+    let mut while_depth: i32 = 0;
+    let mut until_depth: i32 = 0;
+    let mut case_depth: i32 = 0;
+    let mut do_depth: i32 = 0;
+    let mut then_depth: i32 = 0;
+
+    let mut i = 0;
+    let chars: Vec<char> = input.chars().collect();
+
+    while i < chars.len() {
+        let ch = chars[i];
+
+        // Handle escape sequences
+        if escape_next {
+            escape_next = false;
+            i += 1;
+            continue;
+        }
+
+        if in_single_quote {
+            if ch == '\'' {
+                in_single_quote = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if in_double_quote {
+            if ch == '\\' {
+                escape_next = true;
+            } else if ch == '"' {
+                in_double_quote = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Outside quotes: handle quote starts
+        if ch == '\'' {
+            in_single_quote = true;
+            i += 1;
+            continue;
+        }
+
+        if ch == '"' {
+            in_double_quote = true;
+            i += 1;
+            continue;
+        }
+
+        if ch == '\\' {
+            escape_next = true;
+            i += 1;
+            continue;
+        }
+
+        // Outside quotes: check for keywords
+        // Extract word at current position
+        if ch.is_alphabetic() || ch == '_' {
+            let word_start = i;
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            let word: String = chars[word_start..i].iter().collect();
+
+            // Check if this is a keyword (must be preceded by whitespace/semicolon/newline or be at start)
+            let is_keyword = word_start == 0 || {
+                let prev_char = chars[word_start - 1];
+                prev_char.is_whitespace()
+                    || prev_char == ';'
+                    || prev_char == '|'
+                    || prev_char == '&'
+            };
+
+            if is_keyword {
+                match word.as_str() {
+                    "if" => if_depth += 1,
+                    "then" => then_depth += 1,
+                    "fi" => {
+                        if_depth = if_depth.saturating_sub(1);
+                        then_depth = then_depth.saturating_sub(1);
+                    }
+                    "for" => for_depth += 1,
+                    "while" => while_depth += 1,
+                    "until" => until_depth += 1,
+                    "do" => do_depth += 1,
+                    "done" => {
+                        for_depth = for_depth.saturating_sub(1);
+                        while_depth = while_depth.saturating_sub(1);
+                        until_depth = until_depth.saturating_sub(1);
+                        do_depth = do_depth.saturating_sub(1);
+                    }
+                    "case" => case_depth += 1,
+                    "esac" => case_depth = case_depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    // Input is incomplete if:
+    // 1. Unclosed quotes
+    // 2. Unclosed keywords
+    in_single_quote
+        || in_double_quote
+        || if_depth > 0
+        || for_depth > 0
+        || while_depth > 0
+        || until_depth > 0
+        || case_depth > 0
+        || do_depth > 0
+        || then_depth > 0
+}
 
 impl Helper for Sh9Helper {}

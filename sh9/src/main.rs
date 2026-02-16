@@ -1,6 +1,6 @@
 use clap::Parser;
 use fs9_config::Fs9Config;
-use sh9::{Shell, Sh9Error};
+use sh9::{Sh9Error, Shell};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::{Arc, RwLock};
@@ -33,9 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let config = fs9_config::load().unwrap_or_else(|_| Fs9Config::default());
-    
+
     // Server URL priority: CLI arg > env > config > default
-    let server_url = args.server
+    let server_url = args
+        .server
         .or_else(|| {
             if config.shell.server.is_empty() {
                 None
@@ -46,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "http://localhost:9999".to_string());
 
     let mut shell = Shell::new(&server_url);
-    
+
     // Set token if provided
     if let Some(token) = args.token {
         if token.trim().is_empty() {
@@ -58,12 +59,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         shell.set_token(token);
     }
-    
+
     // Connect to FS9 server
     if let Err(e) = shell.connect().await {
         eprintln!("Warning: Could not connect to FS9 server: {}", e);
     }
-    
+
     if let Some(command) = args.command {
         // Execute command from -c argument
         match shell.execute(&command).await {
@@ -93,14 +94,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         run_repl(&mut shell, &config.shell, &server_url).await?;
     }
-    
+
     Ok(())
 }
 
 /// Get the current username from $USER env var or "anonymous"
 fn get_prompt_user() -> String {
-    env::var("USER")
-        .unwrap_or_else(|_| "anonymous".to_string())
+    env::var("USER").unwrap_or_else(|_| "anonymous".to_string())
 }
 
 /// Extract hostname from server URL (e.g., "http://localhost:9999" -> "localhost")
@@ -110,7 +110,7 @@ fn get_prompt_host(server_url: &str) -> String {
         .strip_prefix("https://")
         .or_else(|| server_url.strip_prefix("http://"))
         .unwrap_or(server_url);
-    
+
     // Take part before ':' (port) or '/' (path)
     without_protocol
         .split(':')
@@ -140,11 +140,11 @@ fn get_prompt_date() -> String {
         Ok(duration) => {
             let total_secs = duration.as_secs();
             let days_since_epoch = total_secs / 86400;
-            
+
             // Calculate year, month, day from days since epoch (1970-01-01)
             let mut year = 1970;
             let mut remaining_days = days_since_epoch as i32;
-            
+
             loop {
                 let days_in_year = if is_leap_year(year) { 366 } else { 365 };
                 if remaining_days < days_in_year {
@@ -153,16 +153,16 @@ fn get_prompt_date() -> String {
                 remaining_days -= days_in_year;
                 year += 1;
             }
-            
+
             let days_in_months = if is_leap_year(year) {
                 [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
             } else {
                 [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
             };
-            
+
             let mut month = 1;
             let mut day = remaining_days + 1;
-            
+
             for &days_in_month in &days_in_months {
                 if day <= days_in_month {
                     break;
@@ -170,7 +170,7 @@ fn get_prompt_date() -> String {
                 day -= days_in_month;
                 month += 1;
             }
-            
+
             format!("{:04}-{:02}-{:02}", year, month, day)
         }
         Err(_) => "1970-01-01".to_string(),
@@ -187,10 +187,14 @@ fn get_prompt_namespace(_shell: &Shell) -> String {
     "default".to_string()
 }
 
-async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig, server_url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use rustyline::error::ReadlineError;
-    use rustyline::{Config, Editor, CompletionType};
+async fn run_repl(
+    shell: &mut Shell,
+    shell_config: &fs9_config::ShellConfig,
+    server_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     use completer::Sh9Helper;
+    use rustyline::error::ReadlineError;
+    use rustyline::{CompletionType, Config, Editor};
 
     let max_history = shell_config.history.max_entries;
     let rl_config = Config::builder()
@@ -204,7 +208,7 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig, ser
     let env = Arc::new(RwLock::new(HashMap::new()));
     let aliases = Arc::new(RwLock::new(HashMap::new()));
     let functions = Arc::new(RwLock::new(HashSet::new()));
-    
+
     let helper = Sh9Helper::new(
         shell.client.clone(),
         cwd.clone(),
@@ -239,23 +243,24 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig, ser
             let mut cwd_guard = cwd.write().unwrap();
             *cwd_guard = shell.cwd.clone();
         }
-        
+
         {
             let mut env_guard = env.write().unwrap();
             *env_guard = shell.env.clone();
         }
-        
+
         {
             let mut aliases_guard = aliases.write().unwrap();
             *aliases_guard = shell.aliases.clone();
         }
-        
+
         {
             let mut functions_guard = functions.write().unwrap();
             *functions_guard = shell.functions.keys().cloned().collect();
         }
 
-        let prompt = shell_config.prompt
+        let prompt = shell_config
+            .prompt
             .replace("{cwd}", &shell.cwd)
             .replace("{user}", &get_prompt_user())
             .replace("{host}", &get_prompt_host(server_url))
@@ -270,20 +275,20 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig, ser
             .replace("{cyan}", "\x1b[36m")
             .replace("{bold}", "\x1b[1m")
             .replace("{reset}", "\x1b[0m");
-        
+
         match rl.readline(&prompt) {
             Ok(line) => {
                 let line = line.trim();
                 if line.is_empty() {
                     continue;
                 }
-                
+
                 let _ = rl.add_history_entry(line);
-                
+
                 if line == "exit" || line == "quit" {
                     break;
                 }
-                
+
                 match shell.execute(line).await {
                     Ok(code) => {
                         last_exit_code = code;
@@ -313,7 +318,7 @@ async fn run_repl(shell: &mut Shell, shell_config: &fs9_config::ShellConfig, ser
     }
 
     let _ = rl.save_history(&history_path);
-    
+
     Ok(())
 }
 

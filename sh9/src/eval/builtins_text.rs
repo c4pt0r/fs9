@@ -1,9 +1,9 @@
+use super::utils::interpret_escape_sequences;
+use super::{ExecContext, STREAM_CHUNK_SIZE};
 use crate::error::{Sh9Error, Sh9Result};
 use crate::shell::Shell;
 use fs9_client::OpenFlags;
 use regex::Regex;
-use super::{ExecContext, STREAM_CHUNK_SIZE};
-use super::utils::interpret_escape_sequences;
 
 /// Parse a field/column spec like "2", "1,3", "2-4", "1-3,5" into a sorted list of 1-based indices.
 fn parse_field_spec(spec: &str) -> Vec<usize> {
@@ -42,8 +42,8 @@ impl Shell {
         ctx: &mut ExecContext,
     ) -> Option<Sh9Result<i32>> {
         match name {
-            "echo" | "printf" | "grep" | "wc" | "head" | "tail" | "sort" | "uniq"
-            | "tr" | "rev" | "cut" | "tee" | "jq" | "date" | "seq" | "cat" | "read" => {
+            "echo" | "printf" | "grep" | "wc" | "head" | "tail" | "sort" | "uniq" | "tr"
+            | "rev" | "cut" | "tee" | "jq" | "date" | "seq" | "cat" | "read" => {
                 Some(self.dispatch_text_builtin(name, args, ctx).await)
             }
             _ => None,
@@ -82,7 +82,7 @@ impl Shell {
         let mut do_interpret_escapes = false;
         let mut no_newline = false;
         let mut text_args = Vec::new();
-        
+
         for arg in args {
             match arg.as_str() {
                 "-e" => do_interpret_escapes = true,
@@ -94,13 +94,13 @@ impl Shell {
                 _ => text_args.push(arg.as_str()),
             }
         }
-        
+
         let mut output = text_args.join(" ");
-        
+
         if do_interpret_escapes {
             output = interpret_escape_sequences(&output);
         }
-        
+
         if no_newline {
             ctx.stdout.write(output.as_bytes()).map_err(Sh9Error::Io)?;
         } else {
@@ -174,12 +174,13 @@ impl Shell {
 
     async fn cmd_cat(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let stream_mode = args.iter().any(|a| a == "--stream" || a == "-s");
-        let paths: Vec<&str> = args.iter()
+        let paths: Vec<&str> = args
+            .iter()
             .filter(|a| *a != "--stream" && *a != "-s" && *a != "-")
             .map(|s| s.as_str())
             .collect();
         let has_stdin = args.iter().any(|a| a == "-");
-        
+
         if paths.is_empty() && !has_stdin {
             if let Some(input) = ctx.stdin.take() {
                 ctx.stdout.write(&input).map_err(Sh9Error::Io)?;
@@ -190,7 +191,7 @@ impl Shell {
                     ctx.stdout.write(&input).map_err(Sh9Error::Io)?;
                 }
             }
-            
+
             for path in paths {
                 let full_path = self.resolve_path(path);
                 if stream_mode {
@@ -202,7 +203,10 @@ impl Shell {
                                 loop {
                                     match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
                                         Ok(data) if data.is_empty() => {
-                                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                100,
+                                            ))
+                                            .await;
                                             continue;
                                         }
                                         Ok(data) => {
@@ -331,7 +335,9 @@ impl Shell {
         };
 
         let re = match if ignore_case {
-            regex::RegexBuilder::new(&regex_pattern).case_insensitive(true).build()
+            regex::RegexBuilder::new(&regex_pattern)
+                .case_insensitive(true)
+                .build()
         } else {
             Regex::new(&regex_pattern)
         } {
@@ -363,13 +369,17 @@ impl Shell {
                         for m in re.find_iter(line) {
                             let output = m.as_str();
                             if show_line_numbers {
-                                ctx.stdout.writeln(&format!("{}:{}", line_num + 1, output)).map_err(Sh9Error::Io)?;
+                                ctx.stdout
+                                    .writeln(&format!("{}:{}", line_num + 1, output))
+                                    .map_err(Sh9Error::Io)?;
                             } else {
                                 ctx.stdout.writeln(output).map_err(Sh9Error::Io)?;
                             }
                         }
                     } else if show_line_numbers {
-                        ctx.stdout.writeln(&format!("{}:{}", line_num + 1, line)).map_err(Sh9Error::Io)?;
+                        ctx.stdout
+                            .writeln(&format!("{}:{}", line_num + 1, line))
+                            .map_err(Sh9Error::Io)?;
                     } else {
                         ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
                     }
@@ -378,7 +388,9 @@ impl Shell {
         }
 
         if count_only && !quiet_mode {
-            ctx.stdout.writeln(&match_count.to_string()).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .writeln(&match_count.to_string())
+                .map_err(Sh9Error::Io)?;
         }
 
         Ok(if found_any { 0 } else { 1 })
@@ -388,7 +400,8 @@ impl Shell {
         let count_lines = args.iter().any(|a| a == "-l");
         let count_words = args.iter().any(|a| a == "-w");
         let count_chars = args.iter().any(|a| a == "-c");
-        let file_paths: Vec<&str> = args.iter()
+        let file_paths: Vec<&str> = args
+            .iter()
             .filter(|a| !a.starts_with('-'))
             .map(|s| s.as_str())
             .collect();
@@ -416,18 +429,26 @@ impl Shell {
 
         if count_lines {
             let lines = input.lines().count();
-            ctx.stdout.writeln(&lines.to_string()).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .writeln(&lines.to_string())
+                .map_err(Sh9Error::Io)?;
         } else if count_words {
             let words = input.split_whitespace().count();
-            ctx.stdout.writeln(&words.to_string()).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .writeln(&words.to_string())
+                .map_err(Sh9Error::Io)?;
         } else if count_chars {
             let chars = input.len();
-            ctx.stdout.writeln(&chars.to_string()).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .writeln(&chars.to_string())
+                .map_err(Sh9Error::Io)?;
         } else {
             let lines = input.lines().count();
             let words = input.split_whitespace().count();
             let chars = input.len();
-            ctx.stdout.writeln(&format!("{} {} {}", lines, words, chars)).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .writeln(&format!("{} {} {}", lines, words, chars))
+                .map_err(Sh9Error::Io)?;
         }
         Ok(0)
     }
@@ -499,7 +520,10 @@ impl Shell {
             } else if arg.starts_with("-n") && arg.len() > 2 {
                 n = arg[2..].parse().unwrap_or(10);
                 i += 1;
-            } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+            } else if arg.starts_with('-')
+                && arg.len() > 1
+                && arg[1..].chars().all(|c| c.is_ascii_digit())
+            {
                 n = arg[1..].parse().unwrap_or(10);
                 i += 1;
             } else if arg == "-f" || arg == "--follow" {
@@ -555,7 +579,9 @@ impl Shell {
                                     match router.read_file(&full_path).await {
                                         Ok(data) => {
                                             if (last_size as usize) < data.len() {
-                                                ctx.stdout.write(&data[last_size as usize..]).map_err(Sh9Error::Io)?;
+                                                ctx.stdout
+                                                    .write(&data[last_size as usize..])
+                                                    .map_err(Sh9Error::Io)?;
                                                 ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
                                             }
                                             last_size = data.len() as u64;
@@ -577,7 +603,8 @@ impl Shell {
                                 match client.read(&handle, offset, STREAM_CHUNK_SIZE).await {
                                     Ok(data) if data.is_empty() => {
                                         ctx.stdout.flush().await.map_err(Sh9Error::Io)?;
-                                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                        tokio::time::sleep(std::time::Duration::from_millis(100))
+                                            .await;
                                         continue;
                                     }
                                     Ok(data) => {
@@ -613,9 +640,18 @@ impl Shell {
                 "-r" => reverse = true,
                 "-n" => numeric = true,
                 "-u" => unique = true,
-                "-rn" | "-nr" => { reverse = true; numeric = true; }
-                "-ru" | "-ur" => { reverse = true; unique = true; }
-                "-nu" | "-un" => { numeric = true; unique = true; }
+                "-rn" | "-nr" => {
+                    reverse = true;
+                    numeric = true;
+                }
+                "-ru" | "-ur" => {
+                    reverse = true;
+                    unique = true;
+                }
+                "-nu" | "-un" => {
+                    numeric = true;
+                    unique = true;
+                }
                 s if !s.starts_with('-') => file_path = Some(s),
                 _ => {}
             }
@@ -701,10 +737,16 @@ impl Shell {
         }
 
         for (cnt, line) in &groups {
-            if only_dups && *cnt < 2 { continue; }
-            if only_unique && *cnt > 1 { continue; }
+            if only_dups && *cnt < 2 {
+                continue;
+            }
+            if only_unique && *cnt > 1 {
+                continue;
+            }
             if count {
-                ctx.stdout.writeln(&format!("{:>7} {}", cnt, line)).map_err(Sh9Error::Io)?;
+                ctx.stdout
+                    .writeln(&format!("{:>7} {}", cnt, line))
+                    .map_err(Sh9Error::Io)?;
             } else {
                 ctx.stdout.writeln(line).map_err(Sh9Error::Io)?;
             }
@@ -732,12 +774,12 @@ impl Shell {
             }
             result
         }
-        
+
         if args.is_empty() {
             ctx.write_err("tr: missing operand");
             return Ok(1);
         }
-        
+
         let delete_mode = args.first().map(|s| s == "-d").unwrap_or(false);
         let (set1, set2) = if delete_mode {
             if args.len() < 2 {
@@ -752,27 +794,33 @@ impl Shell {
             }
             (&args[0], args.get(1))
         };
-        
+
         let input = ctx.stdin.take().unwrap_or_default();
         let input_str = String::from_utf8_lossy(&input);
-        
+
         let output: String = if delete_mode {
             let del_chars = expand_range(set1);
-            input_str.chars().filter(|c| !del_chars.contains(c)).collect()
+            input_str
+                .chars()
+                .filter(|c| !del_chars.contains(c))
+                .collect()
         } else if let Some(s2) = set2 {
             let from = expand_range(set1);
             let to = expand_range(s2);
-            input_str.chars().map(|c| {
-                if let Some(idx) = from.iter().position(|&x| x == c) {
-                    to.get(idx).copied().unwrap_or(c)
-                } else {
-                    c
-                }
-            }).collect()
+            input_str
+                .chars()
+                .map(|c| {
+                    if let Some(idx) = from.iter().position(|&x| x == c) {
+                        to.get(idx).copied().unwrap_or(c)
+                    } else {
+                        c
+                    }
+                })
+                .collect()
         } else {
             input_str.to_string()
         };
-        
+
         ctx.stdout.write(output.as_bytes()).map_err(Sh9Error::Io)?;
         Ok(0)
     }
@@ -793,7 +841,7 @@ impl Shell {
         } else {
             String::new()
         };
-        
+
         for line in input.lines() {
             let reversed: String = line.chars().rev().collect();
             ctx.stdout.writeln(&reversed).map_err(Sh9Error::Io)?;
@@ -806,7 +854,7 @@ impl Shell {
         let mut fields: Option<Vec<usize>> = None;
         let mut chars: Option<(usize, Option<usize>)> = None;
         let mut file_path: Option<&str> = None;
-        
+
         let mut i = 0;
         while i < args.len() {
             let arg = args[i].as_str();
@@ -814,7 +862,9 @@ impl Shell {
                 if i + 1 < args.len() {
                     delimiter = args[i + 1].chars().next().unwrap_or('\t');
                     i += 2;
-                } else { i += 1; }
+                } else {
+                    i += 1;
+                }
             } else if arg.starts_with("-d") && arg.len() > 2 {
                 // Handle -d<char> (e.g. -d: or -d,)
                 delimiter = arg[2..].chars().next().unwrap_or('\t');
@@ -823,7 +873,9 @@ impl Shell {
                 if i + 1 < args.len() {
                     fields = Some(parse_field_spec(&args[i + 1]));
                     i += 2;
-                } else { i += 1; }
+                } else {
+                    i += 1;
+                }
             } else if arg.starts_with("-f") && arg.len() > 2 {
                 // Handle -f<list> (e.g. -f2, -f1,3, -f2-4)
                 fields = Some(parse_field_spec(&arg[2..]));
@@ -833,17 +885,27 @@ impl Shell {
                     let range = &args[i + 1];
                     if let Some((start, end)) = range.split_once('-') {
                         let s = start.parse::<usize>().unwrap_or(1);
-                        let e = if end.is_empty() { None } else { end.parse::<usize>().ok() };
+                        let e = if end.is_empty() {
+                            None
+                        } else {
+                            end.parse::<usize>().ok()
+                        };
                         chars = Some((s, e));
                     }
                     i += 2;
-                } else { i += 1; }
+                } else {
+                    i += 1;
+                }
             } else if arg.starts_with("-c") && arg.len() > 2 {
                 // Handle -c<range> (e.g. -c1-5)
                 let range = &arg[2..];
                 if let Some((start, end)) = range.split_once('-') {
                     let s = start.parse::<usize>().unwrap_or(1);
-                    let e = if end.is_empty() { None } else { end.parse::<usize>().ok() };
+                    let e = if end.is_empty() {
+                        None
+                    } else {
+                        end.parse::<usize>().ok()
+                    };
                     chars = Some((s, e));
                 }
                 i += 1;
@@ -854,7 +916,7 @@ impl Shell {
                 i += 1;
             }
         }
-        
+
         let input = if let Some(data) = ctx.stdin.take() {
             String::from_utf8_lossy(&data).to_string()
         } else if let Some(path) = file_path {
@@ -867,7 +929,7 @@ impl Shell {
         } else {
             String::new()
         };
-        
+
         for line in input.lines() {
             let output = if let Some(ref f) = fields {
                 let parts: Vec<&str> = line.split(delimiter).collect();
@@ -880,7 +942,8 @@ impl Shell {
                 let chars_vec: Vec<char> = line.chars().collect();
                 let s = start.saturating_sub(1);
                 let e = end.unwrap_or(chars_vec.len());
-                chars_vec.get(s..e.min(chars_vec.len()))
+                chars_vec
+                    .get(s..e.min(chars_vec.len()))
                     .map(|c| c.iter().collect::<String>())
                     .unwrap_or_default()
             } else {
@@ -893,15 +956,16 @@ impl Shell {
 
     async fn cmd_tee(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let append = args.iter().any(|a| a == "-a");
-        let files: Vec<&str> = args.iter()
+        let files: Vec<&str> = args
+            .iter()
             .filter(|a| !a.starts_with('-'))
             .map(|s| s.as_str())
             .collect();
-        
+
         let input = ctx.stdin.take().unwrap_or_default();
-        
+
         ctx.stdout.write(&input).map_err(Sh9Error::Io)?;
-        
+
         let router = self.router();
         for file in files {
             let full_path = self.resolve_path(file);
@@ -919,13 +983,13 @@ impl Shell {
 
     fn cmd_jq(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let filter = args.first().map(|s| s.as_str()).unwrap_or(".");
-        
+
         let input = if let Some(data) = ctx.stdin.take() {
             String::from_utf8_lossy(&data).to_string()
         } else {
             String::new()
         };
-        
+
         let json: serde_json::Value = match serde_json::from_str(&input) {
             Ok(v) => v,
             Err(e) => {
@@ -933,7 +997,7 @@ impl Shell {
                 return Ok(1);
             }
         };
-        
+
         let result = self.jq_query(&json, filter);
         match result {
             Ok(values) => {
@@ -956,34 +1020,60 @@ impl Shell {
     fn cmd_date(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         use std::time::SystemTime;
         let now = SystemTime::now();
-        let secs = now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
-        
+        let secs = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         let days_since_epoch = secs / 86400;
         let time_of_day = secs % 86400;
         let hours = time_of_day / 3600;
         let minutes = (time_of_day % 3600) / 60;
         let seconds = time_of_day % 60;
-        
+
         let mut y = 1970i64;
         let mut remaining_days = days_since_epoch as i64;
         loop {
-            let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
-            if remaining_days < days_in_year { break; }
+            let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                366
+            } else {
+                365
+            };
+            if remaining_days < days_in_year {
+                break;
+            }
             remaining_days -= days_in_year;
             y += 1;
         }
-        
+
         let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-        let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let month_days = [
+            31,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
         let mut m = 0usize;
         while m < 12 && remaining_days >= month_days[m] as i64 {
             remaining_days -= month_days[m] as i64;
             m += 1;
         }
         let d = remaining_days + 1;
-        
+
         // Join all args — handles cases like date + '%Y-%m-%d' (split by lexer)
-        let format_str = if !args.is_empty() { Some(args.join("")) } else { None };
+        let format_str = if !args.is_empty() {
+            Some(args.join(""))
+        } else {
+            None
+        };
         let output = if let Some(fmt) = format_str.as_deref() {
             fmt.trim_start_matches('+')
                 .replace("%Y", &format!("{:04}", y))
@@ -993,7 +1083,15 @@ impl Shell {
                 .replace("%M", &format!("{:02}", minutes))
                 .replace("%S", &format!("{:02}", seconds))
         } else {
-            format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m + 1, d, hours, minutes, seconds)
+            format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                y,
+                m + 1,
+                d,
+                hours,
+                minutes,
+                seconds
+            )
         };
         ctx.stdout.writeln(&output).map_err(Sh9Error::Io)?;
         Ok(0)
@@ -1065,7 +1163,10 @@ impl Shell {
             let mut buf = String::new();
             match std::io::stdin().read_line(&mut buf) {
                 Ok(0) => return Ok(1), // EOF
-                Ok(_) => buf.trim_end_matches('\n').trim_end_matches('\r').to_string(),
+                Ok(_) => buf
+                    .trim_end_matches('\n')
+                    .trim_end_matches('\r')
+                    .to_string(),
                 Err(_) => return Ok(1),
             }
         };

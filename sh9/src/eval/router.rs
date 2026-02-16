@@ -5,11 +5,11 @@ use std::sync::Arc;
 use fs9_client::{FileInfo, Fs9Client};
 
 use super::local_fs::{
-    LocalFileInfo, local_append_file, local_chmod, local_copy, local_mkdir, local_read_file,
-    local_readdir, local_remove, local_remove_recursive, local_rename, local_stat,
-    local_truncate, local_write_file, safe_resolve,
+    local_append_file, local_chmod, local_copy, local_mkdir, local_read_file, local_readdir,
+    local_remove, local_remove_recursive, local_rename, local_stat, local_truncate,
+    local_write_file, safe_resolve, LocalFileInfo,
 };
-use super::namespace::{MountFlags, Namespace, normalize_path};
+use super::namespace::{normalize_path, MountFlags, Namespace};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteFileInfo {
@@ -167,8 +167,12 @@ impl NamespaceRouter {
         }
 
         let client = self.require_client()?;
-        let remote_entries = client.readdir(&normalized).await.map_err(|e| e.to_string())?;
-        let mut result: Vec<RouteFileInfo> = remote_entries.iter().map(RouteFileInfo::from).collect();
+        let remote_entries = client
+            .readdir(&normalized)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut result: Vec<RouteFileInfo> =
+            remote_entries.iter().map(RouteFileInfo::from).collect();
 
         // Inject synthetic entries for child mount points
         let mut seen: HashSet<String> = result.iter().map(|e| e.name.clone()).collect();
@@ -218,10 +222,16 @@ impl NamespaceRouter {
     pub async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), String> {
         let target = self.resolve_write_target(path).await?;
         match target {
-            RouteTarget::Local { local_path, .. } => self.local_write_file_blocking(local_path, data.to_vec()).await,
+            RouteTarget::Local { local_path, .. } => {
+                self.local_write_file_blocking(local_path, data.to_vec())
+                    .await
+            }
             RouteTarget::Remote { path } => {
                 let client = self.require_client()?;
-                client.write_file(&path, data).await.map_err(|e| e.to_string())
+                client
+                    .write_file(&path, data)
+                    .await
+                    .map_err(|e| e.to_string())
             }
         }
     }
@@ -230,7 +240,8 @@ impl NamespaceRouter {
         let target = self.resolve_write_target(path).await?;
         match target {
             RouteTarget::Local { local_path, .. } => {
-                self.local_append_file_blocking(local_path, data.to_vec()).await
+                self.local_append_file_blocking(local_path, data.to_vec())
+                    .await
             }
             RouteTarget::Remote { path } => {
                 let client = self.require_client()?;
@@ -273,7 +284,9 @@ impl NamespaceRouter {
     pub async fn remove_recursive(&self, path: &str) -> Result<(), String> {
         let target = self.resolve_existing_target(path).await?;
         match target {
-            RouteTarget::Local { local_path, .. } => self.local_remove_recursive_blocking(local_path).await,
+            RouteTarget::Local { local_path, .. } => {
+                self.local_remove_recursive_blocking(local_path).await
+            }
             RouteTarget::Remote { path } => {
                 let client = self.require_client()?;
                 self.remove_remote_recursive(client, &path).await
@@ -296,10 +309,14 @@ impl NamespaceRouter {
                     ..
                 },
                 RouteTarget::Local {
-                    local_path: to_local, ..
+                    local_path: to_local,
+                    ..
                 },
             ) => self.local_rename_blocking(from_local, to_local).await,
-            (RouteTarget::Remote { path: from_remote }, RouteTarget::Remote { path: to_remote }) => {
+            (
+                RouteTarget::Remote { path: from_remote },
+                RouteTarget::Remote { path: to_remote },
+            ) => {
                 let client = self.require_client()?;
                 client
                     .rename(&from_remote, &to_remote)
@@ -321,7 +338,8 @@ impl NamespaceRouter {
                     ..
                 },
                 RouteTarget::Local {
-                    local_path: to_local, ..
+                    local_path: to_local,
+                    ..
                 },
             ) => self.local_copy_blocking(from_local, to_local).await,
             _ => {
@@ -334,7 +352,9 @@ impl NamespaceRouter {
     pub async fn chmod(&self, path: &str, mode: u32) -> Result<(), String> {
         let target = self.resolve_existing_target(path).await?;
         match target {
-            RouteTarget::Local { local_path, .. } => self.local_chmod_blocking(local_path, mode).await,
+            RouteTarget::Local { local_path, .. } => {
+                self.local_chmod_blocking(local_path, mode).await
+            }
             RouteTarget::Remote { path } => {
                 let client = self.require_client()?;
                 client.chmod(&path, mode).await.map_err(|e| e.to_string())
@@ -350,7 +370,10 @@ impl NamespaceRouter {
             }
             RouteTarget::Remote { path } => {
                 let client = self.require_client()?;
-                client.truncate(&path, size).await.map_err(|e| e.to_string())
+                client
+                    .truncate(&path, size)
+                    .await
+                    .map_err(|e| e.to_string())
             }
         }
     }
@@ -609,9 +632,7 @@ fn same_provider(source: &RouteTarget, destination: &RouteTarget) -> bool {
                 mount_source: destination_mount,
                 ..
             },
-        ) => {
-            source_target == destination_target && source_mount == destination_mount
-        }
+        ) => source_target == destination_target && source_mount == destination_mount,
         (RouteTarget::Remote { .. }, RouteTarget::Remote { .. }) => true,
         _ => false,
     }
@@ -662,9 +683,7 @@ mod tests {
         fs::write(tmp.path().join("hello.txt"), b"hello").expect("write failed");
 
         let mut router = NamespaceRouter::new(None);
-        router
-            .namespace
-            .bind(tmp.path(), "/mnt", MountFlags::MREPL);
+        router.namespace.bind(tmp.path(), "/mnt", MountFlags::MREPL);
 
         let stat = router.stat("/mnt/hello.txt").await.expect("stat failed");
         assert_eq!(stat.name, "hello.txt");
@@ -689,9 +708,7 @@ mod tests {
         fs::write(tmp.path().join("a.txt"), b"a").expect("write failed");
 
         let mut router = NamespaceRouter::new(None);
-        router
-            .namespace
-            .bind(tmp.path(), "/mnt", MountFlags::MREPL);
+        router.namespace.bind(tmp.path(), "/mnt", MountFlags::MREPL);
 
         let entries = router.readdir("/mnt").await.expect("readdir failed");
         let names: Vec<String> = entries.into_iter().map(|e| e.name).collect();
@@ -704,9 +721,7 @@ mod tests {
         fs::write(tmp.path().join("read.txt"), b"router").expect("write failed");
 
         let mut router = NamespaceRouter::new(None);
-        router
-            .namespace
-            .bind(tmp.path(), "/mnt", MountFlags::MREPL);
+        router.namespace.bind(tmp.path(), "/mnt", MountFlags::MREPL);
 
         let data = router
             .read_file("/mnt/read.txt")
@@ -719,9 +734,7 @@ mod tests {
     async fn router_local_write_file() {
         let tmp = TempDirGuard::new();
         let mut router = NamespaceRouter::new(None);
-        router
-            .namespace
-            .bind(tmp.path(), "/mnt", MountFlags::MREPL);
+        router.namespace.bind(tmp.path(), "/mnt", MountFlags::MREPL);
 
         router
             .write_file("/mnt/write.txt", b"payload")
@@ -777,10 +790,7 @@ mod tests {
             .namespace
             .bind(upper.path(), "/union", MountFlags::MBEFORE);
 
-        let stat = router
-            .stat("/union/shared.txt")
-            .await
-            .expect("stat failed");
+        let stat = router.stat("/union/shared.txt").await.expect("stat failed");
         assert_eq!(stat.size, 10);
     }
 
@@ -815,13 +825,11 @@ mod tests {
         router
             .namespace
             .bind(base.path(), "/mnt", MountFlags::MREPL);
-        router
-            .namespace
-            .bind(
-                create_layer.path(),
-                "/mnt",
-                MountFlags::MAFTER | MountFlags::MCREATE,
-            );
+        router.namespace.bind(
+            create_layer.path(),
+            "/mnt",
+            MountFlags::MAFTER | MountFlags::MCREATE,
+        );
 
         router
             .write_file("/mnt/new.txt", b"from-create")
@@ -901,7 +909,9 @@ mod tests {
 
         let mut router = NamespaceRouter::new(None);
         router.namespace.bind(tmp.path(), "/mnt", MountFlags::MREPL);
-        router.namespace.bind(child.path(), "/mnt/sub", MountFlags::MREPL);
+        router
+            .namespace
+            .bind(child.path(), "/mnt/sub", MountFlags::MREPL);
 
         let entries = router.readdir("/mnt").await.expect("readdir failed");
         let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();

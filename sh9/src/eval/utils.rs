@@ -1,43 +1,64 @@
+use super::router::NamespaceRouter;
+use super::{ExecContext, STREAM_CHUNK_SIZE};
 use crate::error::{Sh9Error, Sh9Result};
 use crate::shell::Shell;
 use fs9_client::OpenFlags;
-use std::pin::Pin;
 use std::future::Future;
-use super::{ExecContext, STREAM_CHUNK_SIZE};
-use super::router::NamespaceRouter;
+use std::pin::Pin;
 
 pub(crate) fn format_mtime(mtime: u64) -> String {
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let days_since_epoch = mtime / 86400;
     let time_of_day = mtime % 86400;
     let hours = time_of_day / 3600;
     let minutes = (time_of_day % 3600) / 60;
-    
+
     let mut y = 1970i64;
     let mut remaining_days = days_since_epoch as i64;
     loop {
-        let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
-        if remaining_days < days_in_year { break; }
+        let days_in_year = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+            366
+        } else {
+            365
+        };
+        if remaining_days < days_in_year {
+            break;
+        }
         remaining_days -= days_in_year;
         y += 1;
     }
-    
+
     let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 0usize;
     while m < 12 && remaining_days >= month_days[m] as i64 {
         remaining_days -= month_days[m] as i64;
         m += 1;
     }
     let d = remaining_days + 1;
-    
+
     format!("{} {:>2} {:02}:{:02}", months[m], d, hours, minutes)
 }
 
 pub(crate) fn interpret_escape_sequences(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
-    
+
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.next() {
@@ -70,7 +91,7 @@ pub(crate) fn contains_glob_chars(s: &str) -> bool {
 pub(crate) fn match_glob_pattern(pattern: &str, name: &str) -> bool {
     let mut pattern_chars = pattern.chars().peekable();
     let mut name_chars = name.chars().peekable();
-    
+
     while let Some(p) = pattern_chars.next() {
         match p {
             '*' => {
@@ -79,7 +100,7 @@ pub(crate) fn match_glob_pattern(pattern: &str, name: &str) -> bool {
                 }
                 let remaining_pattern: String = pattern_chars.collect();
                 let mut remaining_name: String = name_chars.collect();
-                
+
                 loop {
                     if match_glob_pattern(&remaining_pattern, &remaining_name) {
                         return true;
@@ -99,7 +120,7 @@ pub(crate) fn match_glob_pattern(pattern: &str, name: &str) -> bool {
                 let mut chars_in_class = Vec::new();
                 let mut negated = false;
                 let mut first = true;
-                
+
                 while let Some(c) = pattern_chars.next() {
                     if c == ']' && !first {
                         break;
@@ -110,7 +131,7 @@ pub(crate) fn match_glob_pattern(pattern: &str, name: &str) -> bool {
                         continue;
                     }
                     first = false;
-                    
+
                     if pattern_chars.peek() == Some(&'-') {
                         pattern_chars.next();
                         if let Some(end) = pattern_chars.next() {
@@ -128,7 +149,7 @@ pub(crate) fn match_glob_pattern(pattern: &str, name: &str) -> bool {
                     }
                     chars_in_class.push(c);
                 }
-                
+
                 if let Some(n) = name_chars.next() {
                     let matched = chars_in_class.contains(&n);
                     if negated == matched {
@@ -145,7 +166,7 @@ pub(crate) fn match_glob_pattern(pattern: &str, name: &str) -> bool {
             }
         }
     }
-    
+
     name_chars.next().is_none()
 }
 
@@ -212,18 +233,34 @@ impl Shell {
 
             for (i, entry) in filtered.iter().enumerate() {
                 let is_last_entry = i == filtered.len() - 1;
-                let connector = if is_last_entry { "└── " } else { "├── " };
+                let connector = if is_last_entry {
+                    "└── "
+                } else {
+                    "├── "
+                };
                 let line = format!("{}{}{}", prefix, connector, entry.name);
                 ctx.stdout.writeln(&line).map_err(Sh9Error::Io)?;
 
                 if entry.is_dir {
-                    let new_prefix = format!("{}{}", prefix, if is_last_entry { "    " } else { "│   " });
+                    let new_prefix =
+                        format!("{}{}", prefix, if is_last_entry { "    " } else { "│   " });
                     let child_path = if path == "/" {
                         format!("/{}", entry.name)
                     } else {
                         format!("{}/{}", path, entry.name)
                     };
-                    self.print_tree(router, &child_path, &new_prefix, is_last_entry, depth + 1, max_depth, dirs_only, show_hidden, ctx).await?;
+                    self.print_tree(
+                        router,
+                        &child_path,
+                        &new_prefix,
+                        is_last_entry,
+                        depth + 1,
+                        max_depth,
+                        dirs_only,
+                        show_hidden,
+                        ctx,
+                    )
+                    .await?;
                 }
             }
 
@@ -231,17 +268,21 @@ impl Shell {
         })
     }
 
-    pub(crate) fn jq_query(&self, json: &serde_json::Value, filter: &str) -> Result<Vec<serde_json::Value>, String> {
+    pub(crate) fn jq_query(
+        &self,
+        json: &serde_json::Value,
+        filter: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
         if filter == "." {
             return Ok(vec![json.clone()]);
         }
-        
+
         let mut current = vec![json.clone()];
         let parts: Vec<&str> = filter.split('.').filter(|s| !s.is_empty()).collect();
-        
+
         for part in parts {
             let mut next = Vec::new();
-            
+
             for val in current {
                 if part == "[]" {
                     if let serde_json::Value::Array(arr) = val {
@@ -267,7 +308,7 @@ impl Shell {
             }
             current = next;
         }
-        
+
         Ok(current)
     }
 
@@ -281,24 +322,32 @@ impl Shell {
         Box::pin(async move {
             use std::fs;
             use std::path::Path;
-            
+
             let local = Path::new(local_path);
             if !local.exists() {
                 return Err(format!("'{}' does not exist", local_path));
             }
-            
+
             let mut count = 0;
-            
+
             if local.is_file() {
-                let handle = client.open(fs9_path, OpenFlags::create_truncate()).await.map_err(|e| e.to_string())?;
+                let handle = client
+                    .open(fs9_path, OpenFlags::create_truncate())
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut file = fs::File::open(local).map_err(|e| e.to_string())?;
                 let mut offset = 0u64;
                 let mut buf = vec![0u8; STREAM_CHUNK_SIZE];
                 loop {
                     use std::io::Read;
                     let n = file.read(&mut buf).map_err(|e| e.to_string())?;
-                    if n == 0 { break; }
-                    client.write(&handle, offset, &buf[..n]).await.map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        break;
+                    }
+                    client
+                        .write(&handle, offset, &buf[..n])
+                        .await
+                        .map_err(|e| e.to_string())?;
                     offset += n as u64;
                 }
                 let _ = client.close(handle).await;
@@ -307,24 +356,26 @@ impl Shell {
                 if !recursive {
                     return Err(format!("'{}' is a directory (use -r)", local_path));
                 }
-                
+
                 let _ = client.mkdir(fs9_path).await;
-                
+
                 let entries: Vec<_> = fs::read_dir(local)
                     .map_err(|e| e.to_string())?
                     .filter_map(|e| e.ok())
                     .collect();
-                
+
                 for entry in entries {
                     let child_local = entry.path();
                     let child_name = entry.file_name().to_string_lossy().to_string();
                     let child_fs9 = format!("{}/{}", fs9_path.trim_end_matches('/'), child_name);
                     let child_local_str = child_local.to_string_lossy().to_string();
-                    
-                    count += self.upload_path(client, &child_local_str, &child_fs9, recursive).await?;
+
+                    count += self
+                        .upload_path(client, &child_local_str, &child_fs9, recursive)
+                        .await?;
                 }
             }
-            
+
             Ok(count)
         })
     }
@@ -339,26 +390,29 @@ impl Shell {
         Box::pin(async move {
             use std::fs;
             use std::path::Path;
-            
+
             let stat = client.stat(fs9_path).await.map_err(|e| e.to_string())?;
             let mut count = 0;
-            
+
             if stat.is_dir() {
                 if !recursive {
                     return Err(format!("'{}' is a directory (use -r)", fs9_path));
                 }
-                
+
                 let local = Path::new(local_path);
                 if !local.exists() {
                     fs::create_dir_all(local).map_err(|e| e.to_string())?;
                 }
-                
+
                 let entries = client.readdir(fs9_path).await.map_err(|e| e.to_string())?;
                 for entry in entries {
                     let child_fs9 = format!("{}/{}", fs9_path.trim_end_matches('/'), entry.name());
-                    let child_local = format!("{}/{}", local_path.trim_end_matches('/'), entry.name());
-                    
-                    count += self.download_path(client, &child_fs9, &child_local, recursive).await?;
+                    let child_local =
+                        format!("{}/{}", local_path.trim_end_matches('/'), entry.name());
+
+                    count += self
+                        .download_path(client, &child_fs9, &child_local, recursive)
+                        .await?;
                 }
             } else {
                 let local = Path::new(local_path);
@@ -367,13 +421,21 @@ impl Shell {
                         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                     }
                 }
-                
-                let handle = client.open(fs9_path, OpenFlags::read()).await.map_err(|e| e.to_string())?;
+
+                let handle = client
+                    .open(fs9_path, OpenFlags::read())
+                    .await
+                    .map_err(|e| e.to_string())?;
                 let mut file = fs::File::create(local_path).map_err(|e| e.to_string())?;
                 let mut offset = 0u64;
                 loop {
-                    let data = client.read(&handle, offset, STREAM_CHUNK_SIZE).await.map_err(|e| e.to_string())?;
-                    if data.is_empty() { break; }
+                    let data = client
+                        .read(&handle, offset, STREAM_CHUNK_SIZE)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    if data.is_empty() {
+                        break;
+                    }
                     use std::io::Write;
                     file.write_all(&data).map_err(|e| e.to_string())?;
                     offset += data.len() as u64;
@@ -381,7 +443,7 @@ impl Shell {
                 let _ = client.close(handle).await;
                 count = 1;
             }
-            
+
             Ok(count)
         })
     }

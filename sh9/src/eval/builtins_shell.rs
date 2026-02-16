@@ -1,7 +1,7 @@
+use super::ExecContext;
 use crate::error::{Sh9Error, Sh9Result};
 use crate::help;
 use crate::shell::Shell;
-use super::ExecContext;
 
 impl Shell {
     pub(crate) async fn try_execute_shell_builtin(
@@ -11,10 +11,9 @@ impl Shell {
         ctx: &mut ExecContext,
     ) -> Option<Sh9Result<i32>> {
         match name {
-            "true" | "false" | "exit" | "export" | "set" | "unset" | "env"
-            | "local" | "alias" | "unalias" | "source" | "." | "sleep"
-            | "jobs" | "fg" | "bg" | "kill" | "wait" | "help" | "http"
-            | "upload" | "download" | "[" | "test" | ":" => {
+            "true" | "false" | "exit" | "export" | "set" | "unset" | "env" | "local" | "alias"
+            | "unalias" | "source" | "." | "sleep" | "jobs" | "fg" | "bg" | "kill" | "wait"
+            | "help" | "http" | "upload" | "download" | "[" | "test" | ":" => {
                 Some(self.dispatch_shell_builtin(name, args, ctx).await)
             }
             _ => None,
@@ -56,7 +55,8 @@ impl Shell {
     }
 
     fn cmd_exit(&mut self, args: &[String]) -> Sh9Result<i32> {
-        let code = args.first()
+        let code = args
+            .first()
             .and_then(|s| s.parse::<i32>().ok())
             .unwrap_or(0);
         Err(Sh9Error::Exit(code))
@@ -83,7 +83,9 @@ impl Shell {
     fn cmd_set(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if args.is_empty() {
             for (name, value) in &self.env {
-                ctx.stdout.writeln(&format!("{}={}", name, value)).map_err(Sh9Error::Io)?;
+                ctx.stdout
+                    .writeln(&format!("{}={}", name, value))
+                    .map_err(Sh9Error::Io)?;
             }
             return Ok(0);
         }
@@ -143,7 +145,9 @@ impl Shell {
 
     fn cmd_env(&mut self, ctx: &mut ExecContext) -> Sh9Result<i32> {
         for (name, value) in &self.env {
-            ctx.stdout.writeln(&format!("{}={}", name, value)).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .writeln(&format!("{}={}", name, value))
+                .map_err(Sh9Error::Io)?;
         }
         Ok(0)
     }
@@ -172,7 +176,9 @@ impl Shell {
             let mut aliases: Vec<_> = self.aliases.iter().collect();
             aliases.sort_by_key(|(k, _)| k.as_str());
             for (name, value) in aliases {
-                ctx.stdout.writeln(&format!("alias {}='{}'", name, value)).map_err(Sh9Error::Io)?;
+                ctx.stdout
+                    .writeln(&format!("alias {}='{}'", name, value))
+                    .map_err(Sh9Error::Io)?;
             }
         } else {
             let mut i = 0;
@@ -187,7 +193,9 @@ impl Shell {
                     self.aliases.insert(name.to_string(), value.to_string());
                     i += 1;
                 } else if let Some(value) = self.aliases.get(&args[i]) {
-                    ctx.stdout.writeln(&format!("alias {}='{}'", &args[i], value)).map_err(Sh9Error::Io)?;
+                    ctx.stdout
+                        .writeln(&format!("alias {}='{}'", &args[i], value))
+                        .map_err(Sh9Error::Io)?;
                     i += 1;
                 } else {
                     i += 1;
@@ -219,12 +227,13 @@ impl Shell {
                 return Ok(1);
             }
         };
-        
+
         self.execute(&content).await
     }
 
     async fn cmd_sleep(&mut self, args: &[String]) -> Sh9Result<i32> {
-        let secs = args.first()
+        let secs = args
+            .first()
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(0.0);
         tokio::time::sleep(tokio::time::Duration::from_secs_f64(secs)).await;
@@ -245,7 +254,9 @@ impl Shell {
                     }
                 }
             };
-            ctx.stdout.writeln(&format!("[{}] {} {}", job.id, status_str, job.command)).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .writeln(&format!("[{}] {} {}", job.id, status_str, job.command))
+                .map_err(Sh9Error::Io)?;
         }
         Ok(0)
     }
@@ -306,7 +317,9 @@ impl Shell {
                 if let Some(idx) = job_index {
                     let job = self.jobs.remove(idx);
                     job.handle.abort();
-                    ctx.stdout.writeln(&format!("[{}] Terminated {}", id, job.command)).map_err(Sh9Error::Io)?;
+                    ctx.stdout
+                        .writeln(&format!("[{}] Terminated {}", id, job.command))
+                        .map_err(Sh9Error::Io)?;
                 } else {
                     ctx.write_err(&format!("kill: job [{}] not found", id));
                 }
@@ -328,24 +341,32 @@ impl Shell {
     fn cmd_help(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         if let Some(cmd_name) = args.first() {
             if let Some(cmd_help) = crate::help::get_help(cmd_name) {
-                ctx.stdout.write(crate::help::format_help(cmd_help).as_bytes()).map_err(Sh9Error::Io)?;
+                ctx.stdout
+                    .write(crate::help::format_help(cmd_help).as_bytes())
+                    .map_err(Sh9Error::Io)?;
             } else {
                 ctx.write_err(&format!("help: no help for '{}'", cmd_name));
                 return Ok(1);
             }
         } else {
-            ctx.stdout.write(help::format_help_list().as_bytes()).map_err(Sh9Error::Io)?;
+            ctx.stdout
+                .write(help::format_help_list().as_bytes())
+                .map_err(Sh9Error::Io)?;
         }
         Ok(0)
     }
 
-    pub(crate) async fn execute_http(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+    pub(crate) async fn execute_http(
+        &mut self,
+        args: &[String],
+        ctx: &mut ExecContext,
+    ) -> Sh9Result<i32> {
         let method = args.first().map(|s| s.to_uppercase()).unwrap_or_default();
         let url = args.get(1).cloned().unwrap_or_default();
-        
+
         let mut headers: Vec<(String, String)> = Vec::new();
         let mut body: Option<String> = None;
-        
+
         let mut i = 2;
         while i < args.len() {
             match args[i].as_str() {
@@ -370,7 +391,7 @@ impl Shell {
                 _ => i += 1,
             }
         }
-        
+
         let client = reqwest::Client::new();
         let mut req = match method.as_str() {
             "GET" => client.get(&url),
@@ -383,31 +404,29 @@ impl Shell {
                 return Ok(1);
             }
         };
-        
+
         for (k, v) in headers {
             req = req.header(&k, &v);
         }
-        
+
         if let Some(b) = body {
             req = req.body(b);
         }
-        
+
         match req.send().await {
-            Ok(resp) => {
-                match resp.text().await {
-                    Ok(text) => {
-                        ctx.stdout.write(text.as_bytes()).map_err(Sh9Error::Io)?;
-                        if !text.ends_with('\n') {
-                            ctx.stdout.write(b"\n").map_err(Sh9Error::Io)?;
-                        }
-                        Ok(0)
+            Ok(resp) => match resp.text().await {
+                Ok(text) => {
+                    ctx.stdout.write(text.as_bytes()).map_err(Sh9Error::Io)?;
+                    if !text.ends_with('\n') {
+                        ctx.stdout.write(b"\n").map_err(Sh9Error::Io)?;
                     }
-                    Err(e) => {
-                        ctx.write_err(&format!("http: {}", e));
-                        Ok(1)
-                    }
+                    Ok(0)
                 }
-            }
+                Err(e) => {
+                    ctx.write_err(&format!("http: {}", e));
+                    Ok(1)
+                }
+            },
             Err(e) => {
                 ctx.write_err(&format!("http: {}", e));
                 Ok(1)
@@ -418,7 +437,7 @@ impl Shell {
     async fn cmd_upload(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let mut recursive = false;
         let mut paths: Vec<&str> = Vec::new();
-        
+
         for arg in args {
             match arg.as_str() {
                 "-r" | "-R" => recursive = true,
@@ -426,19 +445,24 @@ impl Shell {
                 _ => {}
             }
         }
-        
+
         if paths.len() < 2 {
             ctx.write_err("upload: requires LOCAL_PATH and FS9_PATH");
             return Ok(1);
         }
-        
+
         let local_path = paths[0];
         let fs9_path = self.resolve_path(paths[1]);
-        
+
         if let Some(client) = &self.client {
-            match self.upload_path(client, local_path, &fs9_path, recursive).await {
+            match self
+                .upload_path(client, local_path, &fs9_path, recursive)
+                .await
+            {
                 Ok(count) => {
-                    ctx.stdout.writeln(&format!("Uploaded {} file(s)", count)).map_err(Sh9Error::Io)?;
+                    ctx.stdout
+                        .writeln(&format!("Uploaded {} file(s)", count))
+                        .map_err(Sh9Error::Io)?;
                     Ok(0)
                 }
                 Err(e) => {
@@ -455,7 +479,7 @@ impl Shell {
     async fn cmd_download(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let mut recursive = false;
         let mut paths: Vec<&str> = Vec::new();
-        
+
         for arg in args {
             match arg.as_str() {
                 "-r" | "-R" => recursive = true,
@@ -463,19 +487,24 @@ impl Shell {
                 _ => {}
             }
         }
-        
+
         if paths.len() < 2 {
             ctx.write_err("download: requires FS9_PATH and LOCAL_PATH");
             return Ok(1);
         }
-        
+
         let fs9_path = self.resolve_path(paths[0]);
         let local_path = paths[1];
-        
+
         if let Some(client) = &self.client {
-            match self.download_path(client, &fs9_path, local_path, recursive).await {
+            match self
+                .download_path(client, &fs9_path, local_path, recursive)
+                .await
+            {
                 Ok(count) => {
-                    ctx.stdout.writeln(&format!("Downloaded {} file(s)", count)).map_err(Sh9Error::Io)?;
+                    ctx.stdout
+                        .writeln(&format!("Downloaded {} file(s)", count))
+                        .map_err(Sh9Error::Io)?;
                     Ok(0)
                 }
                 Err(e) => {
