@@ -1,0 +1,15 @@
+=== bind subshell vars ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+bind: /tmp/sh9_test_50 -> /mnt
+value=alpha
+bind: /tmp/sh9_test_50 -> /submnt
+one.txt
+two.txt
+unmount: /submnt
+item:one.txt
+item:two.txt
+unmount: /mnt
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+=== bind subshell vars done ===

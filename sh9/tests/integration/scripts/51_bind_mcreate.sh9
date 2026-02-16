@@ -1,0 +1,50 @@
+# Test 51: MCREATE write routing in union mounts
+echo "=== bind mcreate ==="
+
+# Bootstrap host test data via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_51_lower
+mkdir /host_tmp/sh9_test_51_upper
+echo "lower" > /host_tmp/sh9_test_51_lower/base.txt
+echo "upper" > /host_tmp/sh9_test_51_upper/overlay.txt
+unmount /host_tmp
+
+bind /tmp/sh9_test_51_lower /union
+bind -bc /tmp/sh9_test_51_upper /union
+
+echo "=== ns ==="
+ns
+
+echo "newdata" > /union/new.txt
+echo "=== cat union new ==="
+cat /union/new.txt
+
+echo "=== cat union base ==="
+cat /union/base.txt
+
+unmount /union
+
+bind /tmp/sh9_test_51_upper /upper_check
+bind /tmp/sh9_test_51_lower /lower_check
+
+echo "=== ls upper ==="
+ls /upper_check
+
+echo "=== ls lower ==="
+ls /lower_check
+
+test -f /upper_check/new.txt && echo "upper_yes"
+test -f /lower_check/new.txt && echo "lower_yes"
+
+unmount /upper_check
+unmount /lower_check
+
+# Cleanup
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_51_lower/base.txt
+rm /host_tmp/sh9_test_51_upper/overlay.txt
+rm /host_tmp/sh9_test_51_upper/new.txt
+rm /host_tmp/sh9_test_51_lower
+rm /host_tmp/sh9_test_51_upper
+unmount /host_tmp
+echo "=== bind mcreate done ==="

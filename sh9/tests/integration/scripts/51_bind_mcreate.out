@@ -1,0 +1,26 @@
+=== bind mcreate ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+bind: /tmp/sh9_test_51_lower -> /union
+bind: /tmp/sh9_test_51_upper -> /union
+=== ns ===
+/union	/tmp/sh9_test_51_upper	(before,create)
+/union	/tmp/sh9_test_51_lower	(replace)
+=== cat union new ===
+newdata
+=== cat union base ===
+lower
+unmount: /union
+bind: /tmp/sh9_test_51_upper -> /upper_check
+bind: /tmp/sh9_test_51_lower -> /lower_check
+=== ls upper ===
+new.txt
+overlay.txt
+=== ls lower ===
+base.txt
+upper_yes
+unmount: /upper_check
+unmount: /lower_check
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+=== bind mcreate done ===

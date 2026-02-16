@@ -1,0 +1,44 @@
+# Test 52: Recursive copy between local bind mounts
+echo "=== bind cp recursive ==="
+
+# Bootstrap host test data via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_52_src
+mkdir /host_tmp/sh9_test_52_src/dir1
+mkdir /host_tmp/sh9_test_52_src/dir1/dir2
+mkdir /host_tmp/sh9_test_52_dst
+echo "root" > /host_tmp/sh9_test_52_src/root.txt
+echo "child" > /host_tmp/sh9_test_52_src/dir1/child.txt
+echo "deep" > /host_tmp/sh9_test_52_src/dir1/dir2/deep.txt
+unmount /host_tmp
+
+bind /tmp/sh9_test_52_src /src
+bind /tmp/sh9_test_52_dst /dst
+
+cp -r /src/dir1 /dst/dir1_copy
+cp -r /src /dst/full_copy
+
+echo "=== ls /dst ==="
+ls /dst
+
+echo "=== ls /dst/dir1_copy ==="
+ls /dst/dir1_copy
+
+echo "=== cat deep ==="
+cat /dst/dir1_copy/dir2/deep.txt
+
+echo "=== ls /dst/full_copy ==="
+ls /dst/full_copy
+
+echo "=== cat root ==="
+cat /dst/full_copy/root.txt
+
+unmount /src
+unmount /dst
+
+# Cleanup
+bind /tmp /host_tmp
+rm -r /host_tmp/sh9_test_52_src
+rm -r /host_tmp/sh9_test_52_dst
+unmount /host_tmp
+echo "=== bind cp recursive done ==="

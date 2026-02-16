@@ -1,0 +1,23 @@
+=== bind cp recursive ===
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+bind: /tmp/sh9_test_52_src -> /src
+bind: /tmp/sh9_test_52_dst -> /dst
+=== ls /dst ===
+dir1_copy
+full_copy
+=== ls /dst/dir1_copy ===
+child.txt
+dir2
+=== cat deep ===
+deep
+=== ls /dst/full_copy ===
+dir1
+root.txt
+=== cat root ===
+root
+unmount: /src
+unmount: /dst
+bind: /tmp -> /host_tmp
+unmount: /host_tmp
+=== bind cp recursive done ===

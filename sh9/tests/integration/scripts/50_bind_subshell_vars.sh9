@@ -1,0 +1,30 @@
+# Test 50: Command substitution and loops with local bind mounts
+echo "=== bind subshell vars ==="
+
+# Bootstrap host test data via /tmp bind
+bind /tmp /host_tmp
+mkdir /host_tmp/sh9_test_50
+echo "alpha" > /host_tmp/sh9_test_50/one.txt
+echo "beta" > /host_tmp/sh9_test_50/two.txt
+unmount /host_tmp
+
+bind /tmp/sh9_test_50 /mnt
+
+value=$(cat /mnt/one.txt)
+echo "value=$value"
+
+echo "$(bind /tmp/sh9_test_50 /submnt)"
+ls /submnt
+unmount /submnt
+
+for f in $(ls /mnt); do echo "item:$f"; done
+
+unmount /mnt
+
+# Cleanup
+bind /tmp /host_tmp
+rm /host_tmp/sh9_test_50/one.txt
+rm /host_tmp/sh9_test_50/two.txt
+rm /host_tmp/sh9_test_50
+unmount /host_tmp
+echo "=== bind subshell vars done ==="
