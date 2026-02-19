@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 
+pub mod audit;
 pub mod auth;
 pub mod circuit_breaker;
 pub mod db9_client;

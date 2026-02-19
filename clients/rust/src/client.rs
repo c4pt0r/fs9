@@ -19,9 +19,10 @@ impl Stream for ByteStream {
     type Item = Result<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx).map(|opt| {
-            opt.map(|res| res.map_err(Fs9Error::from))
-        })
+        self.inner
+            .as_mut()
+            .poll_next(cx)
+            .map(|opt| opt.map(|res| res.map_err(Fs9Error::from)))
     }
 }
 
@@ -305,7 +306,10 @@ impl Fs9Client {
 
     pub async fn upload_stream<S>(&self, path: &str, stream: S) -> Result<usize>
     where
-        S: futures_core::Stream<Item = std::result::Result<Bytes, std::io::Error>> + Send + Sync + 'static,
+        S: futures_core::Stream<Item = std::result::Result<Bytes, std::io::Error>>
+            + Send
+            + Sync
+            + 'static,
     {
         let body = reqwest::Body::wrap_stream(stream);
         self.upload(path, body).await
@@ -426,6 +430,28 @@ impl Fs9Client {
         self.handle_response::<MountResponse>(resp)
             .await
             .map(Into::into)
+    }
+
+    pub async fn events(&self, query: &EventsQuery) -> Result<Vec<AuditEvent>> {
+        let mut params: Vec<(&str, String)> = Vec::new();
+        if let Some(limit) = query.limit {
+            params.push(("limit", limit.to_string()));
+        }
+        if let Some(ref path) = query.path {
+            params.push(("path", path.clone()));
+        }
+        if let Some(ref event_type) = query.event_type {
+            params.push(("type", event_type.clone()));
+        }
+
+        let resp = self
+            .client
+            .get(format!("{}/api/v1/events", self.base_url))
+            .query(&params)
+            .send()
+            .await?;
+
+        self.handle_response(resp).await
     }
 
     async fn handle_response<T: serde::de::DeserializeOwned>(

@@ -1,4 +1,5 @@
 use fs9_sdk::{FileInfo, FileType, FsStats, OpenFlags};
+use fs9_server::audit;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
@@ -283,4 +284,42 @@ pub struct HealthResponse {
 pub struct UploadResponse {
     pub path: String,
     pub bytes_written: usize,
+}
+
+// ============================================================================
+// Audit event models
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct EventsQuery {
+    #[serde(default = "default_events_limit")]
+    pub limit: usize,
+    pub path: Option<String>,
+    #[serde(rename = "type")]
+    pub event_type: Option<String>,
+}
+
+fn default_events_limit() -> usize {
+    100
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuditEventResponse {
+    pub timestamp: u64,
+    pub event_type: String,
+    pub path: String,
+    pub user: String,
+    pub count: u64,
+}
+
+impl From<audit::AuditEvent> for AuditEventResponse {
+    fn from(e: audit::AuditEvent) -> Self {
+        Self {
+            timestamp: e.timestamp,
+            event_type: e.event_type.to_string(),
+            path: e.path,
+            user: e.user,
+            count: e.count,
+        }
+    }
 }

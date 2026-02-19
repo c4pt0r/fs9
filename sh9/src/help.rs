@@ -116,6 +116,16 @@ pub const COMMANDS: &[CommandHelp] = &[
         options: &[],
     },
     CommandHelp {
+        name: "events",
+        summary: "List filesystem audit events",
+        usage: "events [-n LIMIT] [-p PATH] [-t TYPE]",
+        options: &[
+            ("-n LIMIT", "Maximum number of events (default 100)"),
+            ("-p PATH", "Filter by path prefix"),
+            ("-t TYPE", "Filter by event type (create, write, delete, mkdir, rename, chmod, truncate, upload)"),
+        ],
+    },
+    CommandHelp {
         name: "exit",
         summary: "Exit the shell",
         usage: "exit [CODE]",
@@ -443,6 +453,12 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Upload files from local filesystem to FS9",
         usage: "upload [-r] LOCAL_PATH FS9_PATH",
         options: &[("-r", "Recursively upload directories")],
+    },
+    CommandHelp {
+        name: "ver",
+        summary: "Display sh9 version information",
+        usage: "ver",
+        options: &[],
     },
     CommandHelp {
         name: "wait",

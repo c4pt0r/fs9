@@ -375,6 +375,22 @@ pub(crate) struct ErrorResponse {
     pub code: u16,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEvent {
+    pub timestamp: u64,
+    pub event_type: String,
+    pub path: String,
+    pub user: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct EventsQuery {
+    pub limit: Option<usize>,
+    pub path: Option<String>,
+    pub event_type: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PluginInfo {
     pub name: String,

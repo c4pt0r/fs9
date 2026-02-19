@@ -38,6 +38,7 @@ fn api_v1_routes(write_body_limit: usize) -> Router<Arc<AppState>> {
         .route("/remove", delete(handlers::remove))
         .route("/capabilities", get(handlers::capabilities))
         .route("/mounts", get(handlers::list_mounts))
+        .route("/events", get(handlers::events))
 }
 
 pub fn create_router(

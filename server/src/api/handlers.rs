@@ -15,6 +15,7 @@ use crate::auth::RequestContext;
 use crate::meta_client::MetaClient;
 use crate::namespace::Namespace;
 use crate::state::AppState;
+use fs9_server::audit::EventType;
 
 pub type AppResult<T> = Result<T, AppError>;
 
@@ -43,7 +44,8 @@ impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         match self {
             Self::Fs(e) => {
-                let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                let status = StatusCode::from_u16(e.http_status())
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
                 let body = Json(ErrorResponse {
                     error: e.to_string(),
                     code: e.http_status(),
@@ -101,9 +103,10 @@ async fn resolve_ns(state: &AppState, ctx: &RequestContext) -> Result<Arc<Namesp
     }
 
     // Slow path: try to load from meta
-    let meta_client = state.meta_client.as_ref().ok_or_else(|| {
-        AppError::forbidden("Namespace not found or access denied")
-    })?;
+    let meta_client = state
+        .meta_client
+        .as_ref()
+        .ok_or_else(|| AppError::forbidden("Namespace not found or access denied"))?;
 
     // Try to get namespace from meta
     let needs_provision = match meta_client.get_namespace(&ctx.ns).await {
@@ -210,10 +213,7 @@ async fn load_mounts_from_meta(
             for mount in mounts {
                 let mut config: serde_json::Value = mount.config.clone();
                 if let Some(obj) = config.as_object_mut() {
-                    obj.insert(
-                        "ns".to_string(),
-                        serde_json::json!(ns_name),
-                    );
+                    obj.insert("ns".to_string(), serde_json::json!(ns_name));
                 }
                 let config_json = serde_json::to_string(&config).unwrap_or_default();
 
@@ -276,7 +276,17 @@ pub async fn wstat(
     Json(req): Json<WstatRequest>,
 ) -> AppResult<StatusCode> {
     let ns = resolve_ns(&state, &ctx).await?;
+    let event_type = if req.changes.name.is_some() {
+        EventType::Rename
+    } else if req.changes.size.is_some() {
+        EventType::Truncate
+    } else if req.changes.mode.is_some() {
+        EventType::Chmod
+    } else {
+        EventType::Chmod
+    };
     ns.vfs.wstat(&req.path, req.changes.into()).await?;
+    ns.audit_log.record(event_type, &req.path, &ctx.user_id);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -296,10 +306,22 @@ pub async fn open(
     Json(req): Json<OpenRequest>,
 ) -> AppResult<Json<OpenResponse>> {
     let ns = resolve_ns(&state, &ctx).await?;
-    let (handle, metadata) = ns.vfs.open(&req.path, req.flags.into()).await?;
+    let flags: OpenFlags = req.flags.into();
+    let is_create = flags.create;
+    let is_directory = flags.directory;
+    let (handle, metadata) = ns.vfs.open(&req.path, flags).await?;
 
     let handle_id = handle.id();
     ns.handle_map.write().await.insert(handle_id);
+
+    if is_create {
+        let event_type = if is_directory {
+            EventType::Mkdir
+        } else {
+            EventType::Create
+        };
+        ns.audit_log.record(event_type, &req.path, &ctx.user_id);
+    }
 
     Ok(Json(OpenResponse {
         handle_id: handle_id.to_string(),
@@ -352,7 +374,10 @@ pub async fn read(
                         return None;
                     }
                     offset += data.len() as u64;
-                    Some((Ok::<_, std::io::Error>(data), (vfs, handle, offset, end_offset)))
+                    Some((
+                        Ok::<_, std::io::Error>(data),
+                        (vfs, handle, offset, end_offset),
+                    ))
                 }
                 Err(_) => None,
             }
@@ -475,10 +500,16 @@ pub async fn download(
     let file_size = info.size;
 
     // Open for reading
-    let (handle, _metadata) = ns.vfs.open(&query.path, OpenFlags {
-        read: true,
-        ..Default::default()
-    }).await?;
+    let (handle, _metadata) = ns
+        .vfs
+        .open(
+            &query.path,
+            OpenFlags {
+                read: true,
+                ..Default::default()
+            },
+        )
+        .await?;
     let handle_id = handle.id();
     ns.handle_map.write().await.insert(handle_id);
 
@@ -530,7 +561,10 @@ pub async fn download(
                         return None;
                     }
                     let new_offset = offset + data.len() as u64;
-                    Some((Ok::<_, std::io::Error>(data), (vfs, handle, new_offset, end_off)))
+                    Some((
+                        Ok::<_, std::io::Error>(data),
+                        (vfs, handle, new_offset, end_off),
+                    ))
                 }
                 Err(_) => None,
             }
@@ -539,16 +573,22 @@ pub async fn download(
 
     // Wrap the stream to close handle when done
     let cleanup_handle_id = handle_id;
-    let body_stream = body_stream.chain(stream::once(async move {
-        // Cleanup: close handle after streaming completes
-        handle_map.write().await.remove(&cleanup_handle_id.to_string());
-        let _ = vfs_close.close(Handle::new(cleanup_handle_id), false).await;
-        // Yield nothing — this is just cleanup
-        Ok::<Bytes, std::io::Error>(Bytes::new())
-    }).filter(|r| {
-        let is_empty = matches!(r, Ok(b) if b.is_empty());
-        async move { !is_empty }
-    }));
+    let body_stream = body_stream.chain(
+        stream::once(async move {
+            // Cleanup: close handle after streaming completes
+            handle_map
+                .write()
+                .await
+                .remove(&cleanup_handle_id.to_string());
+            let _ = vfs_close.close(Handle::new(cleanup_handle_id), false).await;
+            // Yield nothing — this is just cleanup
+            Ok::<Bytes, std::io::Error>(Bytes::new())
+        })
+        .filter(|r| {
+            let is_empty = matches!(r, Ok(b) if b.is_empty());
+            async move { !is_empty }
+        }),
+    );
 
     let mut builder = Response::builder()
         .status(status)
@@ -577,13 +617,19 @@ pub async fn upload(
     let ns = resolve_ns(&state, &ctx).await?;
 
     // Open for create+truncate+write
-    let (handle, _metadata) = ns.vfs.open(&query.path, OpenFlags {
-        read: true,
-        write: true,
-        create: true,
-        truncate: true,
-        ..Default::default()
-    }).await?;
+    let (handle, _metadata) = ns
+        .vfs
+        .open(
+            &query.path,
+            OpenFlags {
+                read: true,
+                write: true,
+                create: true,
+                truncate: true,
+                ..Default::default()
+            },
+        )
+        .await?;
     let handle_id = handle.id();
     ns.handle_map.write().await.insert(handle_id);
 
@@ -610,6 +656,9 @@ pub async fn upload(
     ns.handle_map.write().await.remove(&handle_id.to_string());
     ns.vfs.close(Handle::new(handle_id), true).await?;
 
+    ns.audit_log
+        .record(EventType::Upload, &query.path, &ctx.user_id);
+
     Ok(Json(UploadResponse {
         path: query.path,
         bytes_written: total_written,
@@ -633,6 +682,8 @@ pub async fn remove(
 ) -> AppResult<StatusCode> {
     let ns = resolve_ns(&state, &ctx).await?;
     ns.vfs.remove(&query.path).await?;
+    ns.audit_log
+        .record(EventType::Delete, &query.path, &ctx.user_id);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -647,16 +698,36 @@ pub async fn capabilities(
     match info {
         Some((mount, caps)) => {
             let mut cap_list = Vec::new();
-            if caps.supports_read() { cap_list.push("read".to_string()); }
-            if caps.supports_write() { cap_list.push("write".to_string()); }
-            if caps.supports_create() { cap_list.push("create".to_string()); }
-            if caps.supports_delete() { cap_list.push("delete".to_string()); }
-            if caps.supports_rename() { cap_list.push("rename".to_string()); }
-            if caps.supports_truncate() { cap_list.push("truncate".to_string()); }
-            if caps.supports_chmod() { cap_list.push("chmod".to_string()); }
-            if caps.supports_chown() { cap_list.push("chown".to_string()); }
-            if caps.supports_symlink() { cap_list.push("symlink".to_string()); }
-            if caps.supports_directories() { cap_list.push("directory".to_string()); }
+            if caps.supports_read() {
+                cap_list.push("read".to_string());
+            }
+            if caps.supports_write() {
+                cap_list.push("write".to_string());
+            }
+            if caps.supports_create() {
+                cap_list.push("create".to_string());
+            }
+            if caps.supports_delete() {
+                cap_list.push("delete".to_string());
+            }
+            if caps.supports_rename() {
+                cap_list.push("rename".to_string());
+            }
+            if caps.supports_truncate() {
+                cap_list.push("truncate".to_string());
+            }
+            if caps.supports_chmod() {
+                cap_list.push("chmod".to_string());
+            }
+            if caps.supports_chown() {
+                cap_list.push("chown".to_string());
+            }
+            if caps.supports_symlink() {
+                cap_list.push("symlink".to_string());
+            }
+            if caps.supports_directories() {
+                cap_list.push("directory".to_string());
+            }
 
             Ok(Json(CapabilitiesResponse {
                 capabilities: cap_list,
@@ -682,6 +753,26 @@ pub async fn list_mounts(
             })
             .collect(),
     ))
+}
+
+pub async fn events(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<RequestContext>,
+    Query(query): Query<EventsQuery>,
+) -> AppResult<Json<Vec<AuditEventResponse>>> {
+    let ns = resolve_ns(&state, &ctx).await?;
+    let type_filter = query
+        .event_type
+        .as_deref()
+        .map(|s| s.parse::<fs9_server::audit::EventType>())
+        .transpose()
+        .map_err(|e| AppError::BadRequest(e))?;
+
+    let events = ns
+        .audit_log
+        .query(query.limit, query.path.as_deref(), type_filter);
+
+    Ok(Json(events.into_iter().map(Into::into).collect()))
 }
 
 pub async fn health() -> Json<HealthResponse> {
@@ -754,7 +845,8 @@ pub async fn refresh_token(
         .ns
         .clone()
         .ok_or_else(|| AppError::Unauthorized("Token missing required 'ns' claim".to_string()))?;
-    let new_claims = Claims::with_namespace(&old_claims.sub, &ns, old_claims.roles.clone(), ttl_secs);
+    let new_claims =
+        Claims::with_namespace(&old_claims.sub, &ns, old_claims.roles.clone(), ttl_secs);
     let new_token = config
         .encode(&new_claims)
         .map_err(|e| AppError::BadRequest(format!("Failed to generate token: {}", e)))?;
@@ -805,7 +897,11 @@ pub async fn create_namespace(
 ) -> AppResult<impl IntoResponse> {
     require_role(&ctx, &["admin"])?;
 
-    match state.namespace_manager.create(&req.name, &ctx.user_id).await {
+    match state
+        .namespace_manager
+        .create(&req.name, &ctx.user_id)
+        .await
+    {
         Ok(_ns) => {
             let info = state.namespace_manager.get_info(&req.name).await.unwrap();
             Ok((

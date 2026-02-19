@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
+use crate::audit::AuditLog;
 use crate::state::HandleMap;
 
 const HANDLE_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
@@ -16,6 +17,7 @@ pub struct Namespace {
     pub mount_table: Arc<MountTable>,
     pub handle_registry: Arc<HandleRegistry>,
     pub handle_map: Arc<RwLock<HandleMap>>,
+    pub audit_log: Arc<AuditLog>,
     #[allow(dead_code)]
     cleanup_task: tokio::task::JoinHandle<()>,
 }
@@ -34,6 +36,7 @@ impl Namespace {
             mount_table,
             handle_registry,
             handle_map: Arc::new(RwLock::new(HandleMap::new())),
+            audit_log: Arc::new(AuditLog::default()),
             cleanup_task,
         }
     }

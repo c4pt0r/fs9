@@ -13,7 +13,7 @@ impl Shell {
         match name {
             "true" | "false" | "exit" | "export" | "set" | "unset" | "env" | "local" | "alias"
             | "unalias" | "source" | "." | "sleep" | "jobs" | "fg" | "bg" | "kill" | "wait"
-            | "help" | "http" | "upload" | "download" | "[" | "test" | ":" => {
+            | "help" | "http" | "upload" | "download" | "[" | "test" | ":" | "ver" | "events" => {
                 Some(self.dispatch_shell_builtin(name, args, ctx).await)
             }
             _ => None,
@@ -50,6 +50,8 @@ impl Shell {
             "upload" => self.cmd_upload(args, ctx).await,
             "download" => self.cmd_download(args, ctx).await,
             "[" | "test" => self.execute_test(args, ctx).await,
+            "ver" => self.cmd_ver(ctx),
+            "events" => self.cmd_events(args, ctx).await,
             _ => unreachable!(),
         }
     }
@@ -354,6 +356,81 @@ impl Shell {
                 .map_err(Sh9Error::Io)?;
         }
         Ok(0)
+    }
+
+    fn cmd_ver(&mut self, ctx: &mut ExecContext) -> Sh9Result<i32> {
+        let version = env!("CARGO_PKG_VERSION");
+        let line = format!("sh9 {}\n", version);
+        ctx.stdout.write(line.as_bytes()).map_err(Sh9Error::Io)?;
+        Ok(0)
+    }
+
+    async fn cmd_events(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
+        let mut limit: Option<usize> = None;
+        let mut path: Option<String> = None;
+        let mut event_type: Option<String> = None;
+
+        let mut i = 0;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-n" | "--limit" => {
+                    if i + 1 < args.len() {
+                        limit = args[i + 1].parse().ok();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "-p" | "--path" => {
+                    if i + 1 < args.len() {
+                        path = Some(self.resolve_path(&args[i + 1]));
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "-t" | "--type" => {
+                    if i + 1 < args.len() {
+                        event_type = Some(args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => i += 1,
+            }
+        }
+
+        if let Some(client) = &self.client {
+            let query = fs9_client::EventsQuery {
+                limit,
+                path,
+                event_type,
+            };
+            match client.events(&query).await {
+                Ok(events) => {
+                    if events.is_empty() {
+                        ctx.stdout.writeln("No events").map_err(Sh9Error::Io)?;
+                    } else {
+                        for e in &events {
+                            let line = format!(
+                                "{} {:>8} {} ({}x) by {}",
+                                e.timestamp, e.event_type, e.path, e.count, e.user
+                            );
+                            ctx.stdout.writeln(&line).map_err(Sh9Error::Io)?;
+                        }
+                    }
+                    Ok(0)
+                }
+                Err(e) => {
+                    ctx.write_err(&format!("events: {}", e));
+                    Ok(1)
+                }
+            }
+        } else {
+            ctx.write_err("events: not connected to FS9 server");
+            Ok(1)
+        }
     }
 
     pub(crate) async fn execute_http(
