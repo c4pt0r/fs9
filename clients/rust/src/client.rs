@@ -437,6 +437,9 @@ impl Fs9Client {
         if let Some(limit) = query.limit {
             params.push(("limit", limit.to_string()));
         }
+        if let Some(offset) = query.offset {
+            params.push(("offset", offset.to_string()));
+        }
         if let Some(ref path) = query.path {
             params.push(("path", path.clone()));
         }

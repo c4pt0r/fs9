@@ -770,7 +770,7 @@ pub async fn events(
 
     let events = ns
         .audit_log
-        .query(query.limit, query.path.as_deref(), type_filter);
+        .query(query.limit, query.offset, query.path.as_deref(), type_filter);
 
     Ok(Json(events.into_iter().map(Into::into).collect()))
 }

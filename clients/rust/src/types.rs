@@ -387,6 +387,7 @@ pub struct AuditEvent {
 #[derive(Debug, Default)]
 pub struct EventsQuery {
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
     pub path: Option<String>,
     pub event_type: Option<String>,
 }

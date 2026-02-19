@@ -294,6 +294,8 @@ pub struct UploadResponse {
 pub struct EventsQuery {
     #[serde(default = "default_events_limit")]
     pub limit: usize,
+    #[serde(default)]
+    pub offset: usize,
     pub path: Option<String>,
     #[serde(rename = "type")]
     pub event_type: Option<String>,

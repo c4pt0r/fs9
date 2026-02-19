@@ -367,6 +367,7 @@ impl Shell {
 
     async fn cmd_events(&mut self, args: &[String], ctx: &mut ExecContext) -> Sh9Result<i32> {
         let mut limit: Option<usize> = None;
+        let mut offset: Option<usize> = None;
         let mut path: Option<String> = None;
         let mut event_type: Option<String> = None;
 
@@ -376,6 +377,14 @@ impl Shell {
                 "-n" | "--limit" => {
                     if i + 1 < args.len() {
                         limit = args[i + 1].parse().ok();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "-o" | "--offset" => {
+                    if i + 1 < args.len() {
+                        offset = args[i + 1].parse().ok();
                         i += 2;
                     } else {
                         i += 1;
@@ -404,6 +413,7 @@ impl Shell {
         if let Some(client) = &self.client {
             let query = fs9_client::EventsQuery {
                 limit,
+                offset,
                 path,
                 event_type,
             };

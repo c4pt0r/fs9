@@ -143,6 +143,7 @@ impl AuditLog {
     pub fn query(
         &self,
         limit: usize,
+        offset: usize,
         path_filter: Option<&str>,
         type_filter: Option<EventType>,
     ) -> Vec<AuditEvent> {
@@ -165,6 +166,7 @@ impl AuditLog {
                 }
                 true
             })
+            .skip(offset)
             .take(limit)
             .cloned()
             .collect()
@@ -196,7 +198,7 @@ mod tests {
         log.record(EventType::Create, "/foo.txt", "alice");
         log.record(EventType::Write, "/bar.txt", "bob");
 
-        let events = log.query(10, None, None);
+        let events = log.query(10, 0, None, None);
         assert_eq!(events.len(), 2);
         // Newest first
         assert_eq!(events[0].path, "/bar.txt");
@@ -206,12 +208,11 @@ mod tests {
     #[test]
     fn dedup_within_window() {
         let log = AuditLog::new(10);
-        // Same path, same type, same user, within 1 second → dedup
         log.record(EventType::Write, "/foo.txt", "alice");
         log.record(EventType::Write, "/foo.txt", "alice");
         log.record(EventType::Write, "/foo.txt", "alice");
 
-        let events = log.query(10, None, None);
+        let events = log.query(10, 0, None, None);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].count, 3);
     }
@@ -222,7 +223,7 @@ mod tests {
         log.record(EventType::Write, "/foo.txt", "alice");
         log.record(EventType::Write, "/bar.txt", "alice");
 
-        let events = log.query(10, None, None);
+        let events = log.query(10, 0, None, None);
         assert_eq!(events.len(), 2);
     }
 
@@ -234,9 +235,8 @@ mod tests {
         log.record(EventType::Create, "/c", "u");
         log.record(EventType::Create, "/d", "u");
 
-        let events = log.query(10, None, None);
+        let events = log.query(10, 0, None, None);
         assert_eq!(events.len(), 3);
-        // Oldest (/a) should have been evicted
         assert_eq!(events[0].path, "/d");
         assert_eq!(events[2].path, "/b");
     }
@@ -248,7 +248,7 @@ mod tests {
         log.record(EventType::Create, "/other/b.txt", "u");
         log.record(EventType::Create, "/dir/c.txt", "u");
 
-        let events = log.query(10, Some("/dir/"), None);
+        let events = log.query(10, 0, Some("/dir/"), None);
         assert_eq!(events.len(), 2);
     }
 
@@ -259,7 +259,7 @@ mod tests {
         log.record(EventType::Write, "/b", "u");
         log.record(EventType::Delete, "/c", "u");
 
-        let events = log.query(10, None, Some(EventType::Write));
+        let events = log.query(10, 0, None, Some(EventType::Write));
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].path, "/b");
     }
