@@ -60,7 +60,13 @@ pub struct MountInfo {
 #[derive(Debug, Deserialize)]
 pub struct NamespaceInfo {
     pub name: String,
+    /// fs9-meta does not return a status field; default to "active"
+    #[serde(default = "default_status_active")]
     pub status: String,
+}
+
+fn default_status_active() -> String {
+    "active".to_string()
 }
 
 /// Error type for meta client operations.
@@ -158,7 +164,7 @@ impl MetaClient {
 
     /// Fetch a namespace's info from meta service.
     pub async fn get_namespace(&self, name: &str) -> Result<NamespaceInfo, MetaClientError> {
-        let url = format!("{}/api/v1/namespaces/{}", self.base_url, name);
+        let url = format!("{}/api/v1/admin/namespaces/{}", self.base_url, name);
         let mut req = self.client.get(&url);
         if let Some(key) = &self.admin_key {
             req = req.header("x-fs9-meta-key", key);
@@ -200,7 +206,7 @@ impl MetaClient {
 
     /// Create a namespace in the meta service.
     pub async fn create_namespace(&self, name: &str) -> Result<NamespaceInfo, MetaClientError> {
-        let url = format!("{}/api/v1/namespaces", self.base_url);
+        let url = format!("{}/api/v1/admin/namespaces", self.base_url);
         let body = serde_json::json!({ "name": name });
         let mut req = self.client.post(&url).json(&body);
         if let Some(key) = &self.admin_key {

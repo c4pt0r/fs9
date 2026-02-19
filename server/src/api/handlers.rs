@@ -130,49 +130,72 @@ async fn resolve_ns(state: &AppState, ctx: &RequestContext) -> Result<Arc<Namesp
     // Create namespace locally
     let ns = state.namespace_manager.get_or_create(&ctx.ns).await;
 
-    // Fetch and apply mounts from meta
-    load_mounts_from_meta(state, meta_client, &ns, &ctx.ns).await;
+    // Apply pagefs mount directly from default_pagefs config.
+    // fs9-meta does not expose a mounts API; the pagefs backend is always
+    // derived from the server's own default_pagefs configuration.
+    if let Some(pagefs_cfg) = &state.default_pagefs {
+        apply_pagefs_mount(state, &ns, &ctx.ns, pagefs_cfg).await;
+    } else {
+        // Non-pagefs setups: try to load mounts from meta (best-effort).
+        load_mounts_from_meta(state, meta_client, &ns, &ctx.ns).await;
+    }
 
     Ok(ns)
 }
 
-/// Auto-provision a namespace and pagefs mount in fs9-meta for a db9 tenant.
+/// Auto-provision a namespace in fs9-meta for a db9 tenant.
+/// The pagefs mount is applied directly in-process via apply_pagefs_mount;
+/// fs9-meta does not expose a mounts API.
 async fn auto_provision_namespace(
-    state: &AppState,
+    _state: &AppState,
     meta_client: &MetaClient,
     tenant_id: &str,
 ) -> Result<(), AppError> {
-    let pagefs_config = state.default_pagefs.as_ref().unwrap();
-    let keyspace = format!("{}{}", pagefs_config.keyspace_prefix, tenant_id);
+    tracing::info!(ns = %tenant_id, "Auto-provisioning namespace for db9 tenant");
 
-    tracing::info!(ns = %tenant_id, keyspace = %keyspace, "Auto-provisioning namespace for db9 tenant");
-
-    // Create namespace in meta
+    // Create namespace in meta (best-effort — may already exist).
     if let Err(e) = meta_client.create_namespace(tenant_id).await {
         tracing::warn!(ns = %tenant_id, error = %e, "Failed to create namespace in meta (may already exist)");
     }
 
-    // Build pagefs mount config with explicit keyspace
+    Ok(())
+}
+
+/// Apply the default pagefs mount directly to a namespace.
+/// This is used instead of loading mounts from fs9-meta (which has no mounts API).
+async fn apply_pagefs_mount(
+    state: &AppState,
+    ns: &Arc<Namespace>,
+    ns_name: &str,
+    pagefs_cfg: &fs9_config::DefaultPagefsConfig,
+) {
+    let keyspace = format!("{}{}", pagefs_cfg.keyspace_prefix, ns_name);
     let mount_config = serde_json::json!({
         "backend": {
             "type": "tikv",
-            "pd_endpoints": pagefs_config.pd_endpoints,
-            "ca_path": pagefs_config.ca_path,
-            "cert_path": pagefs_config.cert_path,
-            "key_path": pagefs_config.key_path,
+            "pd_endpoints": pagefs_cfg.pd_endpoints,
+            "ca_path": pagefs_cfg.ca_path,
+            "cert_path": pagefs_cfg.cert_path,
+            "key_path": pagefs_cfg.key_path,
             "keyspace": keyspace,
-        }
+        },
+        "ns": ns_name,
     });
+    let config_json = serde_json::to_string(&mount_config).unwrap_or_default();
 
-    // Create mount in meta
-    if let Err(e) = meta_client
-        .create_mount(tenant_id, "/", "pagefs", &mount_config)
-        .await
-    {
-        tracing::warn!(ns = %tenant_id, error = %e, "Failed to create mount in meta (may already exist)");
+    match state.plugin_manager.create_provider("pagefs", &config_json) {
+        Ok(p) => {
+            let provider: Arc<dyn fs9_sdk::FsProvider> = Arc::new(p);
+            if let Err(e) = ns.mount_table.mount("/", "pagefs", provider).await {
+                tracing::error!(ns = %ns_name, error = %e, "Failed to mount pagefs");
+            } else {
+                tracing::info!(ns = %ns_name, keyspace = %keyspace, "Mounted pagefs from default config");
+            }
+        }
+        Err(e) => {
+            tracing::error!(ns = %ns_name, error = %e, "Failed to create pagefs provider");
+        }
     }
-
-    Ok(())
 }
 
 /// Load mounts from meta and mount them into the namespace.
