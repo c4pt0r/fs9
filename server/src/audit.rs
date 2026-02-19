@@ -72,7 +72,7 @@ pub struct AuditEvent {
 }
 
 /// Default maximum number of events to retain per namespace.
-pub const DEFAULT_MAX_EVENTS: usize = 1000;
+pub const DEFAULT_MAX_EVENTS: usize = 100_000;
 
 /// Duration of the dedup window in seconds.
 const DEDUP_WINDOW_SECS: u64 = 1;
