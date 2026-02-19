@@ -1,0 +1,64 @@
+# FS9 Meta Service (Rust) with PostgreSQL support
+# Cross-compile from x86_64 to arm64 (EKS nodes are arm64)
+
+# --- Build Stage ---
+FROM --platform=linux/amd64 rust:1.85-bookworm AS builder
+
+RUN dpkg --add-architecture arm64 && \
+    apt-get update && apt-get install -y \
+    gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+    libc6-dev-arm64-cross \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add aarch64-unknown-linux-gnu
+
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
+
+WORKDIR /build
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY sdk/ sdk/
+COPY sdk-ffi/ sdk-ffi/
+COPY core/ core/
+COPY config/ config/
+COPY server/ server/
+COPY plugins/ plugins/
+COPY clients/ clients/
+COPY tests/ tests/
+COPY sh9/ sh9/
+COPY cli/ cli/
+COPY fuse/ fuse/
+COPY meta/ meta/
+
+# Build meta with postgres feature (disable default sqlite)
+RUN cargo build --release --target aarch64-unknown-linux-gnu \
+    -p fs9-meta --no-default-features --features postgres
+
+# --- Runtime Stage ---
+FROM --platform=linux/arm64 debian:bookworm-slim
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy meta binary
+COPY --from=builder /build/target/aarch64-unknown-linux-gnu/release/fs9-meta /app/
+
+# Environment
+ENV FS9_META_HOST=0.0.0.0
+ENV FS9_META_PORT=9998
+ENV RUST_LOG=info
+
+EXPOSE 9998
+
+CMD ["/app/fs9-meta"]
