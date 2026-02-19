@@ -109,8 +109,16 @@ impl From<StatChanges> for StatChangesRequest {
             uid: changes.uid,
             gid: changes.gid,
             size: changes.size,
-            atime: changes.atime.map(|t| t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)),
-            mtime: changes.mtime.map(|t| t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)),
+            atime: changes.atime.map(|t| {
+                t.duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            }),
+            mtime: changes.mtime.map(|t| {
+                t.duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            }),
             name: changes.name,
             symlink_target: changes.symlink_target,
         }
@@ -254,7 +262,10 @@ impl ProxyFs {
             501 => FsError::not_implemented(message),
             503 => FsError::backend_unavailable(&self.upstream_url),
             504 => FsError::timeout(DEFAULT_TIMEOUT),
-            508 => FsError::TooManyHops { depth: self.hop_count + 1, max: self.max_hops },
+            508 => FsError::TooManyHops {
+                depth: self.hop_count + 1,
+                max: self.max_hops,
+            },
             _ => FsError::Remote {
                 node: self.upstream_url.clone(),
                 message: message.to_string(),
@@ -528,14 +539,21 @@ mod tests {
 
     #[test]
     fn hop_limit_exceeded() {
-        let proxy = ProxyFs::new("http://localhost:3000").with_hop_count(10).with_max_hops(8);
+        let proxy = ProxyFs::new("http://localhost:3000")
+            .with_hop_count(10)
+            .with_max_hops(8);
         let result = proxy.check_hop_limit();
-        assert!(matches!(result, Err(FsError::TooManyHops { depth: 10, max: 8 })));
+        assert!(matches!(
+            result,
+            Err(FsError::TooManyHops { depth: 10, max: 8 })
+        ));
     }
 
     #[test]
     fn hop_limit_ok() {
-        let proxy = ProxyFs::new("http://localhost:3000").with_hop_count(5).with_max_hops(8);
+        let proxy = ProxyFs::new("http://localhost:3000")
+            .with_hop_count(5)
+            .with_max_hops(8);
         assert!(proxy.check_hop_limit().is_ok());
     }
 

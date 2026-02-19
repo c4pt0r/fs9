@@ -87,7 +87,12 @@ impl AppState {
         db9_client: Option<Db9Client>,
         default_pagefs: Option<DefaultPagefsConfig>,
     ) -> Self {
-        Self::with_options(Duration::from_secs(300), meta_client, db9_client, default_pagefs)
+        Self::with_options(
+            Duration::from_secs(300),
+            meta_client,
+            db9_client,
+            default_pagefs,
+        )
     }
 
     #[must_use]
@@ -125,7 +130,9 @@ impl AppState {
 
     /// Get the default namespace, creating it if needed.
     pub async fn default_namespace(&self) -> Arc<Namespace> {
-        self.namespace_manager.get_or_create(DEFAULT_NAMESPACE).await
+        self.namespace_manager
+            .get_or_create(DEFAULT_NAMESPACE)
+            .await
     }
 }
 

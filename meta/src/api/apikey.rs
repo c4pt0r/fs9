@@ -6,7 +6,9 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 
-use crate::db::models::{ApiKeyResponse, CreateApiKeyRequest, CreateApiKeyResponse, ValidateApiKeyRequest};
+use crate::db::models::{
+    ApiKeyResponse, CreateApiKeyRequest, CreateApiKeyResponse, ValidateApiKeyRequest,
+};
 use crate::error::MetaError;
 use crate::AppState;
 
@@ -57,7 +59,8 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<ApiKeyRespon
     let mut responses = Vec::new();
     for key in keys {
         // Resolve namespace name
-        let namespace = if let Some(ns) = state.store.get_namespace_by_id(&key.namespace_id).await? {
+        let namespace = if let Some(ns) = state.store.get_namespace_by_id(&key.namespace_id).await?
+        {
             ns.name
         } else {
             key.namespace_id.clone()
@@ -93,11 +96,12 @@ pub async fn validate(
             let _ = state.store.touch_api_key(&key.id).await;
 
             // Resolve namespace name
-            let namespace = if let Some(ns) = state.store.get_namespace_by_id(&key.namespace_id).await? {
-                ns.name
-            } else {
-                key.namespace_id.clone()
-            };
+            let namespace =
+                if let Some(ns) = state.store.get_namespace_by_id(&key.namespace_id).await? {
+                    ns.name
+                } else {
+                    key.namespace_id.clone()
+                };
 
             let roles: Vec<String> = serde_json::from_str(&key.roles).unwrap_or_default();
 

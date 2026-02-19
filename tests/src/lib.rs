@@ -95,10 +95,7 @@ async fn start_server_once() -> String {
 }
 
 pub async fn get_server_url() -> String {
-    TEST_SERVER_URL
-        .get_or_init(start_server_once)
-        .await
-        .clone()
+    TEST_SERVER_URL.get_or_init(start_server_once).await.clone()
 }
 
 pub fn generate_test_path(prefix: &str) -> String {

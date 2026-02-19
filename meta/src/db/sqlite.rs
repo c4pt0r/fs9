@@ -883,7 +883,13 @@ mod tests {
 
         // Create mount
         let mount = store
-            .create_mount(&ns.id, "/data", "pagefs", Some(serde_json::json!({"uid": 1000})), "admin")
+            .create_mount(
+                &ns.id,
+                "/data",
+                "pagefs",
+                Some(serde_json::json!({"uid": 1000})),
+                "admin",
+            )
             .await
             .unwrap();
         assert_eq!(mount.path, "/data");
@@ -958,7 +964,10 @@ mod tests {
         assert_eq!(ns_roles, vec!["operator"]);
 
         // Revoke role
-        store.revoke_role(&user.id, &ns.id, "operator").await.unwrap();
+        store
+            .revoke_role(&user.id, &ns.id, "operator")
+            .await
+            .unwrap();
         let roles_after = store.get_user_roles(&user.id).await.unwrap();
         assert!(roles_after.is_empty());
     }

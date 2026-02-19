@@ -66,7 +66,8 @@ pub struct Db9Client {
     /// Negative cache: failed token hash → () (30s TTL)
     neg_cache: Cache<String, ()>,
     /// In-flight request coalescing: token hash → broadcast sender
-    in_flight: Arc<Mutex<HashMap<String, tokio::sync::broadcast::Sender<Result<CachedAuth, String>>>>>,
+    in_flight:
+        Arc<Mutex<HashMap<String, tokio::sync::broadcast::Sender<Result<CachedAuth, String>>>>>,
     /// Semaphore to limit concurrent backend validation calls
     backend_semaphore: Arc<Semaphore>,
 }

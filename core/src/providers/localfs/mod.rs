@@ -68,7 +68,11 @@ impl LocalFs {
         Ok(full_path)
     }
 
-    fn metadata_to_file_info(path: &str, meta: &fs::Metadata, symlink_target: Option<String>) -> FileInfo {
+    fn metadata_to_file_info(
+        path: &str,
+        meta: &fs::Metadata,
+        symlink_target: Option<String>,
+    ) -> FileInfo {
         let file_type = if meta.is_dir() {
             FileType::Directory
         } else if meta.file_type().is_symlink() {
@@ -91,7 +95,14 @@ impl LocalFs {
             atime,
             mtime,
             ctime,
-            etag: format!("{:x}-{:x}", meta.ino(), mtime.duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)),
+            etag: format!(
+                "{:x}-{:x}",
+                meta.ino(),
+                mtime
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ),
             symlink_target,
         }
     }
@@ -102,8 +113,7 @@ impl FsProvider for LocalFs {
     async fn stat(&self, path: &str) -> FsResult<FileInfo> {
         let full_path = self.resolve_path(path)?;
 
-        let symlink_meta = fs::symlink_metadata(&full_path)
-            .map_err(|e| map_io_error(e, path))?;
+        let symlink_meta = fs::symlink_metadata(&full_path).map_err(|e| map_io_error(e, path))?;
 
         let symlink_target = if symlink_meta.file_type().is_symlink() {
             fs::read_link(&full_path)
@@ -126,8 +136,7 @@ impl FsProvider for LocalFs {
         let full_path = self.resolve_path(path)?;
 
         if let Some(target) = changes.symlink_target {
-            std::os::unix::fs::symlink(&target, &full_path)
-                .map_err(|e| map_io_error(e, path))?;
+            std::os::unix::fs::symlink(&target, &full_path).map_err(|e| map_io_error(e, path))?;
             return Ok(());
         }
 
@@ -168,8 +177,12 @@ impl FsProvider for LocalFs {
 
         if changes.atime.is_some() || changes.mtime.is_some() {
             let meta = fs::metadata(&full_path).map_err(|e| map_io_error(e, path))?;
-            let atime = changes.atime.unwrap_or_else(|| meta.accessed().unwrap_or(UNIX_EPOCH));
-            let mtime = changes.mtime.unwrap_or_else(|| meta.modified().unwrap_or(UNIX_EPOCH));
+            let atime = changes
+                .atime
+                .unwrap_or_else(|| meta.accessed().unwrap_or(UNIX_EPOCH));
+            let mtime = changes
+                .mtime
+                .unwrap_or_else(|| meta.modified().unwrap_or(UNIX_EPOCH));
 
             filetime::set_file_times(
                 &full_path,
@@ -253,7 +266,9 @@ impl FsProvider for LocalFs {
 
         let meta = file.metadata().map_err(|e| map_io_error(e, path))?;
         let symlink_target = if meta.file_type().is_symlink() {
-            fs::read_link(&full_path).ok().map(|p| p.to_string_lossy().to_string())
+            fs::read_link(&full_path)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
         } else {
             None
         };
@@ -346,7 +361,9 @@ impl FsProvider for LocalFs {
             let name = entry.file_name().to_string_lossy().to_string();
             let entry_path = format!("{}/{}", path.trim_end_matches('/'), name);
 
-            let symlink_meta = entry.metadata().map_err(|e| FsError::internal(e.to_string()))?;
+            let symlink_meta = entry
+                .metadata()
+                .map_err(|e| FsError::internal(e.to_string()))?;
             let symlink_target = if symlink_meta.file_type().is_symlink() {
                 fs::read_link(entry.path())
                     .ok()
@@ -355,7 +372,11 @@ impl FsProvider for LocalFs {
                 None
             };
 
-            results.push(Self::metadata_to_file_info(&entry_path, &symlink_meta, symlink_target));
+            results.push(Self::metadata_to_file_info(
+                &entry_path,
+                &symlink_meta,
+                symlink_target,
+            ));
         }
 
         results.sort_by(|a, b| a.path.cmp(&b.path));
@@ -411,8 +432,13 @@ mod tests {
     async fn create_and_read_file() {
         let (_temp, fs) = setup().await;
 
-        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
-        fs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
+        let (handle, _) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
+        fs.write(&handle, 0, Bytes::from("hello world"))
+            .await
+            .unwrap();
         fs.close(handle, true).await.unwrap();
 
         let (handle, _) = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
@@ -436,9 +462,15 @@ mod tests {
         let (_temp, fs) = setup().await;
 
         let _ = fs.open("/dir", OpenFlags::create_dir()).await.unwrap();
-        let (h1, _) = fs.open("/dir/a.txt", OpenFlags::create_file()).await.unwrap();
+        let (h1, _) = fs
+            .open("/dir/a.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         fs.close(h1, false).await.unwrap();
-        let (h2, _) = fs.open("/dir/b.txt", OpenFlags::create_file()).await.unwrap();
+        let (h2, _) = fs
+            .open("/dir/b.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         fs.close(h2, false).await.unwrap();
 
         let entries = fs.readdir("/dir").await.unwrap();
@@ -449,7 +481,10 @@ mod tests {
     async fn remove_file() {
         let (_temp, fs) = setup().await;
 
-        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         fs.close(handle, false).await.unwrap();
 
         fs.remove("/test.txt").await.unwrap();
@@ -464,7 +499,9 @@ mod tests {
         fs.write(&handle, 0, Bytes::from("content")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
-        fs.wstat("/old.txt", StatChanges::rename("new.txt")).await.unwrap();
+        fs.wstat("/old.txt", StatChanges::rename("new.txt"))
+            .await
+            .unwrap();
 
         assert!(fs.stat("/old.txt").await.is_err());
         let info = fs.stat("/new.txt").await.unwrap();
@@ -475,11 +512,18 @@ mod tests {
     async fn truncate_file() {
         let (_temp, fs) = setup().await;
 
-        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
-        fs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
+        let (handle, _) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
+        fs.write(&handle, 0, Bytes::from("hello world"))
+            .await
+            .unwrap();
         fs.close(handle, false).await.unwrap();
 
-        fs.wstat("/test.txt", StatChanges::truncate(5)).await.unwrap();
+        fs.wstat("/test.txt", StatChanges::truncate(5))
+            .await
+            .unwrap();
 
         let info = fs.stat("/test.txt").await.unwrap();
         assert_eq!(info.size, 5);

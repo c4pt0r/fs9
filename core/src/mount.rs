@@ -105,7 +105,8 @@ impl MountTable {
             if mount_path == "/" {
                 return Ok((entry.provider.clone(), path));
             }
-            if path.starts_with(mount_path) && path.as_bytes().get(mount_path.len()) == Some(&b'/') {
+            if path.starts_with(mount_path) && path.as_bytes().get(mount_path.len()) == Some(&b'/')
+            {
                 let relative_path = path[mount_path.len()..].to_string();
                 return Ok((entry.provider.clone(), relative_path));
             }
@@ -131,9 +132,9 @@ impl MountTable {
         let path = Self::normalize_mount_path(path);
         let mounts = self.mounts.read().await;
 
-        mounts.get(&path).map(|e| {
-            (e.mount_point.clone(), e.provider.capabilities())
-        })
+        mounts
+            .get(&path)
+            .map(|e| (e.mount_point.clone(), e.provider.capabilities()))
     }
 
     pub async fn count(&self) -> usize {
@@ -214,9 +215,18 @@ mod tests {
     async fn list_mounts() {
         let table = MountTable::new();
 
-        table.mount("/", "root", Arc::new(MemoryFs::new())).await.unwrap();
-        table.mount("/data", "data", Arc::new(MemoryFs::new())).await.unwrap();
-        table.mount("/cache", "cache", Arc::new(MemoryFs::new())).await.unwrap();
+        table
+            .mount("/", "root", Arc::new(MemoryFs::new()))
+            .await
+            .unwrap();
+        table
+            .mount("/data", "data", Arc::new(MemoryFs::new()))
+            .await
+            .unwrap();
+        table
+            .mount("/cache", "cache", Arc::new(MemoryFs::new()))
+            .await
+            .unwrap();
 
         let mounts = table.list_mounts().await;
         assert_eq!(mounts.len(), 3);
@@ -237,10 +247,22 @@ mod tests {
     async fn deeply_nested_mounts() {
         let table = MountTable::new();
 
-        table.mount("/", "root", Arc::new(MemoryFs::new())).await.unwrap();
-        table.mount("/a", "a", Arc::new(MemoryFs::new())).await.unwrap();
-        table.mount("/a/b", "b", Arc::new(MemoryFs::new())).await.unwrap();
-        table.mount("/a/b/c", "c", Arc::new(MemoryFs::new())).await.unwrap();
+        table
+            .mount("/", "root", Arc::new(MemoryFs::new()))
+            .await
+            .unwrap();
+        table
+            .mount("/a", "a", Arc::new(MemoryFs::new()))
+            .await
+            .unwrap();
+        table
+            .mount("/a/b", "b", Arc::new(MemoryFs::new()))
+            .await
+            .unwrap();
+        table
+            .mount("/a/b/c", "c", Arc::new(MemoryFs::new()))
+            .await
+            .unwrap();
 
         let (_, relative) = table.resolve("/a/b/c/file.txt").await.unwrap();
         assert_eq!(relative, "/file.txt");

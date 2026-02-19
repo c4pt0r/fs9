@@ -87,7 +87,11 @@ async fn main() {
         tracing::info!("Default pagefs config loaded for auto-provisioning");
     }
 
-    let state = Arc::new(state::AppState::with_meta(meta_client, db9_client, default_pagefs));
+    let state = Arc::new(state::AppState::with_meta(
+        meta_client,
+        db9_client,
+        default_pagefs,
+    ));
     let registry = default_registry();
 
     load_plugins(&state, &config);
@@ -111,7 +115,10 @@ async fn main() {
     let request_timeout = Duration::from_secs(config.server.request_timeout_secs.unwrap_or(30));
     let max_concurrent = config.server.max_concurrent_requests.unwrap_or(1000);
     let default_body_limit = config.server.max_body_size_bytes.unwrap_or(2 * 1024 * 1024);
-    let write_body_limit = config.server.max_write_size_bytes.unwrap_or(256 * 1024 * 1024);
+    let write_body_limit = config
+        .server
+        .max_write_size_bytes
+        .unwrap_or(256 * 1024 * 1024);
 
     let rate_limit_state = if config.server.rate_limit.enabled {
         RateLimitState::new(
@@ -283,16 +290,30 @@ async fn setup_mounts(
     config: &Fs9Config,
 ) {
     // All config-defined mounts go into the default namespace.
-    let default_ns = match state.namespace_manager.create(DEFAULT_NAMESPACE, "system").await {
+    let default_ns = match state
+        .namespace_manager
+        .create(DEFAULT_NAMESPACE, "system")
+        .await
+    {
         Ok(ns) => ns,
-        Err(_) => state.namespace_manager.get(DEFAULT_NAMESPACE).await.unwrap(),
+        Err(_) => state
+            .namespace_manager
+            .get(DEFAULT_NAMESPACE)
+            .await
+            .unwrap(),
     };
 
     for mount in &config.mounts {
         let config_json = {
-            let mut cfg = mount.config.clone().unwrap_or(serde_json::Value::Object(Default::default()));
+            let mut cfg = mount
+                .config
+                .clone()
+                .unwrap_or(serde_json::Value::Object(Default::default()));
             if let Some(obj) = cfg.as_object_mut() {
-                obj.insert("ns".to_string(), serde_json::Value::String(DEFAULT_NAMESPACE.to_string()));
+                obj.insert(
+                    "ns".to_string(),
+                    serde_json::Value::String(DEFAULT_NAMESPACE.to_string()),
+                );
             }
             serde_json::to_string(&cfg).unwrap_or_default()
         };
@@ -313,7 +334,10 @@ async fn setup_mounts(
         let provider: Result<Arc<dyn fs9_sdk::FsProvider>, _> = if registry.has(&mount.provider) {
             registry.create(&mount.provider, provider_config)
         } else {
-            match state.plugin_manager.create_provider(&mount.provider, &config_json) {
+            match state
+                .plugin_manager
+                .create_provider(&mount.provider, &config_json)
+            {
                 Ok(p) => Ok(Arc::new(p) as Arc<dyn fs9_sdk::FsProvider>),
                 Err(e) => {
                     tracing::error!(path = %mount.path, provider = %mount.provider, error = %e, "Unknown provider or creation failed");
@@ -324,7 +348,11 @@ async fn setup_mounts(
 
         match provider {
             Ok(p) => {
-                if let Err(e) = default_ns.mount_table.mount(&mount.path, &mount.provider, p).await {
+                if let Err(e) = default_ns
+                    .mount_table
+                    .mount(&mount.path, &mount.provider, p)
+                    .await
+                {
                     tracing::error!(path = %mount.path, error = %e, "Failed to mount");
                 } else {
                     tracing::info!(path = %mount.path, provider = %mount.provider, ns = DEFAULT_NAMESPACE, "Mounted");

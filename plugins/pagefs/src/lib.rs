@@ -317,8 +317,9 @@ pub struct S3KvBackend {
 impl S3KvBackend {
     pub fn new(bucket: String, prefix: String) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        let config =
-            runtime.block_on(aws_config::load_defaults(aws_config::BehaviorVersion::latest()));
+        let config = runtime.block_on(aws_config::load_defaults(
+            aws_config::BehaviorVersion::latest(),
+        ));
         let client = aws_sdk_s3::Client::new(&config);
         Self {
             client,

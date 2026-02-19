@@ -19,7 +19,12 @@ async fn create_test_app() -> Router {
         .with_state(state)
 }
 
-async fn request_json(app: Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request_json(
+    app: Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let req = Request::builder()
         .method(method)
         .uri(uri)
@@ -70,11 +75,13 @@ async fn test_namespace_crud() {
     assert_eq!(body["name"], "test-ns");
 
     // Get non-existent namespace
-    let (status, _) = request_json(app.clone(), "GET", "/api/v1/namespaces/nonexistent", None).await;
+    let (status, _) =
+        request_json(app.clone(), "GET", "/api/v1/namespaces/nonexistent", None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Delete namespace
-    let (status, body) = request_json(app.clone(), "DELETE", "/api/v1/namespaces/test-ns", None).await;
+    let (status, body) =
+        request_json(app.clone(), "DELETE", "/api/v1/namespaces/test-ns", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["deleted"], true);
 
@@ -135,7 +142,8 @@ async fn test_user_crud() {
     assert_eq!(users.len(), 1);
 
     // Get user by name
-    let (status, body) = request_json(app.clone(), "GET", "/api/v1/users/by-name/alice", None).await;
+    let (status, body) =
+        request_json(app.clone(), "GET", "/api/v1/users/by-name/alice", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["username"], "alice");
 

@@ -57,7 +57,9 @@ impl FsProvider for VfsRouter {
         if changes.size.is_some() && !caps.contains(Capabilities::TRUNCATE) {
             return Err(FsError::not_implemented("truncate"));
         }
-        if (changes.atime.is_some() || changes.mtime.is_some()) && !caps.contains(Capabilities::UTIME) {
+        if (changes.atime.is_some() || changes.mtime.is_some())
+            && !caps.contains(Capabilities::UTIME)
+        {
             return Err(FsError::not_implemented("utime"));
         }
         if changes.name.is_some() && !caps.contains(Capabilities::RENAME) {
@@ -71,7 +73,9 @@ impl FsProvider for VfsRouter {
         if let Some(ref new_name) = changes.name {
             let (target_provider, target_relative) = self.resolve(new_name).await?;
             if !Arc::ptr_eq(&provider, &target_provider) {
-                return Err(FsError::invalid_argument("cannot rename across mount points"));
+                return Err(FsError::invalid_argument(
+                    "cannot rename across mount points",
+                ));
             }
             changes.name = Some(target_relative);
         }
@@ -105,7 +109,13 @@ impl FsProvider for VfsRouter {
 
         let handle_id = self
             .handle_registry
-            .register(provider.clone(), path.to_string(), flags, metadata.clone(), provider_handle)
+            .register(
+                provider.clone(),
+                path.to_string(),
+                flags,
+                metadata.clone(),
+                provider_handle,
+            )
             .await;
 
         Ok((Handle::new(handle_id), metadata))
@@ -194,7 +204,10 @@ mod tests {
 
         vfs.mount_table().mount("/", "root", fs).await.unwrap();
 
-        let (handle, _) = vfs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = vfs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         vfs.write(&handle, 0, Bytes::from("hello")).await.unwrap();
         vfs.close(handle, false).await.unwrap();
 
@@ -216,15 +229,23 @@ mod tests {
             .await
             .unwrap();
 
-        let (handle, _) = vfs.open("/data/file.txt", OpenFlags::create_file()).await.unwrap();
-        vfs.write(&handle, 0, Bytes::from("data content")).await.unwrap();
+        let (handle, _) = vfs
+            .open("/data/file.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
+        vfs.write(&handle, 0, Bytes::from("data content"))
+            .await
+            .unwrap();
         vfs.close(handle, false).await.unwrap();
 
         let info = vfs.stat("/data/file.txt").await.unwrap();
         assert_eq!(info.size, 12);
         assert_eq!(info.path, "/data/file.txt");
 
-        let (handle, _) = vfs.open("/root.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = vfs
+            .open("/root.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         vfs.write(&handle, 0, Bytes::from("root")).await.unwrap();
         vfs.close(handle, false).await.unwrap();
 
@@ -239,10 +260,18 @@ mod tests {
 
         vfs.mount_table().mount("/data", "data", fs).await.unwrap();
 
-        vfs.open("/data/dir", OpenFlags::create_dir()).await.unwrap();
-        let (h1, _) = vfs.open("/data/dir/a.txt", OpenFlags::create_file()).await.unwrap();
+        vfs.open("/data/dir", OpenFlags::create_dir())
+            .await
+            .unwrap();
+        let (h1, _) = vfs
+            .open("/data/dir/a.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         vfs.close(h1, false).await.unwrap();
-        let (h2, _) = vfs.open("/data/dir/b.txt", OpenFlags::create_file()).await.unwrap();
+        let (h2, _) = vfs
+            .open("/data/dir/b.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         vfs.close(h2, false).await.unwrap();
 
         let entries = vfs.readdir("/data/dir").await.unwrap();
@@ -258,8 +287,14 @@ mod tests {
 
         vfs.mount_table().mount("/", "root", fs).await.unwrap();
 
-        let (h1, _) = vfs.open("/file1.txt", OpenFlags::create_file()).await.unwrap();
-        let (h2, _) = vfs.open("/file2.txt", OpenFlags::create_file()).await.unwrap();
+        let (h1, _) = vfs
+            .open("/file1.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
+        let (h2, _) = vfs
+            .open("/file2.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
 
         vfs.write(&h1, 0, Bytes::from("content1")).await.unwrap();
         vfs.write(&h2, 0, Bytes::from("content2")).await.unwrap();
@@ -281,16 +316,25 @@ mod tests {
 
         vfs.mount_table().mount("/", "root", fs).await.unwrap();
 
-        let (handle, _) = vfs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
-        vfs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
+        let (handle, _) = vfs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
+        vfs.write(&handle, 0, Bytes::from("hello world"))
+            .await
+            .unwrap();
         vfs.close(handle, false).await.unwrap();
 
-        vfs.wstat("/test.txt", StatChanges::truncate(5)).await.unwrap();
+        vfs.wstat("/test.txt", StatChanges::truncate(5))
+            .await
+            .unwrap();
 
         let info = vfs.stat("/test.txt").await.unwrap();
         assert_eq!(info.size, 5);
 
-        vfs.wstat("/test.txt", StatChanges::rename("renamed.txt")).await.unwrap();
+        vfs.wstat("/test.txt", StatChanges::rename("renamed.txt"))
+            .await
+            .unwrap();
 
         let info = vfs.stat("/renamed.txt").await.unwrap();
         assert_eq!(info.size, 5);

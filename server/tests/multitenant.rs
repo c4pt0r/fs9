@@ -14,7 +14,11 @@ const JWT_SECRET: &str = "test-multitenant-secret-key-12345";
 fn test_path(prefix: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    format!("/test_{}_{}", prefix, COUNTER.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "/test_{}_{}",
+        prefix,
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,7 +48,11 @@ async fn write_file(client: &Client, url: &str, token: &str, path: &str, content
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "open failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "open failed: {:?}",
+        resp.text().await
+    );
     let open_resp: OpenResponse = resp.json().await.unwrap();
 
     let resp = client
@@ -306,7 +314,7 @@ async fn no_token_rejected() {
 }
 
 // ============================================================================
-// Test 7: Wrong secret → rejected  
+// Test 7: Wrong secret → rejected
 // ============================================================================
 
 #[tokio::test]
@@ -442,7 +450,11 @@ async fn admin_can_create_namespace() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 201, "Admin should be able to create namespace");
+    assert_eq!(
+        resp.status().as_u16(),
+        201,
+        "Admin should be able to create namespace"
+    );
 
     let info: NamespaceInfoResp = resp.json().await.unwrap();
     assert_eq!(info.name, "new-tenant");
@@ -512,7 +524,11 @@ async fn invalid_namespace_name_rejected() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 400, "Uppercase name should be rejected");
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "Uppercase name should be rejected"
+    );
 
     // Special characters
     let resp = client
@@ -522,7 +538,11 @@ async fn invalid_namespace_name_rejected() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 400, "Special chars should be rejected");
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "Special chars should be rejected"
+    );
 
     // Empty name
     let resp = client
@@ -542,7 +562,11 @@ async fn invalid_namespace_name_rejected() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 400, "Name starting with hyphen should be rejected");
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "Name starting with hyphen should be rejected"
+    );
 }
 
 // Test 14: Admin can list namespaces → 200
@@ -559,7 +583,11 @@ async fn admin_can_list_namespaces() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 200, "Admin should be able to list namespaces");
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "Admin should be able to list namespaces"
+    );
 
     let namespaces: Vec<NamespaceInfoResp> = resp.json().await.unwrap();
     let names: Vec<&str> = namespaces.iter().map(|n| n.name.as_str()).collect();
@@ -582,10 +610,17 @@ async fn operator_can_list_namespaces() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 200, "Operator should be able to list namespaces");
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "Operator should be able to list namespaces"
+    );
 
     let namespaces: Vec<NamespaceInfoResp> = resp.json().await.unwrap();
-    assert!(namespaces.len() >= 3, "Should see at least default, acme, beta");
+    assert!(
+        namespaces.len() >= 3,
+        "Should see at least default, acme, beta"
+    );
 }
 
 // Test 16: Reader cannot list namespaces → 403
@@ -623,7 +658,11 @@ async fn get_single_namespace() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 200, "Should be able to get single namespace");
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "Should be able to get single namespace"
+    );
 
     let info: NamespaceInfoResp = resp.json().await.unwrap();
     assert_eq!(info.name, "acme");

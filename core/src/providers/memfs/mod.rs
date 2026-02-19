@@ -160,7 +160,13 @@ impl MemEntry {
             atime: self.atime(),
             mtime: self.mtime(),
             ctime: self.ctime(),
-            etag: format!("{:x}", self.mtime().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos()),
+            etag: format!(
+                "{:x}",
+                self.mtime()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ),
             symlink_target: self.symlink_target(),
         }
     }
@@ -230,7 +236,6 @@ impl MemoryFs {
             Some("/".to_string())
         }
     }
-
 }
 
 #[async_trait]
@@ -253,7 +258,8 @@ impl FsProvider for MemoryFs {
             if entries.contains_key(&path) {
                 return Err(FsError::already_exists(&path));
             }
-            let parent = Self::parent_path(&path).ok_or_else(|| FsError::invalid_argument("cannot create symlink at root"))?;
+            let parent = Self::parent_path(&path)
+                .ok_or_else(|| FsError::invalid_argument("cannot create symlink at root"))?;
             if !entries.contains_key(&parent) {
                 return Err(FsError::not_found(&parent));
             }
@@ -274,7 +280,9 @@ impl FsProvider for MemoryFs {
         }
 
         if let Some(new_name) = &changes.name {
-            let entry = entries.remove(&path).ok_or_else(|| FsError::not_found(&path))?;
+            let entry = entries
+                .remove(&path)
+                .ok_or_else(|| FsError::not_found(&path))?;
             let new_path = if new_name.starts_with('/') {
                 Self::normalize_path(new_name)
             } else {
@@ -289,7 +297,9 @@ impl FsProvider for MemoryFs {
                 match existing {
                     MemEntry::Dir(_) => {
                         let has_children = entries.keys().any(|k| {
-                            k != &new_path && k.starts_with(&new_path) && k[new_path.len()..].starts_with('/')
+                            k != &new_path
+                                && k.starts_with(&new_path)
+                                && k[new_path.len()..].starts_with('/')
                         });
                         if has_children {
                             entries.insert(path, entry);
@@ -313,7 +323,9 @@ impl FsProvider for MemoryFs {
             return Ok(());
         }
 
-        let entry = entries.get_mut(&path).ok_or_else(|| FsError::not_found(&path))?;
+        let entry = entries
+            .get_mut(&path)
+            .ok_or_else(|| FsError::not_found(&path))?;
         let now = SystemTime::now();
 
         match entry {
@@ -601,8 +613,13 @@ mod tests {
     async fn create_and_read_file() {
         let fs = MemoryFs::new();
 
-        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
-        fs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
+        let (handle, _) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
+        fs.write(&handle, 0, Bytes::from("hello world"))
+            .await
+            .unwrap();
         fs.close(handle, false).await.unwrap();
 
         let (handle, _) = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
@@ -617,11 +634,17 @@ mod tests {
 
         let _ = fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
 
-        let (handle, _) = fs.open("/mydir/file1.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs
+            .open("/mydir/file1.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         fs.write(&handle, 0, Bytes::from("content1")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
-        let (handle, _) = fs.open("/mydir/file2.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs
+            .open("/mydir/file2.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         fs.write(&handle, 0, Bytes::from("content2")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
@@ -635,7 +658,10 @@ mod tests {
     async fn stat_file() {
         let fs = MemoryFs::new();
 
-        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         fs.write(&handle, 0, Bytes::from("hello")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
@@ -652,7 +678,9 @@ mod tests {
         fs.write(&handle, 0, Bytes::from("content")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 
-        fs.wstat("/old.txt", StatChanges::rename("new.txt")).await.unwrap();
+        fs.wstat("/old.txt", StatChanges::rename("new.txt"))
+            .await
+            .unwrap();
 
         assert!(fs.stat("/old.txt").await.is_err());
         let info = fs.stat("/new.txt").await.unwrap();
@@ -663,11 +691,18 @@ mod tests {
     async fn truncate_file() {
         let fs = MemoryFs::new();
 
-        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
-        fs.write(&handle, 0, Bytes::from("hello world")).await.unwrap();
+        let (handle, _) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
+        fs.write(&handle, 0, Bytes::from("hello world"))
+            .await
+            .unwrap();
         fs.close(handle, false).await.unwrap();
 
-        fs.wstat("/test.txt", StatChanges::truncate(5)).await.unwrap();
+        fs.wstat("/test.txt", StatChanges::truncate(5))
+            .await
+            .unwrap();
 
         let (handle, _) = fs.open("/test.txt", OpenFlags::read()).await.unwrap();
         let data = fs.read(&handle, 0, 1024).await.unwrap();
@@ -678,11 +713,18 @@ mod tests {
     async fn create_symlink() {
         let fs = MemoryFs::new();
 
-        let (handle, _) = fs.open("/target.txt", OpenFlags::create_file()).await.unwrap();
-        fs.write(&handle, 0, Bytes::from("target content")).await.unwrap();
+        let (handle, _) = fs
+            .open("/target.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
+        fs.write(&handle, 0, Bytes::from("target content"))
+            .await
+            .unwrap();
         fs.close(handle, false).await.unwrap();
 
-        fs.wstat("/link", StatChanges::symlink("/target.txt")).await.unwrap();
+        fs.wstat("/link", StatChanges::symlink("/target.txt"))
+            .await
+            .unwrap();
 
         let info = fs.stat("/link").await.unwrap();
         assert_eq!(info.file_type, FileType::Symlink);
@@ -704,7 +746,10 @@ mod tests {
         let fs = MemoryFs::new();
 
         let _ = fs.open("/mydir", OpenFlags::create_dir()).await.unwrap();
-        let (handle, _) = fs.open("/mydir/file.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs
+            .open("/mydir/file.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         fs.close(handle, false).await.unwrap();
 
         let result = fs.remove("/mydir").await;
@@ -724,7 +769,10 @@ mod tests {
     async fn append_mode() {
         let fs = MemoryFs::new();
 
-        let (handle, _) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (handle, _) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         fs.write(&handle, 0, Bytes::from("hello")).await.unwrap();
         fs.close(handle, false).await.unwrap();
 

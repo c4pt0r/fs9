@@ -280,7 +280,11 @@ impl MetaStore {
     ) -> Result<Vec<String>> {
         match self {
             #[cfg(feature = "sqlite")]
-            Self::Sqlite(store) => store.get_user_roles_for_namespace(user_id, namespace_id).await,
+            Self::Sqlite(store) => {
+                store
+                    .get_user_roles_for_namespace(user_id, namespace_id)
+                    .await
+            }
             #[cfg(feature = "postgres")]
             Self::Postgres(store) => {
                 store

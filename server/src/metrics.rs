@@ -1,9 +1,4 @@
-use axum::{
-    body::Body,
-    extract::Request,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::Request, middleware::Next, response::Response};
 use metrics::{counter, histogram};
 use std::time::Instant;
 
@@ -51,11 +46,14 @@ pub async fn metrics_middleware(request: Request<Body>, next: Next) -> Response 
 fn normalize_path(path: &str) -> String {
     let parts: Vec<&str> = path.split('/').collect();
     if parts.len() >= 5 && parts[1] == "api" && parts[2] == "v1" && parts[3] == "namespaces" {
-        return format!("/api/v1/namespaces/:ns{}", if parts.len() > 5 {
-            format!("/{}", parts[5..].join("/"))
-        } else {
-            String::new()
-        });
+        return format!(
+            "/api/v1/namespaces/:ns{}",
+            if parts.len() > 5 {
+                format!("/{}", parts[5..].join("/"))
+            } else {
+                String::new()
+            }
+        );
     }
     path.to_string()
 }

@@ -22,7 +22,9 @@ pub async fn create(
 }
 
 /// List all namespaces.
-pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<NamespaceResponse>>, MetaError> {
+pub async fn list(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<NamespaceResponse>>, MetaError> {
     let namespaces = state.store.list_namespaces().await?;
     Ok(Json(namespaces.into_iter().map(Into::into).collect()))
 }

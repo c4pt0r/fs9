@@ -1,6 +1,6 @@
-mod types;
-mod error;
 mod client;
+mod error;
+mod types;
 
 pub use client::{ByteStream, Fs9Client};
 pub use error::{Fs9Error, Result};
@@ -37,9 +37,7 @@ mod tests {
 
     #[test]
     fn stat_changes_builder() {
-        let changes = StatChanges::new()
-            .mode(0o644)
-            .size(100);
+        let changes = StatChanges::new().mode(0o644).size(100);
         assert_eq!(changes.mode, Some(0o644));
         assert_eq!(changes.size, Some(100));
         assert!(changes.name.is_none());

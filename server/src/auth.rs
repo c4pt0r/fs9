@@ -46,7 +46,12 @@ pub struct RequestContext {
 }
 
 impl Claims {
-    pub fn new(subject: &str, permissions: Vec<String>, mounts: Vec<String>, ttl_secs: u64) -> Self {
+    pub fn new(
+        subject: &str,
+        permissions: Vec<String>,
+        mounts: Vec<String>,
+        ttl_secs: u64,
+    ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -369,19 +374,18 @@ pub async fn auth_middleware(
     // 2. If meta_client is configured, use it for validation (with circuit breaker + retry)
     if let Some(meta_client) = &state.app_state.meta_client {
         match meta_client
-            .validate_token_with_circuit_breaker(
-                token,
-                &state.app_state.circuit_breaker,
-                3,
-                100,
-            )
+            .validate_token_with_circuit_breaker(token, &state.app_state.circuit_breaker, 3, 100)
             .await
         {
             Ok(resp) if resp.valid => {
-                let namespace = resp.namespace.clone().unwrap_or_else(|| {
-                    crate::namespace::DEFAULT_NAMESPACE.to_string()
-                });
-                let user_id = resp.user_id.clone().unwrap_or_else(|| "unknown".to_string());
+                let namespace = resp
+                    .namespace
+                    .clone()
+                    .unwrap_or_else(|| crate::namespace::DEFAULT_NAMESPACE.to_string());
+                let user_id = resp
+                    .user_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
                 let roles = resp.roles.clone();
 
                 let now = SystemTime::now()
@@ -432,7 +436,8 @@ pub async fn auth_middleware(
                 // Meta service says token is invalid
                 return unauthorized(&format!(
                     "Invalid token: {}",
-                    resp.error.unwrap_or_else(|| "validation failed".to_string())
+                    resp.error
+                        .unwrap_or_else(|| "validation failed".to_string())
                 ));
             }
             Err(e) => {
@@ -521,7 +526,12 @@ mod tests {
     #[test]
     fn create_and_verify_token() {
         let config = JwtConfig::new("test-secret-key-12345");
-        let claims = Claims::new("user-123", vec!["read".into(), "write".into()], vec!["/data/*".into()], 3600);
+        let claims = Claims::new(
+            "user-123",
+            vec!["read".into(), "write".into()],
+            vec!["/data/*".into()],
+            3600,
+        );
 
         let token = config.encode(&claims).unwrap();
         let decoded = config.decode(&token).unwrap();

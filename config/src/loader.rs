@@ -170,18 +170,19 @@ impl ConfigLoader {
         // Default pagefs config from env vars
         if let Ok(pd_endpoints) = std::env::var("FS9_PAGEFS_PD_ENDPOINTS") {
             if !pd_endpoints.is_empty() {
-                let pagefs = config
-                    .server
-                    .default_pagefs
-                    .get_or_insert_with(|| crate::DefaultPagefsConfig {
+                let pagefs = config.server.default_pagefs.get_or_insert_with(|| {
+                    crate::DefaultPagefsConfig {
                         pd_endpoints: Vec::new(),
                         ca_path: None,
                         cert_path: None,
                         key_path: None,
                         keyspace_prefix: "tipg_fs_".to_string(),
-                    });
-                pagefs.pd_endpoints =
-                    pd_endpoints.split(',').map(|s| s.trim().to_string()).collect();
+                    }
+                });
+                pagefs.pd_endpoints = pd_endpoints
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
             }
         }
         if let Ok(ca) = std::env::var("FS9_PAGEFS_CA_PATH") {

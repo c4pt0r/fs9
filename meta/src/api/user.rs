@@ -19,7 +19,11 @@ pub async fn create(
 
     let user = state
         .store
-        .create_user(&req.username, password_hash.as_deref(), req.email.as_deref())
+        .create_user(
+            &req.username,
+            password_hash.as_deref(),
+            req.email.as_deref(),
+        )
         .await?;
     Ok(Json(user.into()))
 }

@@ -66,20 +66,23 @@ async fn file_handle_operations() {
     let client = Fs9Client::new(&url).unwrap();
     let path = generate_test_path("handle");
 
-    let handle = client.open(&path, OpenFlags::create_truncate()).await.unwrap();
-    
+    let handle = client
+        .open(&path, OpenFlags::create_truncate())
+        .await
+        .unwrap();
+
     client.write(&handle, 0, b"first").await.unwrap();
     client.write(&handle, 5, b" second").await.unwrap();
-    
+
     client.close(handle).await.unwrap();
 
     let handle = client.open(&path, OpenFlags::read()).await.unwrap();
     let data = client.read(&handle, 0, 100).await.unwrap();
     assert_eq!(&data[..], b"first second");
-    
+
     let partial = client.read(&handle, 6, 6).await.unwrap();
     assert_eq!(&partial[..], b"second");
-    
+
     client.close(handle).await.unwrap();
 
     client.remove(&path).await.unwrap();
@@ -94,7 +97,7 @@ async fn chmod_operation() {
     client.write_file(&path, b"test").await.unwrap();
 
     client.chmod(&path, 0o755).await.unwrap();
-    
+
     let info = client.stat(&path).await.unwrap();
     assert_eq!(info.mode & 0o777, 0o755);
 
@@ -110,7 +113,7 @@ async fn truncate_operation() {
     client.write_file(&path, b"hello world").await.unwrap();
 
     client.truncate(&path, 5).await.unwrap();
-    
+
     let info = client.stat(&path).await.unwrap();
     assert_eq!(info.size, 5);
 
@@ -149,10 +152,10 @@ async fn not_found_error() {
 async fn list_mounts() {
     let url = get_server_url().await;
     let client = Fs9Client::new(&url).unwrap();
-    
+
     let mounts = client.list_mounts().await.unwrap();
     assert!(!mounts.is_empty());
-    
+
     let root = mounts.iter().find(|m| m.path == "/");
     assert!(root.is_some());
 }
@@ -161,7 +164,7 @@ async fn list_mounts() {
 async fn capabilities() {
     let url = get_server_url().await;
     let client = Fs9Client::new(&url).unwrap();
-    
+
     let caps = client.capabilities("/").await.unwrap();
     assert!(caps.can_read());
     assert!(caps.can_write());
@@ -171,7 +174,7 @@ async fn capabilities() {
 async fn statfs() {
     let url = get_server_url().await;
     let client = Fs9Client::new(&url).unwrap();
-    
+
     let stats = client.statfs("/").await.unwrap();
     assert!(stats.total_bytes > 0);
     assert!(stats.block_size > 0);
@@ -184,7 +187,7 @@ async fn large_file_write_read() {
     let path = generate_test_path("large");
 
     let data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
-    
+
     client.write_file(&path, &data).await.unwrap();
 
     let read_data = client.read_file(&path).await.unwrap();

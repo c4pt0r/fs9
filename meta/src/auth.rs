@@ -18,7 +18,13 @@ struct ErrorResponse {
 }
 
 fn unauthorized(message: &str) -> Response {
-    (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: message.to_string() })).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(ErrorResponse {
+            error: message.to_string(),
+        }),
+    )
+        .into_response()
 }
 
 /// Middleware protecting `/api/v1/*` when an admin key is configured.
@@ -53,4 +59,3 @@ pub async fn require_admin_key(
         _ => unauthorized("missing or invalid admin key"),
     }
 }
-

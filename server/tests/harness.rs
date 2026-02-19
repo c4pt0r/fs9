@@ -225,8 +225,8 @@ impl HandleMap {
 // Multi-tenant test state: uses real namespace manager
 // ============================================================================
 
-use fs9_server::namespace::{NamespaceManager, DEFAULT_NAMESPACE};
 use fs9_server::auth::RequestContext;
+use fs9_server::namespace::{NamespaceManager, DEFAULT_NAMESPACE};
 
 /// Multi-tenant test server that uses the real NamespaceManager.
 pub struct MultiTenantTestServer {
@@ -250,7 +250,10 @@ impl MultiTenantTestServer {
         let ns_manager = Arc::new(NamespaceManager::new(Duration::from_secs(300)));
 
         // Create default namespace with a root memfs mount
-        let default_ns = ns_manager.create(DEFAULT_NAMESPACE, "system").await.unwrap();
+        let default_ns = ns_manager
+            .create(DEFAULT_NAMESPACE, "system")
+            .await
+            .unwrap();
         default_ns
             .mount_table
             .mount("/", "memfs", Arc::new(MemoryFs::new()))
@@ -334,10 +337,7 @@ impl Drop for MultiTenantTestServer {
     }
 }
 
-fn build_multitenant_router(
-    state: Arc<MultiTenantAppState>,
-    jwt_secret: &str,
-) -> axum::Router {
+fn build_multitenant_router(state: Arc<MultiTenantAppState>, jwt_secret: &str) -> axum::Router {
     use axum::routing::{delete, get, post};
     use axum::{middleware, Router};
 
@@ -444,10 +444,14 @@ use fs9_sdk::{FsError, Handle, OpenFlags, StatChanges};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-async fn mt_health() -> &'static str { "ok" }
+async fn mt_health() -> &'static str {
+    "ok"
+}
 
 #[derive(Deserialize)]
-struct PathQuery { path: String }
+struct PathQuery {
+    path: String,
+}
 
 #[derive(Serialize)]
 struct FileInfoResp {
@@ -464,9 +468,16 @@ fn mt_err(e: FsError) -> (StatusCode, String) {
 }
 
 /// Resolve namespace — unknown namespaces are rejected with 403.
-async fn mt_resolve_ns(state: &MultiTenantAppState, ctx: &RequestContext) -> Result<Arc<fs9_server::namespace::Namespace>, (StatusCode, String)> {
-    state.namespace_manager.get(&ctx.ns).await
-        .ok_or_else(|| (StatusCode::FORBIDDEN, format!("Namespace '{}' not found or access denied", ctx.ns)))
+async fn mt_resolve_ns(
+    state: &MultiTenantAppState,
+    ctx: &RequestContext,
+) -> Result<Arc<fs9_server::namespace::Namespace>, (StatusCode, String)> {
+    state.namespace_manager.get(&ctx.ns).await.ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            format!("Namespace '{}' not found or access denied", ctx.ns),
+        )
+    })
 }
 
 async fn mt_stat(
@@ -477,21 +488,39 @@ async fn mt_stat(
     let ns = mt_resolve_ns(&state, &ctx).await?;
     let info = ns.vfs.stat(&q.path).await.map_err(mt_err)?;
     let is_dir = info.is_dir();
-    Ok(Json(FileInfoResp { path: info.path, size: info.size, mode: info.mode, is_dir }))
+    Ok(Json(FileInfoResp {
+        path: info.path,
+        size: info.size,
+        mode: info.mode,
+        is_dir,
+    }))
 }
 
 #[derive(Serialize)]
-struct OpenResp { handle_id: String }
+struct OpenResp {
+    handle_id: String,
+}
 
 #[derive(Deserialize)]
-struct OpenReq { path: String, #[serde(default)] flags: u32 }
+struct OpenReq {
+    path: String,
+    #[serde(default)]
+    flags: u32,
+}
 
 fn parse_flags(bits: u32) -> OpenFlags {
     let read = (bits & 0x03) != 0x01;
     let write = (bits & 0x03) != 0x00;
     let create = (bits & 0x40) != 0 || (bits & 0x200) != 0;
     let truncate = (bits & 0x200) != 0;
-    OpenFlags { read, write, create, truncate, append: false, directory: false }
+    OpenFlags {
+        read,
+        write,
+        create,
+        truncate,
+        append: false,
+        directory: false,
+    }
 }
 
 async fn mt_open(
@@ -504,11 +533,17 @@ async fn mt_open(
     let (handle, _info) = ns.vfs.open(&req.path, flags).await.map_err(mt_err)?;
     let handle_id = handle.id();
     ns.handle_map.write().await.insert(handle_id);
-    Ok(Json(OpenResp { handle_id: handle_id.to_string() }))
+    Ok(Json(OpenResp {
+        handle_id: handle_id.to_string(),
+    }))
 }
 
 #[derive(Deserialize)]
-struct ReadReq { handle_id: String, offset: u64, size: usize }
+struct ReadReq {
+    handle_id: String,
+    offset: u64,
+    size: usize,
+}
 
 async fn mt_read(
     State(state): State<Arc<MultiTenantAppState>>,
@@ -516,16 +551,29 @@ async fn mt_read(
     Json(req): Json<ReadReq>,
 ) -> MtResult<Vec<u8>> {
     let ns = mt_resolve_ns(&state, &ctx).await?;
-    let hid = ns.handle_map.read().await.get_id(&req.handle_id)
+    let hid = ns
+        .handle_map
+        .read()
+        .await
+        .get_id(&req.handle_id)
         .ok_or((StatusCode::BAD_REQUEST, "Invalid handle".into()))?;
-    let data = ns.vfs.read(&Handle::new(hid), req.offset, req.size).await.map_err(mt_err)?;
+    let data = ns
+        .vfs
+        .read(&Handle::new(hid), req.offset, req.size)
+        .await
+        .map_err(mt_err)?;
     Ok(data.to_vec())
 }
 
 #[derive(Deserialize)]
-struct WriteQ { handle_id: String, offset: u64 }
+struct WriteQ {
+    handle_id: String,
+    offset: u64,
+}
 #[derive(Serialize)]
-struct WriteResp { bytes_written: usize }
+struct WriteResp {
+    bytes_written: usize,
+}
 
 async fn mt_write(
     State(state): State<Arc<MultiTenantAppState>>,
@@ -534,14 +582,26 @@ async fn mt_write(
     body: axum::body::Bytes,
 ) -> MtResult<Json<WriteResp>> {
     let ns = mt_resolve_ns(&state, &ctx).await?;
-    let hid = ns.handle_map.read().await.get_id(&q.handle_id)
+    let hid = ns
+        .handle_map
+        .read()
+        .await
+        .get_id(&q.handle_id)
         .ok_or((StatusCode::BAD_REQUEST, "Invalid handle".into()))?;
-    let bw = ns.vfs.write(&Handle::new(hid), q.offset, body).await.map_err(mt_err)?;
+    let bw = ns
+        .vfs
+        .write(&Handle::new(hid), q.offset, body)
+        .await
+        .map_err(mt_err)?;
     Ok(Json(WriteResp { bytes_written: bw }))
 }
 
 #[derive(Deserialize)]
-struct CloseReq { handle_id: String, #[serde(default)] sync: bool }
+struct CloseReq {
+    handle_id: String,
+    #[serde(default)]
+    sync: bool,
+}
 
 async fn mt_close(
     State(state): State<Arc<MultiTenantAppState>>,
@@ -549,9 +609,16 @@ async fn mt_close(
     Json(req): Json<CloseReq>,
 ) -> MtResult<StatusCode> {
     let ns = mt_resolve_ns(&state, &ctx).await?;
-    let hid = ns.handle_map.write().await.remove(&req.handle_id)
+    let hid = ns
+        .handle_map
+        .write()
+        .await
+        .remove(&req.handle_id)
         .ok_or((StatusCode::BAD_REQUEST, "Invalid handle".into()))?;
-    ns.vfs.close(Handle::new(hid), req.sync).await.map_err(mt_err)?;
+    ns.vfs
+        .close(Handle::new(hid), req.sync)
+        .await
+        .map_err(mt_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -562,10 +629,20 @@ async fn mt_readdir(
 ) -> MtResult<Json<Vec<FileInfoResp>>> {
     let ns = mt_resolve_ns(&state, &ctx).await?;
     let entries = ns.vfs.readdir(&q.path).await.map_err(mt_err)?;
-    Ok(Json(entries.into_iter().map(|i| {
-        let is_dir = i.is_dir();
-        FileInfoResp { path: i.path, size: i.size, mode: i.mode, is_dir }
-    }).collect()))
+    Ok(Json(
+        entries
+            .into_iter()
+            .map(|i| {
+                let is_dir = i.is_dir();
+                FileInfoResp {
+                    path: i.path,
+                    size: i.size,
+                    mode: i.mode,
+                    is_dir,
+                }
+            })
+            .collect(),
+    ))
 }
 
 async fn mt_remove(
@@ -579,7 +656,10 @@ async fn mt_remove(
 }
 
 #[derive(Serialize)]
-struct MountInfoResp { path: String, name: String }
+struct MountInfoResp {
+    path: String,
+    name: String,
+}
 
 async fn mt_list_mounts(
     State(state): State<Arc<MultiTenantAppState>>,
@@ -587,7 +667,15 @@ async fn mt_list_mounts(
 ) -> MtResult<Json<Vec<MountInfoResp>>> {
     let ns = mt_resolve_ns(&state, &ctx).await?;
     let mounts = ns.mount_table.list_mounts().await;
-    Ok(Json(mounts.into_iter().map(|m| MountInfoResp { path: m.path, name: m.provider_name }).collect()))
+    Ok(Json(
+        mounts
+            .into_iter()
+            .map(|m| MountInfoResp {
+                path: m.path,
+                name: m.provider_name,
+            })
+            .collect(),
+    ))
 }
 
 // ============================================================================
@@ -613,7 +701,8 @@ async fn mt_mount_plugin(
     let ns = mt_resolve_ns(&state, &ctx).await?;
     let config = serde_json::to_string(&req.config).unwrap_or_default();
 
-    let provider = state.plugin_manager
+    let provider = state
+        .plugin_manager
         .create_provider(&req.provider, &config)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -622,14 +711,23 @@ async fn mt_mount_plugin(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(MountInfoResp { path: req.path, name: req.provider }))
+    Ok(Json(MountInfoResp {
+        path: req.path,
+        name: req.provider,
+    }))
 }
 
 #[derive(Deserialize)]
-struct LoadPluginReq { name: String, path: String }
+struct LoadPluginReq {
+    name: String,
+    path: String,
+}
 
 #[derive(Serialize)]
-struct LoadPluginResp { name: String, status: String }
+struct LoadPluginResp {
+    name: String,
+    status: String,
+}
 
 /// POST /api/v1/plugin/load — load a plugin (admin only).
 async fn mt_load_plugin(
@@ -639,15 +737,21 @@ async fn mt_load_plugin(
 ) -> MtResult<Json<LoadPluginResp>> {
     mt_require_role(&ctx, &["admin"])?;
 
-    _state.plugin_manager
+    _state
+        .plugin_manager
         .load(&req.name, std::path::Path::new(&req.path))
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
-    Ok(Json(LoadPluginResp { name: req.name, status: "loaded".to_string() }))
+    Ok(Json(LoadPluginResp {
+        name: req.name,
+        status: "loaded".to_string(),
+    }))
 }
 
 #[derive(Deserialize)]
-struct UnloadPluginReq { name: String }
+struct UnloadPluginReq {
+    name: String,
+}
 
 /// POST /api/v1/plugin/unload — unload a plugin (admin only).
 async fn mt_unload_plugin(
@@ -657,7 +761,8 @@ async fn mt_unload_plugin(
 ) -> MtResult<StatusCode> {
     mt_require_role(&ctx, &["admin"])?;
 
-    _state.plugin_manager
+    _state
+        .plugin_manager
         .unload(&req.name)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
@@ -679,7 +784,9 @@ async fn mt_list_plugins(
 // ============================================================================
 
 #[derive(Deserialize)]
-struct CreateNsReq { name: String }
+struct CreateNsReq {
+    name: String,
+}
 
 #[derive(Serialize)]
 struct NsInfoResp {
@@ -693,7 +800,10 @@ fn mt_require_role(ctx: &RequestContext, allowed: &[&str]) -> Result<(), (Status
     if ctx.roles.iter().any(|r| allowed.contains(&r.as_str())) {
         Ok(())
     } else {
-        Err((StatusCode::FORBIDDEN, r#"{"error":"Insufficient permissions","code":403}"#.to_string()))
+        Err((
+            StatusCode::FORBIDDEN,
+            r#"{"error":"Insufficient permissions","code":403}"#.to_string(),
+        ))
     }
 }
 
@@ -704,22 +814,31 @@ async fn mt_create_namespace(
 ) -> Result<(StatusCode, Json<NsInfoResp>), (StatusCode, String)> {
     mt_require_role(&ctx, &["admin"])?;
 
-    match state.namespace_manager.create(&req.name, &ctx.user_id).await {
+    match state
+        .namespace_manager
+        .create(&req.name, &ctx.user_id)
+        .await
+    {
         Ok(_ns) => {
             let info = state.namespace_manager.get_info(&req.name).await.unwrap();
-            Ok((StatusCode::CREATED, Json(NsInfoResp {
-                name: info.name,
-                created_at: info.created_at,
-                created_by: info.created_by,
-                status: info.status,
-            })))
+            Ok((
+                StatusCode::CREATED,
+                Json(NsInfoResp {
+                    name: info.name,
+                    created_at: info.created_at,
+                    created_by: info.created_by,
+                    status: info.status,
+                }),
+            ))
         }
-        Err(e) if e.contains("already exists") => {
-            Err((StatusCode::CONFLICT, format!(r#"{{"error":"{}","code":409}}"#, e)))
-        }
-        Err(e) => {
-            Err((StatusCode::BAD_REQUEST, format!(r#"{{"error":"{}","code":400}}"#, e)))
-        }
+        Err(e) if e.contains("already exists") => Err((
+            StatusCode::CONFLICT,
+            format!(r#"{{"error":"{}","code":409}}"#, e),
+        )),
+        Err(e) => Err((
+            StatusCode::BAD_REQUEST,
+            format!(r#"{{"error":"{}","code":400}}"#, e),
+        )),
     }
 }
 
@@ -730,12 +849,17 @@ async fn mt_list_namespaces(
     mt_require_role(&ctx, &["admin", "operator"])?;
 
     let infos = state.namespace_manager.list_info().await;
-    Ok(Json(infos.into_iter().map(|info| NsInfoResp {
-        name: info.name,
-        created_at: info.created_at,
-        created_by: info.created_by,
-        status: info.status,
-    }).collect()))
+    Ok(Json(
+        infos
+            .into_iter()
+            .map(|info| NsInfoResp {
+                name: info.name,
+                created_at: info.created_at,
+                created_by: info.created_by,
+                status: info.status,
+            })
+            .collect(),
+    ))
 }
 
 async fn mt_get_namespace(
@@ -752,7 +876,13 @@ async fn mt_get_namespace(
             created_by: info.created_by,
             status: info.status,
         })),
-        None => Err((StatusCode::NOT_FOUND, format!(r#"{{"error":"Namespace '{}' not found","code":404}}"#, ns_name)))
+        None => Err((
+            StatusCode::NOT_FOUND,
+            format!(
+                r#"{{"error":"Namespace '{}' not found","code":404}}"#,
+                ns_name
+            ),
+        )),
     }
 }
 
@@ -789,10 +919,14 @@ fn build_test_router_with_auth(state: Arc<TestAppState>, _jwt_secret: &str) -> a
 // Legacy single-tenant handlers
 // ============================================================================
 
-async fn health() -> &'static str { "ok" }
+async fn health() -> &'static str {
+    "ok"
+}
 
 fn system_time_to_epoch(t: SystemTime) -> u64 {
-    t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    t.duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn map_err(e: FsError) -> (StatusCode, String) {
@@ -818,98 +952,223 @@ async fn stat(
     let info = state.vfs.stat(&q.path).await.map_err(map_err)?;
     let is_dir = info.is_dir();
     Ok(Json(FileInfoResponse {
-        path: info.path, size: info.size, mode: info.mode, is_dir,
+        path: info.path,
+        size: info.size,
+        mode: info.mode,
+        is_dir,
         mtime: Some(system_time_to_epoch(info.mtime)),
     }))
 }
 
 #[derive(Deserialize)]
-struct WstatRequest { path: String, #[serde(default)] mode: Option<u32>, #[serde(default)] size: Option<u64> }
+struct WstatRequest {
+    path: String,
+    #[serde(default)]
+    mode: Option<u32>,
+    #[serde(default)]
+    size: Option<u64>,
+}
 
-async fn wstat(State(state): State<Arc<TestAppState>>, Json(req): Json<WstatRequest>) -> AppResult<StatusCode> {
-    let changes = StatChanges { mode: req.mode, size: req.size, ..Default::default() };
+async fn wstat(
+    State(state): State<Arc<TestAppState>>,
+    Json(req): Json<WstatRequest>,
+) -> AppResult<StatusCode> {
+    let changes = StatChanges {
+        mode: req.mode,
+        size: req.size,
+        ..Default::default()
+    };
     state.vfs.wstat(&req.path, changes).await.map_err(map_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize)]
-struct FsStatsResponse { total_bytes: u64, free_bytes: u64, block_size: u64 }
+struct FsStatsResponse {
+    total_bytes: u64,
+    free_bytes: u64,
+    block_size: u64,
+}
 
-async fn statfs(State(state): State<Arc<TestAppState>>, Query(q): Query<PathQuery>) -> AppResult<Json<FsStatsResponse>> {
+async fn statfs(
+    State(state): State<Arc<TestAppState>>,
+    Query(q): Query<PathQuery>,
+) -> AppResult<Json<FsStatsResponse>> {
     let stats = state.vfs.statfs(&q.path).await.map_err(map_err)?;
-    Ok(Json(FsStatsResponse { total_bytes: stats.total_bytes, free_bytes: stats.free_bytes, block_size: u64::from(stats.block_size) }))
+    Ok(Json(FsStatsResponse {
+        total_bytes: stats.total_bytes,
+        free_bytes: stats.free_bytes,
+        block_size: u64::from(stats.block_size),
+    }))
 }
 
 #[derive(Deserialize)]
-struct LegacyOpenReq { path: String, #[serde(default)] flags: u32 }
+struct LegacyOpenReq {
+    path: String,
+    #[serde(default)]
+    flags: u32,
+}
 #[derive(Serialize)]
-struct LegacyOpenResp { handle_id: String }
+struct LegacyOpenResp {
+    handle_id: String,
+}
 
-async fn open(State(state): State<Arc<TestAppState>>, Json(req): Json<LegacyOpenReq>) -> AppResult<Json<LegacyOpenResp>> {
+async fn open(
+    State(state): State<Arc<TestAppState>>,
+    Json(req): Json<LegacyOpenReq>,
+) -> AppResult<Json<LegacyOpenResp>> {
     let flags = parse_flags(req.flags);
     let (handle, _info) = state.vfs.open(&req.path, flags).await.map_err(map_err)?;
     let uuid = uuid::Uuid::new_v4().to_string();
-    state.handle_map.write().await.insert(uuid.clone(), handle.id());
+    state
+        .handle_map
+        .write()
+        .await
+        .insert(uuid.clone(), handle.id());
     Ok(Json(LegacyOpenResp { handle_id: uuid }))
 }
 
 #[derive(Deserialize)]
-struct LegacyReadReq { handle_id: String, offset: u64, size: usize }
+struct LegacyReadReq {
+    handle_id: String,
+    offset: u64,
+    size: usize,
+}
 
-async fn read(State(state): State<Arc<TestAppState>>, Json(req): Json<LegacyReadReq>) -> AppResult<Vec<u8>> {
-    let hid = state.handle_map.read().await.get_id(&req.handle_id)
+async fn read(
+    State(state): State<Arc<TestAppState>>,
+    Json(req): Json<LegacyReadReq>,
+) -> AppResult<Vec<u8>> {
+    let hid = state
+        .handle_map
+        .read()
+        .await
+        .get_id(&req.handle_id)
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "Invalid handle".to_string()))?;
-    let data = state.vfs.read(&Handle::new(hid), req.offset, req.size).await.map_err(map_err)?;
+    let data = state
+        .vfs
+        .read(&Handle::new(hid), req.offset, req.size)
+        .await
+        .map_err(map_err)?;
     Ok(data.to_vec())
 }
 
 #[derive(Deserialize)]
-struct LegacyWriteQ { handle_id: String, offset: u64 }
+struct LegacyWriteQ {
+    handle_id: String,
+    offset: u64,
+}
 #[derive(Serialize)]
-struct LegacyWriteResp { bytes_written: usize }
+struct LegacyWriteResp {
+    bytes_written: usize,
+}
 
-async fn write(State(state): State<Arc<TestAppState>>, Query(q): Query<LegacyWriteQ>, body: axum::body::Bytes) -> AppResult<Json<LegacyWriteResp>> {
-    let hid = state.handle_map.read().await.get_id(&q.handle_id)
+async fn write(
+    State(state): State<Arc<TestAppState>>,
+    Query(q): Query<LegacyWriteQ>,
+    body: axum::body::Bytes,
+) -> AppResult<Json<LegacyWriteResp>> {
+    let hid = state
+        .handle_map
+        .read()
+        .await
+        .get_id(&q.handle_id)
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "Invalid handle".to_string()))?;
-    let bw = state.vfs.write(&Handle::new(hid), q.offset, body).await.map_err(map_err)?;
+    let bw = state
+        .vfs
+        .write(&Handle::new(hid), q.offset, body)
+        .await
+        .map_err(map_err)?;
     Ok(Json(LegacyWriteResp { bytes_written: bw }))
 }
 
 #[derive(Deserialize)]
-struct LegacyCloseReq { handle_id: String, #[serde(default)] sync: bool }
+struct LegacyCloseReq {
+    handle_id: String,
+    #[serde(default)]
+    sync: bool,
+}
 
-async fn close(State(state): State<Arc<TestAppState>>, Json(req): Json<LegacyCloseReq>) -> AppResult<StatusCode> {
-    let hid = state.handle_map.write().await.remove_by_uuid(&req.handle_id)
+async fn close(
+    State(state): State<Arc<TestAppState>>,
+    Json(req): Json<LegacyCloseReq>,
+) -> AppResult<StatusCode> {
+    let hid = state
+        .handle_map
+        .write()
+        .await
+        .remove_by_uuid(&req.handle_id)
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "Invalid handle".to_string()))?;
-    state.vfs.close(Handle::new(hid), req.sync).await.map_err(map_err)?;
+    state
+        .vfs
+        .close(Handle::new(hid), req.sync)
+        .await
+        .map_err(map_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn readdir(State(state): State<Arc<TestAppState>>, Query(q): Query<PathQuery>) -> AppResult<Json<Vec<FileInfoResponse>>> {
+async fn readdir(
+    State(state): State<Arc<TestAppState>>,
+    Query(q): Query<PathQuery>,
+) -> AppResult<Json<Vec<FileInfoResponse>>> {
     let entries = state.vfs.readdir(&q.path).await.map_err(map_err)?;
-    Ok(Json(entries.into_iter().map(|info| {
-        let is_dir = info.is_dir();
-        FileInfoResponse { path: info.path, size: info.size, mode: info.mode, is_dir, mtime: Some(system_time_to_epoch(info.mtime)) }
-    }).collect()))
+    Ok(Json(
+        entries
+            .into_iter()
+            .map(|info| {
+                let is_dir = info.is_dir();
+                FileInfoResponse {
+                    path: info.path,
+                    size: info.size,
+                    mode: info.mode,
+                    is_dir,
+                    mtime: Some(system_time_to_epoch(info.mtime)),
+                }
+            })
+            .collect(),
+    ))
 }
 
-async fn remove(State(state): State<Arc<TestAppState>>, Query(q): Query<PathQuery>) -> AppResult<StatusCode> {
+async fn remove(
+    State(state): State<Arc<TestAppState>>,
+    Query(q): Query<PathQuery>,
+) -> AppResult<StatusCode> {
     state.vfs.remove(&q.path).await.map_err(map_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize)]
-struct CapabilitiesResponse { flags: u64 }
+struct CapabilitiesResponse {
+    flags: u64,
+}
 
-async fn capabilities(State(state): State<Arc<TestAppState>>, Query(q): Query<PathQuery>) -> AppResult<Json<CapabilitiesResponse>> {
-    let caps = state.mount_table.get_mount_info(&q.path).await.map(|(_, caps)| caps.bits()).unwrap_or(0);
+async fn capabilities(
+    State(state): State<Arc<TestAppState>>,
+    Query(q): Query<PathQuery>,
+) -> AppResult<Json<CapabilitiesResponse>> {
+    let caps = state
+        .mount_table
+        .get_mount_info(&q.path)
+        .await
+        .map(|(_, caps)| caps.bits())
+        .unwrap_or(0);
     Ok(Json(CapabilitiesResponse { flags: caps }))
 }
 
 #[derive(Serialize)]
-struct MountInfoResponse { path: String, name: String }
+struct MountInfoResponse {
+    path: String,
+    name: String,
+}
 
 async fn list_mounts(State(state): State<Arc<TestAppState>>) -> Json<Vec<MountInfoResponse>> {
     let mounts = state.mount_table.list_mounts().await;
-    Json(mounts.into_iter().map(|m| MountInfoResponse { path: m.path, name: m.provider_name }).collect())
+    Json(
+        mounts
+            .into_iter()
+            .map(|m| MountInfoResponse {
+                path: m.path,
+                name: m.provider_name,
+            })
+            .collect(),
+    )
 }

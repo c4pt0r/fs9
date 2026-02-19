@@ -5,7 +5,9 @@ use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
-use crate::db::models::{GenerateTokenRequest, GenerateTokenResponse, ValidateTokenRequest, ValidateTokenResponse};
+use crate::db::models::{
+    GenerateTokenRequest, GenerateTokenResponse, ValidateTokenRequest, ValidateTokenResponse,
+};
 use crate::error::MetaError;
 use crate::AppState;
 
@@ -80,7 +82,9 @@ pub async fn validate(
                 user_id: Some(claims.sub),
                 namespace: Some(claims.ns),
                 roles: claims.roles,
-                expires_at: Some(chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(Utc::now)),
+                expires_at: Some(
+                    chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(Utc::now),
+                ),
                 error: None,
             }))
         }

@@ -185,10 +185,7 @@ impl MetaClient {
         &self,
         namespace: &str,
     ) -> Result<Vec<MountInfo>, MetaClientError> {
-        let url = format!(
-            "{}/api/v1/namespaces/{}/mounts",
-            self.base_url, namespace
-        );
+        let url = format!("{}/api/v1/namespaces/{}/mounts", self.base_url, namespace);
         let mut req = self.client.get(&url);
         if let Some(key) = &self.admin_key {
             req = req.header("x-fs9-meta-key", key);
@@ -231,10 +228,7 @@ impl MetaClient {
         provider: &str,
         config: &serde_json::Value,
     ) -> Result<MountInfo, MetaClientError> {
-        let url = format!(
-            "{}/api/v1/namespaces/{}/mounts",
-            self.base_url, namespace
-        );
+        let url = format!("{}/api/v1/namespaces/{}/mounts", self.base_url, namespace);
         let body = serde_json::json!({
             "path": path,
             "provider": provider,

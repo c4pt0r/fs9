@@ -14,7 +14,11 @@ use serde_json::json;
 fn test_path(prefix: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    format!("/test_{}_{}", prefix, COUNTER.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "/test_{}_{}",
+        prefix,
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,7 +60,11 @@ async fn contract_write_close_stat_read() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "open failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "open failed: {:?}",
+        resp.text().await
+    );
     let open_resp: OpenResponse = resp.json().await.unwrap();
 
     // Write data using query params + raw body
@@ -70,7 +78,11 @@ async fn contract_write_close_stat_read() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "write failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "write failed: {:?}",
+        resp.text().await
+    );
     let write_resp: WriteResponse = resp.json().await.unwrap();
     assert_eq!(write_resp.bytes_written, content.len());
 
@@ -81,7 +93,11 @@ async fn contract_write_close_stat_read() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "close failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "close failed: {:?}",
+        resp.text().await
+    );
 
     // Stat - verify size
     let resp = client
@@ -89,7 +105,11 @@ async fn contract_write_close_stat_read() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "stat failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "stat failed: {:?}",
+        resp.text().await
+    );
     let info: FileInfo = resp.json().await.unwrap();
     assert_eq!(info.size, content.len() as u64);
     assert!(!info.is_dir);
@@ -173,7 +193,10 @@ async fn contract_closed_handle_rejected() {
         .send()
         .await
         .unwrap();
-    assert!(!resp.status().is_success(), "read should fail with closed handle");
+    assert!(
+        !resp.status().is_success(),
+        "read should fail with closed handle"
+    );
 
     // Cleanup
     client
@@ -216,8 +239,14 @@ async fn contract_readdir_sees_new_file() {
     let entries: Vec<FileInfo> = resp.json().await.unwrap();
 
     // File should be visible
-    let found = entries.iter().any(|e| e.path == path || e.path.ends_with(&path[1..]));
-    assert!(found, "New file should be visible in readdir. Entries: {:?}", entries);
+    let found = entries
+        .iter()
+        .any(|e| e.path == path || e.path.ends_with(&path[1..]));
+    assert!(
+        found,
+        "New file should be visible in readdir. Entries: {:?}",
+        entries
+    );
 
     // Cleanup
     client
@@ -256,7 +285,10 @@ async fn contract_remove_then_stat_not_found() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "file should exist before remove");
+    assert!(
+        resp.status().is_success(),
+        "file should exist before remove"
+    );
 
     // Remove
     let resp = client
@@ -310,7 +342,10 @@ async fn contract_list_mounts() {
 
     let mounts: Vec<MountInfo> = resp.json().await.unwrap();
     assert!(!mounts.is_empty(), "should have at least root mount");
-    assert!(mounts.iter().any(|m| m.path == "/"), "should have root mount");
+    assert!(
+        mounts.iter().any(|m| m.path == "/"),
+        "should have root mount"
+    );
 }
 
 /// Core Contract #7: capabilities returns valid flags
@@ -366,7 +401,11 @@ async fn contract_wstat_chmod() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "wstat chmod failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "wstat chmod failed: {:?}",
+        resp.text().await
+    );
 
     // Verify mode changed
     let resp = client
@@ -489,7 +528,11 @@ async fn pagefs_write_close_stat_read() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "open failed: {:?}", resp.text().await);
+    assert!(
+        resp.status().is_success(),
+        "open failed: {:?}",
+        resp.text().await
+    );
     let open_resp: OpenResponse = resp.json().await.unwrap();
 
     // Write
@@ -577,7 +620,7 @@ async fn pagefs_readdir() {
         .await
         .unwrap();
     let open_resp: OpenResponse = resp.json().await.unwrap();
-    
+
     client
         .post(format!("{}/api/v1/close", server.url))
         .json(&json!({ "handle_id": open_resp.handle_id }))
@@ -593,8 +636,10 @@ async fn pagefs_readdir() {
         .unwrap();
     assert!(resp.status().is_success());
     let entries: Vec<FileInfo> = resp.json().await.unwrap();
-    
-    let found = entries.iter().any(|e| e.path == path || e.path.ends_with(&path[1..]));
+
+    let found = entries
+        .iter()
+        .any(|e| e.path == path || e.path.ends_with(&path[1..]));
     assert!(found, "File should be visible. Entries: {:?}", entries);
 
     // Cleanup

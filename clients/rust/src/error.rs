@@ -46,13 +46,32 @@ impl Fs9Error {
     pub(crate) fn from_response(status: u16, message: String) -> Self {
         let msg = message.trim().to_string();
         match status {
-            404 => Self::NotFound(msg.strip_prefix("not found:").map(|s| s.trim().to_string()).unwrap_or(msg)),
-            403 => Self::PermissionDenied(msg.strip_prefix("permission denied:").map(|s| s.trim().to_string()).unwrap_or(msg)),
-            409 => Self::AlreadyExists(msg.strip_prefix("already exists:").map(|s| s.trim().to_string()).unwrap_or(msg)),
-            400 => Self::InvalidArgument(msg.strip_prefix("invalid argument:").map(|s| s.trim().to_string()).unwrap_or(msg)),
+            404 => Self::NotFound(
+                msg.strip_prefix("not found:")
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or(msg),
+            ),
+            403 => Self::PermissionDenied(
+                msg.strip_prefix("permission denied:")
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or(msg),
+            ),
+            409 => Self::AlreadyExists(
+                msg.strip_prefix("already exists:")
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or(msg),
+            ),
+            400 => Self::InvalidArgument(
+                msg.strip_prefix("invalid argument:")
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or(msg),
+            ),
             504 => Self::Timeout,
             500..=599 => Self::Server(msg),
-            _ => Self::Request { status, message: msg },
+            _ => Self::Request {
+                status,
+                message: msg,
+            },
         }
     }
 }

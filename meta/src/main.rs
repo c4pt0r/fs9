@@ -114,7 +114,9 @@ fn load_config(path: &str) -> Result<MetaConfig, Box<dyn std::error::Error>> {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -146,7 +148,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // If we're binding to a non-loopback address, require an admin key to avoid exposing
     // management endpoints unauthenticated.
     let is_loopback_host = host == "localhost"
-        || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
     if admin_key.is_none() && !is_loopback_host {
         eprintln!(
             "Error: admin key is required when binding to non-loopback host '{host}'. Set via --admin-key, FS9_META_KEY env, or config file."
@@ -172,8 +176,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState::new(store, jwt_secret, admin_key);
 
     // Build router
-    let api_router =
-        api::router().layer(axum::middleware::from_fn_with_state(state.clone(), auth::require_admin_key));
+    let api_router = api::router().layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        auth::require_admin_key,
+    ));
     let app = Router::new()
         .nest("/api/v1", api_router)
         .route("/health", axum::routing::get(health))

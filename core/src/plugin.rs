@@ -92,7 +92,11 @@ impl PluginManager {
         self.load_internal(None, library_path)
     }
 
-    fn load_internal(&self, name_override: Option<&str>, library_path: &Path) -> Result<String, PluginError> {
+    fn load_internal(
+        &self,
+        name_override: Option<&str>,
+        library_path: &Path,
+    ) -> Result<String, PluginError> {
         debug!(path = ?library_path, "Loading plugin");
 
         let library = unsafe { Library::new(library_path) }
@@ -136,7 +140,9 @@ impl PluginManager {
             let name_ptr = vtable.name;
             let name_len = vtable.name_len;
             if name_ptr.is_null() || name_len == 0 {
-                return Err(PluginError::CreationFailed("plugin name is null".to_string()));
+                return Err(PluginError::CreationFailed(
+                    "plugin name is null".to_string(),
+                ));
             }
             unsafe {
                 let bytes = slice::from_raw_parts(name_ptr as *const u8, name_len);
@@ -172,7 +178,7 @@ impl PluginManager {
         });
 
         plugins.insert(name.clone(), loaded);
-        
+
         if let Some(ver) = version_str {
             debug!(name = %name, version = %ver, "Plugin loaded successfully");
         } else {
@@ -211,9 +217,7 @@ impl PluginManager {
             CString::new(config).map_err(|e| PluginError::CreationFailed(e.to_string()))?;
 
         // Safety: We're calling FFI with valid arguments
-        let provider_ptr = unsafe {
-            (plugin.vtable.create)(config_cstr.as_ptr(), config.len())
-        };
+        let provider_ptr = unsafe { (plugin.vtable.create)(config_cstr.as_ptr(), config.len()) };
 
         if provider_ptr.is_null() {
             return Err(PluginError::CreationFailed(
@@ -424,9 +428,17 @@ fn openflags_to_copenflags(flags: &OpenFlags) -> COpenFlags {
     }
 }
 
-fn statchanges_to_cstatchanges(changes: &StatChanges) -> (CStatChanges, Option<CString>, Option<CString>) {
-    let name_cstr = changes.name.as_ref().and_then(|s| CString::new(s.as_str()).ok());
-    let symlink_cstr = changes.symlink_target.as_ref().and_then(|s| CString::new(s.as_str()).ok());
+fn statchanges_to_cstatchanges(
+    changes: &StatChanges,
+) -> (CStatChanges, Option<CString>, Option<CString>) {
+    let name_cstr = changes
+        .name
+        .as_ref()
+        .and_then(|s| CString::new(s.as_str()).ok());
+    let symlink_cstr = changes
+        .symlink_target
+        .as_ref()
+        .and_then(|s| CString::new(s.as_str()).ok());
 
     let c_changes = CStatChanges {
         has_mode: u8::from(changes.mode.is_some()),
@@ -474,7 +486,12 @@ impl FsProvider for PluginProvider {
         tokio::task::spawn_blocking(move || {
             let mut out_info = CFileInfo::default();
             let result = unsafe {
-                (vtable.stat)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &mut out_info)
+                (vtable.stat)(
+                    provider.as_ptr(),
+                    path_cstr.as_ptr(),
+                    path_len,
+                    &mut out_info,
+                )
             };
             if result.code == FS9_OK {
                 Ok(cfileinfo_to_fileinfo(&out_info))
@@ -516,7 +533,12 @@ impl FsProvider for PluginProvider {
         tokio::task::spawn_blocking(move || {
             let mut out_stats = CFsStats::default();
             let result = unsafe {
-                (vtable.statfs)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &mut out_stats)
+                (vtable.statfs)(
+                    provider.as_ptr(),
+                    path_cstr.as_ptr(),
+                    path_len,
+                    &mut out_stats,
+                )
             };
             if result.code == FS9_OK {
                 Ok(cfsstats_to_fsstats(&out_stats))
@@ -539,7 +561,14 @@ impl FsProvider for PluginProvider {
             let mut out_handle: u64 = 0;
             let mut out_info = CFileInfo::default();
             let result = unsafe {
-                (vtable.open)(provider.as_ptr(), path_cstr.as_ptr(), path_len, &c_flags, &mut out_handle, &mut out_info)
+                (vtable.open)(
+                    provider.as_ptr(),
+                    path_cstr.as_ptr(),
+                    path_len,
+                    &c_flags,
+                    &mut out_handle,
+                    &mut out_info,
+                )
             };
             if result.code == FS9_OK {
                 Ok((Handle::new(out_handle), cfileinfo_to_fileinfo(&out_info)))
@@ -558,9 +587,8 @@ impl FsProvider for PluginProvider {
 
         tokio::task::spawn_blocking(move || {
             let mut out_data = CBytes::default();
-            let result = unsafe {
-                (vtable.read)(provider.as_ptr(), handle_id, offset, size, &mut out_data)
-            };
+            let result =
+                unsafe { (vtable.read)(provider.as_ptr(), handle_id, offset, size, &mut out_data) };
 
             if result.code == FS9_OK {
                 if out_data.data.is_null() || out_data.len == 0 {
@@ -588,7 +616,14 @@ impl FsProvider for PluginProvider {
         tokio::task::spawn_blocking(move || {
             let mut out_written: usize = 0;
             let result = unsafe {
-                (vtable.write)(provider.as_ptr(), handle_id, offset, data.as_ptr(), data.len(), &mut out_written)
+                (vtable.write)(
+                    provider.as_ptr(),
+                    handle_id,
+                    offset,
+                    data.as_ptr(),
+                    data.len(),
+                    &mut out_written,
+                )
             };
             if result.code == FS9_OK {
                 Ok(out_written)
@@ -628,7 +663,10 @@ impl FsProvider for PluginProvider {
             let entries: Arc<Mutex<Vec<FileInfo>>> = Arc::new(Mutex::new(Vec::new()));
             let entries_ptr = Arc::into_raw(entries.clone()) as *mut c_void;
 
-            unsafe extern "C" fn collect_entry(info: *const CFileInfo, user_data: *mut c_void) -> i32 {
+            unsafe extern "C" fn collect_entry(
+                info: *const CFileInfo,
+                user_data: *mut c_void,
+            ) -> i32 {
                 if info.is_null() || user_data.is_null() {
                     return -1;
                 }
@@ -643,7 +681,13 @@ impl FsProvider for PluginProvider {
             }
 
             let result = unsafe {
-                (vtable.readdir)(provider.as_ptr(), path_cstr.as_ptr(), path_len, collect_entry, entries_ptr)
+                (vtable.readdir)(
+                    provider.as_ptr(),
+                    path_cstr.as_ptr(),
+                    path_len,
+                    collect_entry,
+                    entries_ptr,
+                )
             };
 
             let entries = unsafe { Arc::from_raw(entries_ptr as *const Mutex<Vec<FileInfo>>) };
@@ -666,7 +710,8 @@ impl FsProvider for PluginProvider {
         let vtable = self.plugin.vtable;
 
         tokio::task::spawn_blocking(move || {
-            let result = unsafe { (vtable.remove)(provider.as_ptr(), path_cstr.as_ptr(), path_len) };
+            let result =
+                unsafe { (vtable.remove)(provider.as_ptr(), path_cstr.as_ptr(), path_len) };
             if result.code == FS9_OK {
                 Ok(())
             } else {

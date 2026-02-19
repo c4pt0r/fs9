@@ -319,7 +319,10 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_secs(300));
         let fs = Arc::new(MemoryFs::new());
 
-        let (provider_handle, metadata) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (provider_handle, metadata) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
 
         let id = registry
             .register(
@@ -341,7 +344,10 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_secs(300));
         let fs = Arc::new(MemoryFs::new());
 
-        let (provider_handle, metadata) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (provider_handle, metadata) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
 
         let id = registry
             .register(
@@ -363,7 +369,10 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_millis(10));
         let fs = Arc::new(MemoryFs::new());
 
-        let (provider_handle, metadata) = fs.open("/test.txt", OpenFlags::create_file()).await.unwrap();
+        let (provider_handle, metadata) = fs
+            .open("/test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
 
         let id = registry
             .register(
@@ -387,14 +396,32 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_secs(300));
         let fs = Arc::new(MemoryFs::new());
 
-        let (h1, m1) = fs.open("/file1.txt", OpenFlags::create_file()).await.unwrap();
+        let (h1, m1) = fs
+            .open("/file1.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         registry
-            .register(fs.clone(), "/file1.txt".to_string(), OpenFlags::create_file(), m1, h1)
+            .register(
+                fs.clone(),
+                "/file1.txt".to_string(),
+                OpenFlags::create_file(),
+                m1,
+                h1,
+            )
             .await;
 
-        let (h2, m2) = fs.open("/file2.txt", OpenFlags::create_file()).await.unwrap();
+        let (h2, m2) = fs
+            .open("/file2.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
         registry
-            .register(fs.clone(), "/file2.txt".to_string(), OpenFlags::create_file(), m2, h2)
+            .register(
+                fs.clone(),
+                "/file2.txt".to_string(),
+                OpenFlags::create_file(),
+                m2,
+                h2,
+            )
             .await;
 
         let handles = registry.list_handles().await;
@@ -411,7 +438,9 @@ mod tests {
         for i in 0..128 {
             let path = format!("/file{i}.txt");
             let (h, m) = fs.open(&path, OpenFlags::create_file()).await.unwrap();
-            let id = registry.register(fs.clone(), path, OpenFlags::create_file(), m, h).await;
+            let id = registry
+                .register(fs.clone(), path, OpenFlags::create_file(), m, h)
+                .await;
             ids.push(id);
         }
 
@@ -430,7 +459,10 @@ mod tests {
             }
         }
         // With 128 handles and 64 shards, we should have at least 2 non-empty shards
-        assert!(non_empty_shards >= 2, "Handles should be distributed across shards");
+        assert!(
+            non_empty_shards >= 2,
+            "Handles should be distributed across shards"
+        );
     }
 
     #[tokio::test]
@@ -517,7 +549,10 @@ mod tests {
         let registry = HandleRegistry::new(Duration::from_secs(300));
         let fs = Arc::new(MemoryFs::new());
 
-        let (provider_handle, metadata) = fs.open("/ref_test.txt", OpenFlags::create_file()).await.unwrap();
+        let (provider_handle, metadata) = fs
+            .open("/ref_test.txt", OpenFlags::create_file())
+            .await
+            .unwrap();
 
         let id = registry
             .register(
@@ -530,13 +565,13 @@ mod tests {
             .await;
 
         let handle_ref = registry.get(id).await.unwrap();
-        
+
         let path = handle_ref.path().await.unwrap();
         assert_eq!(path, "/ref_test.txt");
-        
+
         let flags = handle_ref.flags().await.unwrap();
         assert!(flags.create);
-        
+
         let _ = handle_ref.provider().await.unwrap();
         let _ = handle_ref.provider_handle().await.unwrap();
     }
